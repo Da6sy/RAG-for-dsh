@@ -1,0 +1,13 @@
+{
+  "name": "@clue-harness/rag",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Retrieval augmentation engine (M4): failure-signature extraction, the RagRetriever seam (full-text now, embedding deferred by design), binding-boosted signature retrieval, and the gate assist block renderer. Zero dsh dependencies — engines first, faces on demand.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@clue-harness/kb": "*"
+  }
+}

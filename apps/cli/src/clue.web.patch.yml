@@ -1,0 +1,66 @@
+# ClueHarness web overlay — the ONE patch layer that makes the dsh web shell
+# a ClueHarness product. Applied after dsh-base + dsh-web-app bundle layers by
+# `clue web` (apps/cli/src/web.ts); the launcher adds its own overlays above
+# this file (agent-preset root, bind port, telemetry switch).
+#
+# A patch row replaces the targeted row's whole `config`, so restated rows
+# carry every key they own.
+
+# ClueHarness identity over the web surface's persona (the bundle default
+# introduces "a coding agent"; we introduce the product). Template variables
+# stay the bundle's ({{model}}/{{cwd}} interpolate from the same seats).
+- id: system-prompt
+  config:
+    persona: >-
+      You are ClueHarness, an evidence-driven coding agent powered by the
+      {{model}} model. Your working directory is {{cwd}}. Before writing code
+      that touches project conventions or previously problematic areas,
+      search the knowledge base (kb_search); propose durable lessons with
+      kb_propose — promotion to trusted is always a human decision. Keep
+      answers brief and factual; verify claims when you can.
+
+# The brand slots are SINGLE-occupant: ClueHarness ui-kb registers its own
+# occupants, so the official dsh brand must stand down (two registrants on
+# one single slot fail at load — the conflict is the design speaking).
+- id: ui-brand-official
+  disabled: true
+
+# Session-store separation: the base persists to $DSH_HOME/sessions, which
+# would mix clue's test/dogfood turns into the user's dsh GUI session list.
+# Anchor the web surface's sessions under the launched project directory.
+- id: session-persistence-jsonl
+  config:
+    root: ./.clue-sessions
+
+- insert:
+    # The ClueHarness knowledge-base face (M3b/M4/M5): ctx.kb, kb_search /
+    # kb_propose / kb_cite tools, retrieval-first pre-step injection,
+    # file-change tracking, and the turn-stopping evidence gate (with failure-
+    # signature precedent retrieval and split inspection/injection budgets).
+    # Host-plane: preset-scoped session agents see the kb tools through the
+    # layered tools registry, and the pre-step / turn-stopping seams fire for
+    # every agent regardless of preset realm. M5 per-session anchoring: a
+    # session's validated workspace cwd selects WHICH project KB its tools,
+    # injection, and gate work in; the config cwd below is the default anchor
+    # and the host-plane service face (the kb-web panels browse it).
+    - id: kb-face
+      name: '@clue-harness/kb-face'
+      config:
+        cwd: !!js process.cwd()
+
+    # The KB web host face (M3c): same-origin JSON routes under /api/clue-kb
+    # on the webserver's public route contract — the sanctioned third-party
+    # channel, since the Typert Remote plane is a dsh build-time codegen
+    # pipeline with no published generation entry.
+    - id: kb-web
+      name: '@clue-harness/kb-web'
+
+    # The ClueHarness browser surfaces (M3c/M4): approval center + KB panel
+    # settings sections, kb_search/kb_propose/kb_cite citation cards, brand
+    # occupants, and the design-token theme layer. A dsh.client row: the
+    # modules node half scans its declaration, serves its built
+    # lib/client.js, and lists it in the browser boot graph. Generalization
+    # proposals (M5) ride the existing promote queue — the 全局库 toggle in
+    # the approval center shows them with zero UI changes.
+    - id: ui-clue-kb
+      name: '@clue-harness/ui-kb'

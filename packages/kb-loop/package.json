@@ -1,0 +1,15 @@
+{
+  "name": "@clue-harness/kb-loop",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "The self-improvement loop driver (M3a engine): change classification (render verification triggers ONLY on renderable edits), evidence→signal attribution with the conservatism rule (no attribution, no penalty), worklog vocabulary, and the loop orchestrator binding kb + evidence-render together.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@clue-harness/evidence-render": "*",
+    "@clue-harness/kb": "*",
+    "@clue-harness/util": "*"
+  }
+}

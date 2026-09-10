@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build artifacts (M0 runs from source via tsx; build faces come later)
+lib/
+dist/
+*.tsbuildinfo
+
+# Runtime data
+.sessions/
+.clue/
+.env
+
+# Dogfood/web runtime state (M8 workspace binding; session dirs from `clue web`)
+.dogfood-home/
+.dsh-home/
+.clue-sessions/
+
+# Playwright browser binaries (sandbox-local download; user machines use the
+# playwright default cache or `npx playwright install`)
+.ms-playwright/
+
+# Logs & OS cruft
+*.log
+.DS_Store
+Thumbs.db
+*Zone.Identifier

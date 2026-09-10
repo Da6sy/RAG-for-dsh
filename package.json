@@ -1,0 +1,26 @@
+{
+  "name": "clue-harness",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "ClueHarness — an evidence-driven agent product: self-improving knowledge base + pluggable evidence layer, built on Cordis with dsh packages as dependencies.",
+  "license": "MIT",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "clue": "node apps/cli/src/bin.ts",
+    "build:ui": "node packages/ui-kb/build.mjs",
+    "typecheck": "tsc -p tsconfig.json && tsc -p packages/ui-kb/tsconfig.json",
+    "test": "node --test apps/cli/test/*.test.ts packages/*/test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "esbuild": "0.28.2",
+    "typescript": "^6.0.3"
+  }
+}

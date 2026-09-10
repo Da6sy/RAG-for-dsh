@@ -1,0 +1,46 @@
+{
+  "name": "@clue-harness/cli",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "The clue command entry: loads layered env, boots the fixed M0 composition through dsh-app-boot, and runs the interactive chat driver.",
+  "exports": {
+    ".": "./src/bin.ts"
+  },
+  "dependencies": {
+    "@clue-harness/compat": "*",
+    "@clue-harness/evidence-render": "*",
+    "@clue-harness/kb": "*",
+    "@clue-harness/kb-face": "*",
+    "@clue-harness/kb-loop": "*",
+    "@clue-harness/kb-web": "*",
+    "@clue-harness/spine": "*",
+    "@clue-harness/ui-kb": "*",
+    "@clue-harness/util": "*",
+    "@deepseek-ai/dsh": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-app-boot": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-attachment-local": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-base": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-cmdline": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-credentials-local": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-fs-local": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-fs-observation-policy": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-launch-environment": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-llm-deepseek": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-session-persistence-jsonl": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-settings-file": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-tool-fs": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-web-app": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.1.1-rc.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-message-feedback": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-storage": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-storage-json": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-storage-domain": "0.1.1-rc.2"
+  }
+}

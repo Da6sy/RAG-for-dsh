@@ -1,0 +1,14 @@
+{
+  "name": "@clue-harness/kb",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "The ClueHarness knowledge base (M2 skeleton): entry model with source bindings, the four-state lifecycle (candidate/trusted/expired/discarded) plus the orthogonal needs-review flag, the weighted signal ledger, the batched approval queue, and scan-based retrieval with project-over-global precedence.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@clue-harness/compat": "*",
+    "@clue-harness/util": "*"
+  }
+}

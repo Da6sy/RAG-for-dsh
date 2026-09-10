@@ -1,0 +1,22 @@
+{
+  "name": "@clue-harness/kb-web",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "The web host face of the knowledge base (M3c/M6): same-origin JSON routes under /api/clue-kb on the dsh webserver — approval center, KB browser, entry ledgers, plus the M6 AI-polish one-shot (host-layer llm call, engine stays model-free) and audited text adoption. Integration layer — imports dsh (webserver, llm) and the kb engine directly.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@clue-harness/kb": "*",
+    "@clue-harness/kb-face": "*",
+    "@deepseek-ai/dsh-host-webserver": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.1.1-rc.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.2"
+  }
+}

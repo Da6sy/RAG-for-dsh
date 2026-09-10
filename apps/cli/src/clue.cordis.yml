@@ -1,0 +1,81 @@
+# ClueHarness M0 composition — the fixed plugin tree the `clue` bin boots.
+# Rows mirror deepseek-harness examples/headless-agent/cordis.yml, trimmed to
+# the minimal conversational set. The shipped bundle/clue patch (design §1.2)
+# evolves from this file once profiles/patches land after M0.
+
+# User-settings document ($DSH_HOME/settings.yaml, hot-reloaded): an
+# `llm-deepseek:` section there overrides the adapter row below without a
+# restart — the user plane dsh already built for us.
+- id: settings
+  name: '@deepseek-ai/dsh-settings-file'
+
+# Credential store: live process env over $DSH_HOME/.credentials.yaml
+# (owner-only, hot-reloaded). The adapter resolves DEEPSEEK_API_KEY through
+# it at each request; no key is ever inlined in this file.
+- id: credentials
+  name: '@deepseek-ai/dsh-credentials-local'
+
+# The DeepSeek adapter (route: deepseek-official). The spine mounts the
+# ctx.llm registry; this row registers the concrete adapter beside it —
+# composition picks vendors, the spine never does.
+- id: llm-deepseek
+  name: '@deepseek-ai/dsh-llm-deepseek'
+  config:
+    thinking: enabled
+    reasoningEffort: max
+    models:
+      - id: deepseek-v4-pro
+        contextWindow: 128000
+      - id: deepseek-v4-flash
+        contextWindow: 128000
+
+# The pi-ai multi-provider twin, mounted DORMANT (dsh base's contract): zero
+# routes until an `llm-pi-ai:` section in $DSH_HOME/settings.yaml supplies
+# provider profiles (e.g. route "qwen"); keys resolve per request through the
+# credential store. Compositions without that settings section are unaffected.
+- id: llm-pi-ai
+  name: '@deepseek-ai/dsh-llm-pi-ai'
+
+# The ClueHarness spine: llm + session + system-prompt + tools + agents +
+# retry + agent-loop, with the ClueHarness persona (harness identity off).
+- id: spine
+  name: '@clue-harness/spine'
+  config:
+    persona: |
+      You are ClueHarness, an evidence-driven coding assistant.
+      Keep answers brief and factual. Verify claims when you can.
+
+# Durable session log: JSONL + zstd frames under ./.sessions (gitignored).
+# Every turn is replayable from here (lesson 8: the log is the truth).
+- id: persistence
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  config:
+    root: './.sessions'
+
+# --- Filesystem capability (M3a): the chat agent can read/write/edit files ---
+# Attachment store first: tool-fs's read_image waits on ctx.attachments.
+- id: attachment-local
+  name: '@deepseek-ai/dsh-attachment-local'
+
+# The fs seam implementation, anchored at the process cwd (relative paths).
+- id: fs-local
+  name: '@deepseek-ai/dsh-fs-local'
+  config:
+    cwd: !!js process.cwd()
+
+# Read-before-write discipline: edits require an observed file version
+# (loads BEFORE tool-fs so the policy listeners are in place first).
+- id: fs-observation-policy
+  name: '@deepseek-ai/dsh-fs-observation-policy'
+
+# Model-facing read/write/edit/read_image tools on ctx.tools.
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+# The ClueHarness knowledge-base face (M3b): ctx.kb service, kb_search /
+# kb_propose tools, retrieval-first pre-step injection, file-change tracking,
+# and the turn-stopping evidence gate. Anchored at the process cwd.
+- id: kb-face
+  name: '@clue-harness/kb-face'
+  config:
+    cwd: !!js process.cwd()

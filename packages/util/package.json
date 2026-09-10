@@ -1,0 +1,10 @@
+{
+  "name": "@clue-harness/util",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Zero-dependency internal utilities: ClueHarness home resolution, path-segment encoding, atomic JSON I/O. Single source of truth shared by kb and evidence-render.",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@clue-harness/evidence-render",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Render evidence provider (M1): local static server + Playwright probe + data-module identification + normalized L1 layout snapshots + baseline storage + structured diff reports. The engine is plain TypeScript; the Cordis tool face arrives with the M3/M4 loop integration.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@clue-harness/util": "*",
+    "playwright": "1.63.0"
+  }
+}

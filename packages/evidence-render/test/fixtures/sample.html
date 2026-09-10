@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Clue 渲染样例</title>
+<style>
+  body { margin: 0; font-family: sans-serif; background: #fff; color: #222; }
+  header { display: flex; align-items: center; gap: 16px; height: 64px; padding: 0 24px; background: #f5f7fa; border-bottom: 1px solid #ddd; }
+  .logo { width: 32px; height: 32px; background: #4f8cff; border-radius: 6px; }
+  main { padding: 24px; }
+  form[data-module="search-form"] { display: flex; gap: 8px; max-width: 800px; }
+  form input { flex: 1; padding: 10px; border: 1px solid #999; border-radius: 6px; }
+  form button { padding: 10px 20px; background: #4f8cff; color: #fff; border: 0; border-radius: 6px; }
+  .danger-zone { position: relative; height: 40px; margin-top: 16px; }
+  #floating { position: absolute; top: 4px; left: 8px; }
+  .low-contrast { color: #ccc; background: #fff; }
+  ul.results { list-style: none; margin: 24px 0; padding: 0; max-width: 800px; }
+  ul.results li { padding: 12px; border: 1px solid #eee; border-radius: 6px; margin-bottom: 8px; background: #fafafa; }
+  footer { padding: 16px 24px; background: #f5f7fa; border-top: 1px solid #ddd; }
+</style>
+</head>
+<body>
+<header data-module="topbar">
+  <div class="logo" aria-label="logo"></div>
+  <nav><a href="/">首页</a> <a href="/docs">文档</a></nav>
+  <span class="volatile"></span>
+</header>
+<main>
+  <form data-module="search-form">
+    <input id="q" type="text" placeholder="搜索…">
+    <button type="submit">搜索</button>
+  </form>
+  <div class="danger-zone">
+    <button id="floating" tabindex="-1">悬浮操作</button>
+  </div>
+  <p class="low-contrast">这段文字对比度不足,断言应当抓到它</p>
+  <ul class="results" data-module="results">
+    <li class="result-item">结果条目 1 · 摘要文本</li>
+    <li class="result-item">结果条目 2 · 摘要文本</li>
+    <li class="result-item">结果条目 3 · 摘要文本</li>
+    <li class="result-item">结果条目 4 · 摘要文本</li>
+    <li class="result-item">结果条目 5 · 摘要文本</li>
+    <li class="result-item">结果条目 6 · 摘要文本</li>
+    <li class="result-item">结果条目 7 · 摘要文本</li>
+    <li class="result-item">结果条目 8 · 摘要文本</li>
+    <li class="result-item">结果条目 9 · 摘要文本</li>
+    <li class="result-item">结果条目 10 · 摘要文本</li>
+    <li class="result-item">结果条目 11 · 摘要文本</li>
+    <li class="result-item">结果条目 12 · 摘要文本</li>
+  </ul>
+</main>
+<footer data-module="page-footer">页脚 · Clue 样例</footer>
+<script>document.querySelector('.volatile').textContent = new Date().toISOString()</script>
+</body>
+</html>
