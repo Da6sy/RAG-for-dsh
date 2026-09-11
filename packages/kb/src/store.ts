@@ -1,26 +1,29 @@
 /**
  * KbStore — the knowledge base over the filesystem (design doc §3.1/§3.3/§3.5).
  *
- * Layout (decision #6 REVISED 2026-09-09: the PROJECT tier travels WITH the
- * workspace — 工作区绑定; the global tier and the project registry stay
- * central because they are cross-project by definition):
- *   <projectRoot>/.clue/kb/            project tier (entries, ledgers, queue)
- *     meta.json                        format stamp + creation provenance
- *     entries/<id>.json                FACTS: one file per entry (source of truth)
- *     signals.jsonl                    APPEND-ONLY weighted signal ledger
- *     approvals.json                   the batched human-decision queue
- *     doubt.jsonl                      M6 doubt ledgers (evidence loop sidecar)
- *   <home>/kb/_global/                 global tier
- *   <home>/projects.json               registry: every project root whose
- *                                      .clue/kb has been opened (M5 generalization
- *                                      discovery; best-effort, never load-bearing)
+ * Layout (decision #6 RE-Revised M9: storage is CENTRAL, one tier per
+ * WORKSPACE — the 集中式 layout; the M8 experiment of writing into the
+ * workspace is retired together with its `.git/info/exclude` bookkeeping):
+ *   <home>/kb/<workspace-key>/     one workspace's project tier
+ *     meta.json                    format stamp + the ROOT anchor it belongs to
+ *     entries/<id>.json            FACTS: one file per entry (source of truth)
+ *     signals.jsonl                APPEND-ONLY weighted signal ledger
+ *     approvals.json               the batched human-decision queue
+ *     doubt.jsonl                  M6 doubt ledgers (evidence loop sidecar)
+ *   <home>/kb/_global/             the global tier (cross-project by definition)
+ *   <home>/workspaces.json         the roster: key ↔ root ↔ label + per-workspace
+ *                                  settings (M9; ClueHarness's own list, never
+ *                                  read from dsh's workspace service)
  *
- * What binding to the workspace buys: the KB IS the project (move/copy/backup
- * the folder and the knowledge follows), the panel-vs-session anchor mismatch
- * disappears (both derive from the same workspace path), and team sharing via
- * the repo becomes POSSIBLE (opt-in). What it costs: the directory must never
- * reach git — open() self-excludes from `.git/info/exclude` when a repo is
- * present, and the legacy central layout is importable via migrate.
+ * The key is a pure function of the canonical root (`encodeSegment(root)`,
+ * `-N` when two roots encode alike — decided by the meta.json anchor), so the
+ * panel, the CLI and a session's gate all land on the same tier FROM A PATH
+ * alone: the M8 accident this file used to prevent (对话与审批各读一本库) is
+ * prevented by the derivation, not by where the bytes sit. What centralizing
+ * buys: a workspace directory carries zero ClueHarness state, and no git
+ * bookkeeping of ours ever touches it. What it costs: copying a project folder
+ * no longer copies its memory — the knowledge lives in the home.
+ * `clue kb migrate` imports the old in-workspace layout (it never overwrites).
  *
  * Concurrency (decision #13: same-process only for now): every operation is
  * read-compute-atomic-write; no in-memory cache, so two stores over the same
@@ -34,9 +37,14 @@
  */
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
-import { cp, mkdir, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
-import { appendFile, readFile } from 'node:fs/promises'
-import { atomicWriteJson, clueHome, readJsonOrNull, sha256File } from '@clue-harness/util'
+import { cp, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
+import { atomicWriteJson, canonicalRoot, clueHome, readJsonOrNull, sha256File, workspaceKey } from '@clue-harness/util'
+import {
+  readWorkspaces,
+  registerWorkspace,
+  setRenderSurface,
+  type RenderSurfaceSettings,
+} from './workspaces.ts'
 import {
   DEFAULT_KB_CONFIG,
   KB_FORMAT_VERSION,
@@ -69,12 +77,12 @@ import type { SignalRecord } from './types.ts'
 
 export interface KbStoreOptions {
   tier: KbTier
-  /** Absolute or resolvable project root (required for tier 'project'). */
+  /** Absolute or resolvable workspace root (required for tier 'project'). */
   projectRoot?: string
   /**
-   * ClueHarness HOME for the CENTRAL parts (global tier, project registry);
-   * default CLUE_HOME or ~/.clue. The PROJECT tier ignores it — the KB lives
-   * with the workspace. Tests/demos pass an isolated home.
+   * ClueHarness home — CENTRAL for everything: the global tier, the roster,
+   * and (M9) the per-workspace project tiers. Default CLUE_HOME or ~/.clue;
+   * tests/demos pass an isolated home.
    */
   home?: string
   config?: Partial<KbConfig>
@@ -99,38 +107,48 @@ export class KbStore {
   readonly dir: string
   readonly tier: KbTier
   readonly projectRoot: string | null
+  /** The central workspace key this tier lives under (null for the global tier). */
+  readonly key: string | null
   readonly config: KbConfig
 
-  private constructor(dir: string, tier: KbTier, projectRoot: string | null, config: KbConfig) {
+  private constructor(
+    dir: string,
+    tier: KbTier,
+    projectRoot: string | null,
+    key: string | null,
+    config: KbConfig,
+  ) {
     this.dir = dir
     this.tier = tier
     this.projectRoot = projectRoot
+    this.key = key
     this.config = config
   }
 
   /**
    * Open (creating on first use) one KB tier.
    *
-   * Project tier: `<projectRoot>/.clue/kb` — the workspace IS the key (the
-   * old encoded-name + collision-suffix machinery is retired; same-name
-   * different-path projects were distinguished by realpath, and realpath IS
-   * the directory now). Best-effort side effects on open: append `.clue/` to
-   * `.git/info/exclude` when a git repo is present (git never sees the KB),
-   * and upsert the root into the central project registry (generalization
-   * discovery reads it; a registry miss only degrades M5 scans, never this
-   * store).
+   * Project tier: `<home>/kb/<workspace-key>` where the key derives from the
+   * canonical root (see {@link workspaceKey}) — same path in, same tier out,
+   * for a session gate, the CLI, or the settings panel. Two side effects keep
+   * the roster honest: the meta.json anchor is written for a fresh tier (it is
+   * what makes the key collision-safe), and the root is registered in
+   * `<home>/workspaces.json` so "a project joins the list by being used"
+   * holds. Nothing is ever written INTO the workspace.
    */
   static async open(options: KbStoreOptions): Promise<KbStore> {
     const home = options.home ?? clueHome()
     const config: KbConfig = { ...DEFAULT_KB_CONFIG, ...options.config, weights: { ...DEFAULT_KB_CONFIG.weights, ...(options.config?.weights ?? {}) } }
     let tierRoot: string | null = null
+    let key: string | null = null
     let dir: string
     if (options.tier === 'global') {
       dir = path.join(home, 'kb', '_global')
     } else {
       if (options.projectRoot === undefined) throw new Error('KbStore.open: tier=project 需要 projectRoot')
-      tierRoot = await realpath(options.projectRoot)
-      dir = projectKbDir(tierRoot)
+      tierRoot = canonicalRoot(options.projectRoot)
+      key = await workspaceKey(tierRoot, home)
+      dir = path.join(home, 'kb', key)
     }
     const metaFile = path.join(dir, 'meta.json')
     if ((await readJsonOrNull<KbMeta>(metaFile)) === null) {
@@ -142,11 +160,8 @@ export class KbStore {
       }
       await atomicWriteJson(metaFile, meta)
     }
-    if (tierRoot !== null) {
-      await excludeFromGit(tierRoot)
-      await registerProject(home, tierRoot)
-    }
-    return new KbStore(dir, options.tier, tierRoot, config)
+    if (tierRoot !== null && key !== null) await registerWorkspace(tierRoot, { home })
+    return new KbStore(dir, options.tier, tierRoot, key, config)
   }
 
   // ---- paths ----
@@ -540,152 +555,143 @@ export function openGlobalStore(home?: string, config?: Partial<KbConfig>): Prom
   return KbStore.open({ tier: 'global', home, config })
 }
 
-/** Convenience: open the PROJECT tier of one workspace (`<projectRoot>/.clue/kb`). */
+/** Convenience: open the PROJECT tier of one workspace (`<home>/kb/<key>`). */
 export function openProjectStore(projectRoot: string, home?: string, config?: Partial<KbConfig>): Promise<KbStore> {
   return KbStore.open({ tier: 'project', projectRoot, home, config })
 }
 
-// ── workspace binding helpers ───────────────────────────────────────────────
+// ── central paths & the M9 import (from the M8 in-workspace layout) ─────────
 
-/** The per-workspace ClueHarness root: `<projectRoot>/.clue`. */
-export function projectClueDir(projectRoot: string): string {
+/** The workspace-internal directory the M8 layout wrote into: `<root>/.clue`. */
+export function legacyWorkspaceClueDir(projectRoot: string): string {
   return path.join(projectRoot, '.clue')
 }
 
-/** The workspace-bound project KB directory: `<projectRoot>/.clue/kb`. */
-export function projectKbDir(projectRoot: string): string {
-  return path.join(projectClueDir(projectRoot), 'kb')
-}
-
-/** Registry document shape (central, best-effort — discovery only, never load-bearing). */
-interface ProjectRegistry {
-  version: 1
-  projects: Array<{ projectRoot: string; firstSeenAt: string }>
-}
-
-/**
- * Best-effort: keep `.clue/` out of git via `.git/info/exclude` (LOCAL, never
- * itself committed, never touches the repo's tracked .gitignore). Worktree
- * `.git`-files are skipped (rare; the exclusion then relies on the user's
- * own gitignore — documented). Failures are swallowed by design: opening a
- * KB must not die because git bookkeeping hiccuped.
- * @param projectRoot - the realpath'd workspace root.
- */
-async function excludeFromGit(projectRoot: string): Promise<void> {
-  try {
-    const git = path.join(projectRoot, '.git')
-    const info = await stat(git).catch(() => null)
-    if (info === null || !info.isDirectory()) return
-    const excludeFile = path.join(git, 'info', 'exclude')
-    let current = ''
-    try { current = await readFile(excludeFile, 'utf8') } catch { /* first writer */ }
-    if (current.split('\n').some((line) => line.trim() === '.clue/' || line.trim() === '.clue')) return
-    await mkdir(path.dirname(excludeFile), { recursive: true })
-    await appendFile(excludeFile, (current.endsWith('\n') || current === '' ? '' : '\n')
-      + '# ClueHarness workspace knowledge base — never commit\n.clue/\n')
-  } catch {
-    // best-effort, per the docstring
-  }
-}
-
-/**
- * Best-effort: upsert the workspace into `<home>/projects.json` so cross-
- * project machinery (M5 generalization scan) can DISCOVER project KBs that
- * are not otherwise reachable from one central directory anymore.
- * @param home - the central ClueHarness home.
- * @param projectRoot - the realpath'd workspace root.
- */
-async function registerProject(home: string, projectRoot: string): Promise<void> {
-  try {
-    const file = path.join(home, 'projects.json')
-    const registry = (await readJsonOrNull<ProjectRegistry>(file)) ?? { version: 1 as const, projects: [] }
-    if (registry.projects.some((p) => p.projectRoot === projectRoot)) return
-    registry.projects.push({ projectRoot, firstSeenAt: new Date().toISOString() })
-    registry.projects.sort((a, b) => a.projectRoot.localeCompare(b.projectRoot))
-    await atomicWriteJson(file, registry)
-  } catch {
-    // best-effort, per the docstring
-  }
-}
-
-/**
- * Every registered project root that still EXISTS on disk. Roots whose
- * directories were deleted (or workspaces that moved) drop out silently —
- * their ledgers lived inside the workspace and moved with it (or vanished).
- * @param home - central home (default CLUE_HOME/~/.clue).
- * @returns realpath'd project roots with a `.clue/kb` directory.
- */
-export async function listKnownProjects(home: string = clueHome()): Promise<string[]> {
-  const registry = await readJsonOrNull<ProjectRegistry>(path.join(home, 'projects.json'))
-  const roots = registry?.projects.map((p) => p.projectRoot) ?? []
-  const live: string[] = []
-  for (const root of roots) {
-    if (await stat(projectKbDir(root)).catch(() => null) === null) continue
-    const real = await realpath(root).catch(() => null)
-    if (real !== null) live.push(real)
-  }
-  return live.sort()
-}
-
-/** One migrate action (report is the CLI's and the user's evidence). */
+/** One migration outcome (the CLI prints this verbatim — it is the user's evidence). */
 export interface MigrationEntry {
-  /** Legacy central directory (`<home>/kb/<key>`). */
+  /** The canonical workspace root the piece belongs to. */
+  root: string
+  /** Which kind of state moved. */
+  kind: 'kb' | 'baselines' | 'surface' | 'leftover'
   from: string
-  /** New workspace-bound directory (absent for skips). */
+  /** Absent when the piece was skipped. */
   to?: string
   moved: boolean
   reason: string
 }
 
+export interface MigrateOptions {
+  /** ClueHarness home to migrate INTO (default CLUE_HOME/~/.clue). */
+  home?: string
+  /** Explicit roots to examine; the legacy roster file is always added. */
+  roots?: readonly string[]
+  /** Report only, move nothing. */
+  dryRun?: boolean
+}
+
 /**
- * Import the LEGACY central layout into workspace-bound storage (decision #6
- * revision migration): for every `<home>/kb/<key>` whose meta names a
- * projectRoot that exists, move the tier (and its legacy render-baselines
- * sibling) to `<projectRoot>/.clue/`. An existing destination is NEVER
- * overwritten (skip + reason) — two machines migrated independently keep
- * their own copy. Missing workspaces are reported, not destroyed.
- * @param home - the legacy central home to drain.
- * @returns per-directory outcomes.
+ * Import the M8 workspace-bound layout into central storage (decision #6
+ * re-revision): for every known workspace, move `<root>/.clue/kb` to
+ * `<home>/kb/<key>` and `<root>/.clue/render-baselines` to
+ * `<home>/baselines/<key>`, and fold `<root>/.clue/render-surface.json` into
+ * the workspace's roster record. Afterwards a workspace directory carries no
+ * ClueHarness state at all.
+ *
+ * Discovery: explicit `roots` + the adopted roster + the legacy
+ * `<home>/projects.json`. A non-empty destination is NEVER overwritten (skip +
+ * reason — two machines migrated independently keep their own copy); an absent
+ * workspace is simply nothing to do. The meta.json anchor travels with the
+ * tier, which is what keeps the key walk honest.
+ * @param options - home, explicit roots, dry run.
+ * @returns per-workspace, per-piece outcomes.
  */
-export async function migrateLegacyProjectKbs(home: string = clueHome()): Promise<MigrationEntry[]> {
+export async function migrateWorkspaceKbsToCentral(options: MigrateOptions = {}): Promise<MigrationEntry[]> {
+  const home = options.home ?? clueHome()
   const report: MigrationEntry[] = []
-  const kbRoot = path.join(home, 'kb')
-  const dirs = await readdir(kbRoot).catch(() => [] as string[])
-  for (const key of dirs.sort()) {
-    const from = path.join(kbRoot, key)
-    if (key === '_global') { report.push({ from, moved: false, reason: '全局层本就在中心，无需迁移' }); continue }
-    const meta = await readJsonOrNull<KbMeta>(path.join(from, 'meta.json'))
-    const projectRoot = meta?.tier === 'project' ? meta.projectRoot : undefined
-    if (projectRoot === undefined || projectRoot === '') {
-      report.push({ from, moved: false, reason: 'meta.json 缺失或非项目层，保守跳过（数据未动）' })
-      continue
+
+  const candidates = new Set<string>()
+  for (const root of options.roots ?? []) candidates.add(canonicalRoot(root))
+  const legacy = await readJsonOrNull<{ projects?: Array<{ projectRoot?: unknown }> }>(path.join(home, 'projects.json'))
+  for (const row of legacy?.projects ?? []) {
+    if (typeof row.projectRoot === 'string' && row.projectRoot !== '') candidates.add(canonicalRoot(row.projectRoot))
+  }
+  for (const row of await readWorkspaces(home)) candidates.add(canonicalRoot(row.root))
+
+  for (const root of [...candidates].sort()) {
+    const clueDir = legacyWorkspaceClueDir(root)
+    const key = await workspaceKey(root, home)
+    const kbFrom = path.join(clueDir, 'kb')
+    const kbTo = path.join(home, 'kb', key)
+    const baselinesFrom = path.join(clueDir, 'render-baselines')
+    const baselinesTo = path.join(home, 'baselines', key)
+    const surfaceFrom = path.join(clueDir, 'render-surface.json')
+
+    const hasKb = (await stat(path.join(kbFrom, 'entries')).catch(() => null)) !== null
+    const hasBaselines = (await stat(baselinesFrom).catch(() => null)) !== null
+    const hasSurface = (await stat(surfaceFrom).catch(() => null)) !== null
+    if (!hasKb && !hasBaselines && !hasSurface) continue
+
+    if (hasKb) {
+      const occupied = (await readdir(kbTo).catch(() => null)) !== null
+      if (occupied) {
+        report.push({ root, kind: 'kb', from: kbFrom, to: kbTo, moved: false, reason: '中心库已存在，不覆盖（请手动合并）' })
+      } else if (options.dryRun === true) {
+        report.push({ root, kind: 'kb', from: kbFrom, to: kbTo, moved: false, reason: 'dry-run：将迁入中心库' })
+      } else {
+        await moveDir(kbFrom, kbTo)
+        await registerWorkspace(root, { home, source: 'migrate' })
+        report.push({ root, kind: 'kb', from: kbFrom, to: kbTo, moved: true, reason: '已收回到中心库' })
+      }
     }
-    const exists = await stat(projectRoot).catch(() => null)
-    if (exists === null || !exists.isDirectory()) {
-      report.push({ from, moved: false, reason: `工作区 ${projectRoot} 已不在磁盘上（库保留在旧位置）` })
-      continue
+    if (hasBaselines) {
+      const occupied = (await readdir(baselinesTo).catch(() => null)) !== null
+      if (occupied) {
+        report.push({ root, kind: 'baselines', from: baselinesFrom, to: baselinesTo, moved: false, reason: '中心基准目录已存在，不覆盖' })
+      } else if (options.dryRun === true) {
+        report.push({ root, kind: 'baselines', from: baselinesFrom, to: baselinesTo, moved: false, reason: 'dry-run：将迁入中心基准目录' })
+      } else {
+        await moveDir(baselinesFrom, baselinesTo)
+        report.push({ root, kind: 'baselines', from: baselinesFrom, to: baselinesTo, moved: true, reason: '渲染基准已收回中心' })
+      }
     }
-    const real = await realpath(projectRoot)
-    const to = projectKbDir(real)
-    if (await stat(path.join(to, 'entries')).catch(() => null) !== null) {
-      report.push({ from, to, moved: false, reason: '工作区库已存在，不覆盖（请手动合并）' })
-      continue
+    if (hasSurface) {
+      const target = `${key} @ workspaces.json`
+      if (options.dryRun === true) {
+        report.push({ root, kind: 'surface', from: surfaceFrom, to: target, moved: false, reason: 'dry-run：将写入注册表' })
+      } else {
+        const custom = await readJsonOrNull<Partial<RenderSurfaceSettings>>(surfaceFrom)
+        const settings: RenderSurfaceSettings = {
+          ...(Array.isArray(custom?.extensions) ? { extensions: custom.extensions.map(String) } : {}),
+          ...(Array.isArray(custom?.pathPrefixes) ? { pathPrefixes: custom.pathPrefixes.map(String) } : {}),
+        }
+        if (settings.extensions === undefined && settings.pathPrefixes === undefined) {
+          report.push({ root, kind: 'surface', from: surfaceFrom, to: target, moved: false, reason: '文件里没有有效数组，保留原位待人工处理' })
+        } else {
+          await setRenderSurface(key, settings, home)
+          await rm(surfaceFrom, { force: true })
+          report.push({ root, kind: 'surface', from: surfaceFrom, to: target, moved: true, reason: '渲染面配置已并入工作区记录' })
+        }
+      }
     }
-    await mkdir(path.dirname(to), { recursive: true })
-    try {
-      await rename(from, to)
-    } catch {
-      await cp(from, to, { recursive: true })
-      await rm(from, { recursive: true, force: true })
+    if (options.dryRun !== true) {
+      const leftovers = await readdir(clueDir).catch(() => null)
+      if (leftovers !== null && leftovers.length === 0) {
+        await rm(clueDir, { recursive: true, force: true })
+      } else if (leftovers !== null) {
+        report.push({ root, kind: 'leftover', from: clueDir, moved: false, reason: `.clue/ 仍有其他内容(${leftovers.join(', ')})，未删除` })
+      }
     }
-    // Legacy render baselines lived inside the same central directory.
-    const baselinesFrom = path.join(to, 'render-baselines')
-    const baselinesTo = path.join(projectClueDir(real), 'render-baselines')
-    if (await stat(baselinesFrom).catch(() => null) !== null) {
-      await rename(baselinesFrom, baselinesTo).catch(() => {})
-    }
-    await registerProject(home, real)
-    report.push({ from, to, moved: true, reason: '已迁入工作区 .clue/kb' })
   }
   return report
+}
+
+/** Move a directory, falling back to copy+delete across devices. */
+async function moveDir(from: string, to: string): Promise<void> {
+  await mkdir(path.dirname(to), { recursive: true })
+  try {
+    await rename(from, to)
+  } catch {
+    await cp(from, to, { recursive: true })
+    await rm(from, { recursive: true, force: true })
+  }
 }

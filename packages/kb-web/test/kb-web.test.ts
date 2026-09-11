@@ -11,14 +11,24 @@
  * @module @clue-harness/kb-web/test
  */
 import { test } from 'node:test'
+import { resolve } from 'node:path'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
-import { openGlobalStore, openProjectStore, queryKb, type KbStore } from '@clue-harness/kb'
+import {
+  openGlobalStore,
+  openProjectStore,
+  syncWorkspaces,
+  panelWorkspaces as kbPanel,
+  queryKb,
+  readWorkspaces as kbList,
+  syncWorkspaces as kbSync,
+  type KbStore,
+} from '@clue-harness/kb'
 import type { ClueKb } from '@clue-harness/kb-face'
 import { API_PREFIX, apply } from '@clue-harness/kb-web'
 import { FAVICON_SVG, faviconDataUri, identityScript, IDENTITY_TITLE } from '../src/identity.ts'
@@ -81,9 +91,30 @@ function mount(
   config: Parameters<typeof apply>[1] = {},
   services: Record<string, unknown> = {},
 ): CapturedRoute[] & { injections: { event: string; listener: (table: unknown[]) => void }[] } {
+  // The face's home is derived from the store path (<home>/kb/<key>) so the
+  // fake stays honest without widening every call site: a route must never
+  // write to a default home it does not control.
+  const home = resolve(join(project.dir, '..', '..'))
+  const hostRows = (): Array<{ id: string; path: string; title: string; sessionIds: readonly string[] }> => {
+    const registry = services.workspaceRegistry as { list(): Array<{ id: string; path: string; title: string; sessionIds: readonly string[] }> } | undefined
+    return registry?.list() ?? []
+  }
   const kb: ClueKb = {
     projectRoot,
+    home,
     stores: async () => ({ project, global }),
+    // M9.1 surface: the panel addresses ANY workspace, so the fake answers for
+    // any root too (route tests keep every tier in one temp home anyway).
+    storesFor: async (root) => (root === projectRoot
+      ? { project, global }
+      : { project: await openProjectStore(root, home), global }),
+    workspaces: async () => kbList(home),
+    panelWorkspaces: async () => kbPanel(home),
+    syncHostWorkspaces: async () => kbSync(hostRows().map((row) => ({ id: row.id, path: row.path, title: row.title })), home),
+    hostWorkspaceForSession: async (sessionId) => {
+      const host = hostRows().find((row) => row.sessionIds.includes(sessionId))
+      return host === undefined ? null : { id: host.id, path: host.path, title: host.title }
+    },
     query: (text, options) => queryKb(project, global, {
       text,
       limit: options?.limit ?? 8,
@@ -386,4 +417,161 @@ test('browser identity: the index-injection row claims the tab title + network f
   assert.ok(FAVICON_SVG.includes('<circle') && FAVICON_SVG.includes('<path'))
   assert.equal(IDENTITY_TITLE, 'Clue Harness')
   assert.equal(row.text, identityScript())
+})
+
+// ── M9.1: the host workspace registry owns panel visibility ────────────────
+
+test('GET /workspaces lists the HOST registry, not every path clue ever touched', async (t) => {
+  const { home, projectRoot } = await world(t)
+  const { mkdir, mkdtemp } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const sidebar = join(await mkdtemp(join(tmpdir(), 'clue-hostws-')), 'shop')
+  await mkdir(sidebar, { recursive: true })
+  // A CLI-touched path: real row in the side table, NOT a sidebar workspace.
+  const { registerWorkspace } = await import('@clue-harness/kb')
+  await registerWorkspace(projectRoot, { home })
+  const registry = {
+    list: () => [{ id: 'w1', path: sidebar, title: '我的商店', sessionIds: ['session-1'] }],
+  }
+  const [route] = mount(
+    await openProjectStore(projectRoot, home), await openGlobalStore(home), projectRoot, {},
+    { workspaceRegistry: registry },
+  )
+  const res = await call(route, 'GET', `${API_PREFIX}/workspaces`)
+  const body = res.json() as { workspaces: Array<{ label: string; root: string }>; orphans: unknown[]; error?: string }
+  if (res.statusCode !== 200) throw new Error(`路由回了 ${String(res.statusCode)}: ${body.error ?? res.body}`)
+  assert.equal(body.workspaces.length, 1, '侧边栏有几个就列几个')
+  assert.equal(body.workspaces[0].label, '我的商店', '标题镜像宿主的')
+  assert.equal(body.orphans.length, 0)
+})
+
+test('a workspace dropped from the registry surfaces as an orphan and is answerable', async (t) => {
+  const { home, projectRoot } = await world(t)
+  const { mkdir, mkdtemp } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const doomed = join(await mkdtemp(join(tmpdir(), 'clue-orphan-')), 'tmp-proj')
+  await mkdir(doomed, { recursive: true })
+  const store = await openProjectStore(doomed, home)
+  await store.add({ kind: 'fact', title: '留下的', text: '正文' })
+  let alive = true
+  // The live-purge probe below must stay IN the registry too, or the next sync
+  // legitimately orphans it and the assertions fight each other.
+  const extra: Array<{ id: string; path: string; title: string; sessionIds: string[] }> = []
+  const registry = { list: () => [...(alive ? [{ id: 'w1', path: doomed, title: '要移除的', sessionIds: [] }] : []), ...extra] }
+  const [route] = mount(store, await openGlobalStore(home), projectRoot, {}, { workspaceRegistry: registry })
+
+  assert.equal(((await call(route, 'GET', `${API_PREFIX}/workspaces`)).json().workspaces.length), 1)
+  alive = false
+  const dropped = (await call(route, 'GET', `${API_PREFIX}/workspaces`)).json() as {
+    workspaces: unknown[]; orphans: Array<{ key: string; hostTitle: string }>
+  }
+  assert.equal(dropped.workspaces.length, 0, '侧边栏没了,面板也就不列它')
+  assert.equal(dropped.orphans.length, 1, '但要以提问的形式出现')
+  assert.equal(dropped.orphans[0].hostTitle, '要移除的')
+
+  // Status codes carry meaning: unknown key is 404, a live workspace is 400.
+  const unknown = await call(route, 'POST', `${API_PREFIX}/workspaces/purge`, JSON.stringify({ key: 'no-such-key' }))
+  assert.equal(unknown.statusCode, 404, '不存在的 key 是 404')
+  const liveSide = await mkdtemp(join(tmpdir(), 'clue-live-purge-'))
+  extra.push({ id: 'w9', path: liveSide, title: '还活着', sessionIds: [] })
+  const liveRoot = await realpath(liveSide)
+  const liveKey = (await syncWorkspaces(registry.list(), home)).live.find((row) => row.root === liveRoot)?.key
+  assert.ok(liveKey !== undefined, '探针工作区应已登记')
+  const refused = await call(route, 'POST', `${API_PREFIX}/workspaces/purge`, JSON.stringify({ key: liveKey }))
+  assert.equal(refused.statusCode, 400, '活着的工作区不能清退')
+
+  const kept = await call(route, 'POST', `${API_PREFIX}/workspaces/keep`, JSON.stringify({ key: dropped.orphans[0].key }))
+  assert.equal(kept.statusCode, 200)
+  const after = (await call(route, 'GET', `${API_PREFIX}/workspaces`)).json() as { orphans: Array<{ key: string }> }
+  assert.deepEqual(after.orphans.filter((row) => row.key === dropped.orphans[0].key).length, 0, '答过"保留"就不再问它')
+  assert.equal((await store.list()).length, 1, '数据一根毫毛没动')
+})
+
+test('GET /workspace-for-session resolves the conversation workspace host-side', async (t) => {
+  const { home, projectRoot } = await world(t)
+  const { mkdir, mkdtemp } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const ws = join(await mkdtemp(join(tmpdir(), 'clue-sessionws-')), 'proj')
+  await mkdir(ws, { recursive: true })
+  const registry = { list: () => [{ id: 'w1', path: ws, title: '会话工作区', sessionIds: ['session-42'] }] }
+  const [route] = mount(
+    await openProjectStore(projectRoot, home), await openGlobalStore(home), projectRoot, {},
+    { workspaceRegistry: registry },
+  )
+  const hit = (await call(route, 'GET', `${API_PREFIX}/workspace-for-session?sessionId=session-42`)).json() as
+    { record: { root: string }; source: string }
+  assert.equal(hit.source, 'registry')
+  assert.equal(hit.record.root, await (await import('node:fs/promises')).realpath(ws))
+
+  const miss = (await call(route, 'GET', `${API_PREFIX}/workspace-for-session?sessionId=ghost`)).json() as
+    { source: string; root: string }
+  assert.equal(miss.source, 'launch-anchor', '查不到就诚实回退到启动锚点')
+  assert.equal(miss.root, projectRoot)
+})
+
+test('routes never touch the DEFAULT home — every engine call carries the configured one', async (t) => {
+  // The regression this pins: a route that forgets to pass `home` silently
+  // reads and WRITES ~/.clue (the real user's home) even though the face was
+  // configured elsewhere. Left unchecked it shows up as "another project's
+  // knowledge base appears in my panel", and it is invisible until someone's
+  // home directory has state in it. So: point HOME at an empty directory,
+  // clear CLUE_HOME, drive every home-sensitive route, and assert that nothing
+  // was ever created under the default home.
+  const savedHome = process.env.HOME
+  const savedClue = process.env.CLUE_HOME
+  const fakeUser = await mkdtemp(join(tmpdir(), 'clue-fake-user-'))
+  process.env.HOME = fakeUser
+  delete process.env.CLUE_HOME
+  t.after(() => {
+    if (savedHome === undefined) delete process.env.HOME
+    else process.env.HOME = savedHome
+    if (savedClue !== undefined) process.env.CLUE_HOME = savedClue
+    return rm(fakeUser, { recursive: true, force: true })
+  })
+
+  const { home, projectRoot, project, global } = await world(t)
+  const doomed = join(await mkdtemp(join(tmpdir(), 'clue-leak-probe-')), 'proj')
+  await mkdir(doomed, { recursive: true })
+  let alive = true
+  const registry = {
+    list: () => (alive ? [{ id: 'w1', path: doomed, title: '泄漏探针', sessionIds: ['s1'] }] : []),
+  }
+  const [route] = mount(project, global, projectRoot, {}, { workspaceRegistry: registry })
+
+  const first = (await call(route, 'GET', `${API_PREFIX}/workspaces`)).json() as { workspaces: Array<{ key: string }> }
+  assert.equal(first.workspaces.length, 1, '先让同步把行写进配置好的 home')
+  alive = false
+  const dropped = (await call(route, 'GET', `${API_PREFIX}/workspaces`)).json() as { orphans: Array<{ key: string }> }
+  const orphan = dropped.orphans[0]
+  assert.ok(orphan !== undefined)
+  // Every route that resolves a workspace or answers the orphan question:
+  // each one is a place a missing `home` argument would leak.
+  const probes: Array<[string, string, string?]> = [
+    ['POST', `${API_PREFIX}/workspaces/keep`, JSON.stringify({ key: orphan.key })],
+    ['POST', `${API_PREFIX}/workspaces/purge-all`, '{}'],
+    ['GET', `${API_PREFIX}/workspace-for-session?sessionId=s1`],
+    ['GET', `${API_PREFIX}/workspace-for-session?sessionId=nobody`],
+    ['GET', `${API_PREFIX}/status?workspace=${orphan.key}`],
+    ['POST', `${API_PREFIX}/workspaces/add`, JSON.stringify({ root: projectRoot, label: '探针' })],
+    ['POST', `${API_PREFIX}/workspaces/rename`, JSON.stringify({ key: orphan.key, label: '改名探针' })],
+    ['POST', `${API_PREFIX}/workspaces/remove`, JSON.stringify({ key: orphan.key })],
+    ['GET', `${API_PREFIX}/workspaces?stats=1`],
+  ]
+  const failures: string[] = []
+  // Sequential ON PURPOSE: the side table is documented read-compute-atomic
+  // write with no cross-process lock, so a concurrent storm legitimately loses
+  // rows. That is a known limit, not what this test is about — it checks the
+  // HOME each call writes to, one at a time.
+  for (const [method, url, body] of probes) {
+    const r = await call(route, method, url, body)
+    if (r.statusCode !== 200) failures.push(`${method} ${url.split(API_PREFIX)[1]} → ${String(r.statusCode)} ${r.body.slice(0, 120)}`)
+  }
+  assert.deepEqual(failures, [], '路由自身要都成功')
+
+  assert.equal(
+    await readdir(join(fakeUser, '.clue')).catch(() => null), null,
+    '默认家目录下绝不能出现 .clue(有就是某条路由漏传了 home)',
+  )
+  // And the configured home did receive the writes — the routes are not no-oping.
+  assert.ok((await readdir(join(home, 'kb'))).length >= 1, '配置 home 里应当真的落了东西')
 })

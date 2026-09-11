@@ -17,7 +17,7 @@ import {
   actionCopy, parseArgs, parseKbCiteResult, parseKbProposeResult, parseKbSearchResult,
   resultText, shortId, stateBadge,
 } from '@clue-harness/ui-kb/src/client/parse.ts'
-import { buildEntriesQuery, KB_API } from '@clue-harness/ui-kb/src/client/api.ts'
+import { buildEntriesQuery, KB_API, pickInitialWorkspace } from '@clue-harness/ui-kb/src/client/api.ts'
 
 test('stateBadge: the four states, and needs-review prefixes + escalates', () => {
   assert.deepEqual(stateBadge('trusted', false), { label: '可信', tone: 'ok' })
@@ -132,4 +132,27 @@ test('buildEntriesQuery: the /entries query contract', () => {
   assert.equal(new URLSearchParams(buildEntriesQuery({ q: ' BOM 编码 ' }).slice(1)).get('q'), 'BOM 编码')
   // The API base mirrors the host route prefix.
   assert.equal(KB_API, '/api/clue-kb')
+})
+
+test('pickInitialWorkspace opens on the launched workspace, not on the global tier', () => {
+  // The M9 bug this pins: a panel that starts on 全局库 shows an empty queue
+  // for the knowledge the user is actually working on.
+  const rows = [
+    { key: '-home-me-alpha', root: '/home/me/alpha' },
+    { key: '-home-me-beta', root: '/home/me/beta' },
+  ]
+  assert.equal(pickInitialWorkspace(rows, '/home/me/beta'), '-home-me-beta', '启动锚点优先')
+  assert.equal(pickInitialWorkspace(rows, '/home/me/unlisted'), '-home-me-alpha', '锚点不在名单时取第一条')
+  assert.equal(pickInitialWorkspace([], '/home/me/anywhere'), null, '空名单交给调用方回退到全局')
+})
+
+test('the workspace key is serialized verbatim; the ROUTE decides what it means', () => {
+  // The builder is a thin serializer on purpose (one implementation, no
+  // second-guessing): scope=global carrying a workspace is answered by
+  // storeFor() short-circuiting to the global tier, so it is inert — and
+  // absent/null means "the surface's launch anchor", the pre-M9 semantics.
+  assert.equal(buildEntriesQuery({ scope: 'project', workspace: '-home-me-alpha' }), '?scope=project&workspace=-home-me-alpha')
+  assert.equal(buildEntriesQuery({ scope: 'global', workspace: '-home-me-alpha' }), '?scope=global&workspace=-home-me-alpha')
+  assert.equal(buildEntriesQuery({ scope: 'project', workspace: null }), '?scope=project', 'null = 沿用启动锚点')
+  assert.equal(buildEntriesQuery({ scope: 'project', workspace: '' }), '?scope=project', '空串同样回退锚点')
 })

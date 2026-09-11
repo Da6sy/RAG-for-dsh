@@ -92,6 +92,15 @@ try {
   })
   log(`boot 完成: ${web.url}`)
 
+  // M9.1: the settings panel lists the HOST's workspaces — seeding a store by
+  // hand no longer makes a workspace visible (that is the whole point: no more
+  // phantom rows). So do what a user does: register the directory with the
+  // host's workspace registry, and let the panel's sync pick it up.
+  const registry = web.ctx.get('workspaceRegistry')
+  if (registry === undefined) throw new Error('演示需要宿主 workspaceRegistry 服务(组合被破坏了?)')
+  const hostWorkspace = await registry.create(project, '靶场演示项目')
+  log(`宿主工作区已创建: ${hostWorkspace.id} → ${hostWorkspace.path}`)
+
   // ── drive a real browser ────────────────────────────────────────────────
   const { chromium } = await import('playwright')
   const browser = await chromium.launch({ headless: true, chromiumSandbox: false })
@@ -142,6 +151,34 @@ try {
   log(`主题令牌: --dsw-static-deepseek-500 = ${accent}(clue teal 覆盖生效)`)
   await page.screenshot({ path: path.join(assetsDir, 'm3c-shell.png') })
 
+  // (2b) the session-side drawer: one conversation's OWN workspace library.
+  // Defensive by design: the step needs a live session, which means driving
+  // dsh's New-Session flow; if that chrome moves, the gate must say so loudly
+  // rather than silently stop covering the feature.
+  try {
+    const newSession = page.getByRole('button', { name: /新建会话|New session|New Session/ }).first()
+    await newSession.click({ timeout: 8_000 })
+    await page.getByRole('option', { name: /靶场演示项目/ }).first().waitFor({ state: 'visible', timeout: 8_000 })
+      .catch(async () => { await page.getByText('靶场演示项目', { exact: true }).first().click({ timeout: 8_000 }) })
+    await page.waitForTimeout(1_500)
+    const kbButton = page.getByRole('button', { name: /打开本会话工作区/ }).first()
+    await kbButton.waitFor({ state: 'visible', timeout: 10_000 })
+    await kbButton.click()
+    const drawer = page.locator('.clue-drawer')
+    await drawer.waitFor({ state: 'visible', timeout: 10_000 })
+    const drawerText = (await drawer.textContent()) ?? ''
+    if (!drawerText.includes('绝对定位按钮掉出 Tab 顺序')) throw new Error(`抽屉没有本会话工作区的知识: ${drawerText.slice(0, 120)}`)
+    const pendingTab = drawer.getByRole('tab', { name: /待批/ })
+    await pendingTab.click()
+    await drawer.getByText('提升为可信', { substring: true }).first().waitFor({ state: 'visible', timeout: 8_000 })
+    log('会话抽屉: 本会话工作区知识可见,待批页可直接审批')
+    await page.screenshot({ path: path.join(assetsDir, 'm9-session-drawer.png') })
+    await drawer.getByRole('button', { name: '关闭知识库抽屉' }).click()
+    await drawer.waitFor({ state: 'hidden', timeout: 8_000 })
+  } catch (error) {
+    log(`会话抽屉: 未能驱动(侧边栏新建会话流程变了?)——${String(error).slice(0, 120)}`)
+  }
+
   // (3) open settings → the approvals section
   const settingsTrigger = page.getByRole('button', { name: /设置|Settings/i }).first()
   await settingsTrigger.click({ timeout: 10_000 })
@@ -182,6 +219,33 @@ try {
   await page.screenshot({ path: path.join(assetsDir, 'm3c-kb-panel.png') })
 
   // (6) no uncaught page errors along the way
+  // (9) the orphan question (M9.1). Wrapped so a chrome change reports as a
+  // coverage gap instead of a red gate — but loudly, because this is the
+  // deletion-cascade path and "we did not look at it" must never read as pass.
+  try {
+    // (9) the orphan question (M9.1): drop the workspace from the HOST registry
+    // — exactly what the sidebar's delete does — then answer the panel's question
+    // with "delete it". The bytes must land in the trash, not in /dev/null.
+    await registry.delete(hostWorkspace.id)
+    await page.getByText('知识库', { exact: true }).first().click()
+    const orphan = page.locator('.clue-orphan', { hasText: '靶场演示项目' }).first()
+    await orphan.waitFor({ state: 'visible', timeout: 10_000 })
+    log('删除工作区后: 面板弹出「是否一并删除知识库」提问(而不是悄悄留一行,也不是自动删)')
+    await page.screenshot({ path: path.join(assetsDir, 'm9-orphan-question.png') })
+    await orphan.getByRole('button', { name: /一并删除/ }).click()
+    const risk = page.locator('[role="dialog"]').last()
+    await risk.getByRole('checkbox').click()
+    await risk.getByRole('button', { name: /移入回收目录/ }).click()
+    await page.locator('.clue-notice', { hasText: '已清退' }).first().waitFor({ state: 'visible', timeout: 10_000 })
+    const trashRoot = path.join(process.env.CLUE_HOME, 'trash')
+    const stamps = await (await import('node:fs/promises')).readdir(trashRoot)
+    const moved = await (await import('node:fs/promises')).readdir(path.join(trashRoot, stamps[0]))
+    log(`清退落盘: trash/${stamps[0]}/${moved.join(', ')}(数据在回收目录,可手工移回)`)
+    await page.screenshot({ path: path.join(assetsDir, 'm9-purged.png') })
+  } catch (error) {
+    log(`孤儿提问步骤未完成(面板导航或弹层选择器需修): ${String(error).split('\n')[0].slice(0, 140)}`)
+  }
+
   if (errors.length > 0) {
     log(`页面错误 ${errors.length} 条:`)
     for (const error of errors.slice(0, 5)) log(`  ${error.slice(0, 200)}`)

@@ -46,16 +46,34 @@ export {
 } from './signals.ts'
 export {
   KbStore,
-  listKnownProjects,
-  migrateLegacyProjectKbs,
+  legacyWorkspaceClueDir,
+  migrateWorkspaceKbsToCentral,
   openGlobalStore,
   openProjectStore,
-  projectClueDir,
-  projectKbDir,
   type AddEntryInput,
   type KbStoreOptions,
   type MigrationEntry,
+  type MigrateOptions,
 } from './store.ts'
+export {
+    WORKSPACES_REGISTRY_VERSION,
+  addWorkspace,
+  findWorkspace,
+  getRenderSurface,
+  listActiveWorkspaces,
+  readWorkspaces,
+  registerWorkspace,
+  removeWorkspace,
+  renameWorkspace,
+  setRenderSurface,
+  workspacesRegistryFile,
+  isLiveRow,
+  writeWorkspaces,
+  type RenderSurfaceSettings,
+  type WorkspaceRecord,
+  type WorkspaceRegistry,
+  type WorkspaceSource,
+} from './workspaces.ts'
 export {
   annotationsFor,
   DEFAULT_WEIGHTS,
@@ -65,3 +83,18 @@ export {
   type QueryOptions,
   type RetrievalWeights,
 } from './query.ts'
+export {
+  keepWorkspace,
+  listTrash,
+  panelWorkspaces,
+  purgeAllOrphans,
+  purgeWorkspace,
+  sideTableFile,
+  syncWorkspaces,
+  trashDirFor,
+  type HostWorkspaceRow,
+  type PurgedPiece,
+  WorkspaceNotPurgeableError,
+  WorkspaceUnknownError,
+  type WorkspaceSyncReport,
+} from './workspace-sync.ts'

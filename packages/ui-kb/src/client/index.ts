@@ -7,6 +7,9 @@
  *
  * 1. `settings.section` ×2 — the approval center (design §6.1, priority one)
  *    and the KB panel (§6.2), each a full page in the settings nav;
+ * 2b. `conversation.session.header.actions` — the session-side knowledge
+ *     drawer (M9.1): one additive header button that opens this conversation's
+ *     OWN workspace library and its pending queue;
  * 2. `tool.call.toolview` keyed `kb_search` / `kb_propose` — the citation
  *    cards (§6.4): a registered key REPLACES the generic tool row, so the
  *    knowledge the model consulted renders as first-class product UI;
@@ -41,6 +44,7 @@ import { ApprovalsSection } from './ApprovalsSection.tsx'
 import { KbSection } from './KbSection.tsx'
 import { KbCiteCard, KbProposeCard, KbSearchCard } from './CitationCards.tsx'
 import { ClueBrandMark, ClueBrandName } from './Brand.tsx'
+import { SessionKbAction } from './SessionKbDrawer.tsx'
 
 /** Services required before the surfaces mount (the slot registry only). */
 export const inject = ['slots']
@@ -76,6 +80,18 @@ export function apply(ctx: ClientContext): void {
     yield ctx.slots.register({ name: 'tool.call.toolview', key: 'kb_search' }, KbSearchCard)
     yield ctx.slots.register({ name: 'tool.call.toolview', key: 'kb_propose' }, KbProposeCard)
     yield ctx.slots.register({ name: 'tool.call.toolview', key: 'kb_cite' }, KbCiteCard)
+  })
+
+  // The conversation-side entry (M9.1): an additive header-action seat, so
+  // dsh's own title/tabs/utilities stay exactly where they are. It resolves
+  // the session's workspace host-side (registry session accounting), which is
+  // the only honest answer to "which library is this conversation working in".
+  ctx.slots.inject('conversation.session.header.actions', function* registerDrawerAction() {
+    yield ctx.slots.register({
+      name: 'conversation.session.header.actions',
+      id: 'clue-kb-session-drawer',
+      order: 40,
+    }, SessionKbAction)
   })
 
   // Brand takeover, atomically across all three seats (the ui-brand-official

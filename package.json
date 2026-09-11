@@ -14,6 +14,8 @@
   ],
   "scripts": {
     "clue": "node apps/cli/src/bin.ts",
+    "web": "node apps/cli/src/bin.ts web",
+    "kb": "node apps/cli/src/bin.ts kb",
     "build:ui": "node packages/ui-kb/build.mjs",
     "typecheck": "tsc -p tsconfig.json && tsc -p packages/ui-kb/tsconfig.json",
     "test": "node --test apps/cli/test/*.test.ts packages/*/test/*.test.ts"

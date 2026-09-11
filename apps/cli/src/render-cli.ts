@@ -1,7 +1,7 @@
 /**
  * `clue render` — the M1 human entry to render verification.
  *
- *   clue render <page.html> [--project <dir>] [--viewport 1440x900] [--dpr 1]
+ *   clue render <page.html> [--project <dir>] [--home <dir>] [--viewport 1440x900] [--dpr 1]
  *                  [--record | --confirm | --show]   (default: compare)
  *                  [--mask <selector>]... [--json <out>]
  *
@@ -17,6 +17,7 @@ import { inspectPage, type InspectMode } from '@clue-harness/evidence-render'
 
 const USAGE = `用法: clue render <page.html> [选项]
   --project <dir>     项目根目录(默认当前目录)
+  --home <dir>        中心 home(基准存 <home>/baselines/<工作区键>;默认 $CLUE_HOME 或 ~/.clue)
   --viewport <WxH>    视口(默认 1440x900)
   --dpr <n>           设备像素比(默认 1)
   --record            把本次采集存为基准(待人工确认)
@@ -34,6 +35,7 @@ interface ParsedArgs {
   mode: InspectMode
   masks: string[]
   jsonOut: string | undefined
+  home: string | undefined
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -44,6 +46,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   let mode: InspectMode = 'compare'
   const masks: string[] = []
   let jsonOut: string | undefined
+  let home: string | undefined
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
@@ -66,6 +69,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       case '--show': mode = 'show'; break
       case '--mask': masks.push(next()); break
       case '--json': jsonOut = next(); break
+      case '--home': home = next(); break
       case '--help': case '-h': throw new HelpRequested()
       default:
         if (arg.startsWith('-')) throw new Error(`未知选项: ${arg}\n\n${USAGE}`)
@@ -74,7 +78,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
   }
   if (page === null) throw new Error(`缺少页面参数\n\n${USAGE}`)
-  return { page, project, viewport, dpr, mode, masks, jsonOut }
+  return { page, project, viewport, dpr, mode, masks, jsonOut, home }
 }
 
 class HelpRequested extends Error {}
@@ -105,6 +109,9 @@ export async function renderMain(argv: string[]): Promise<number> {
       dpr: parsed.dpr,
       maskSelectors: parsed.masks,
       jsonOut: parsed.jsonOut,
+      // M9: baselines are addressed through the central home, keyed by the
+      // workspace path — the page's own directory stays free of clue state.
+      ...(parsed.home !== undefined ? { home: parsed.home } : {}),
     })
     process.stdout.write(result.report)
     return result.exitOk ? 0 : 1

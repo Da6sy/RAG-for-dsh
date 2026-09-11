@@ -67,13 +67,16 @@ export async function runChat(ctx: Context): Promise<void> {
     }
   })
 
-  console.log(`clue M0 · session ${sessionId} · ${PROVIDER}/${MODEL}`)
-  console.log('需要 DEEPSEEK_API_KEY(环境变量、cwd/.env 或 $DSH_HOME/.credentials.yaml)。空行或 Ctrl-D 退出。')
+  // One identity line, no hint block: the credentials sentence printed on every
+  // run even when the key resolved fine (a standing false alarm), and the
+  // milestone label went stale three milestones ago. A missing key already
+  // fails loud on the first request, with the resolution paths in the message.
+  console.log(`clue · session ${sessionId} · ${PROVIDER}/${MODEL}`)
 
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   try {
     for (;;) {
-      const line = (await rl.question('\n你> ')).trim()
+      const line = (await rl.question('\n> ')).trim()
       if (line === '') break
       streamedText = false
       agent.followup(createUserMessage({

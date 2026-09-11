@@ -1,11 +1,14 @@
 /**
- * Baseline store (design doc §4.5, decision #6 REVISED 2026-09-09).
+ * Baseline store (design doc §4.5, decision #6 RE-Revised in M9).
  *
- * Baselines live WITH the workspace (the KB-binding decision applies to
- * verification evidence too: `<projectRoot>/.clue/render-baselines/`, excluded
- * from git by the kb layer's `.clue/` exclude on first store open) — copy the
- * folder, take your evidence. Central-home storage was retired; legacy files
- * migrate via `clue kb migrate`.
+ * Baselines live in the CENTRAL home, under the same workspace key as the
+ * knowledge base — `<home>/baselines/<workspace-key>/` — because ClueHarness
+ * keeps no state inside a workspace directory any more (the M8 experiment of
+ * `<projectRoot>/.clue/render-baselines/` is retired along with the git
+ * bookkeeping it required; `clue kb migrate` imports it). Evidence and
+ * knowledge for one workspace therefore sit side by side in the home, and the
+ * page key inside the directory stays project-RELATIVE (decision #7), so a
+ * moved workspace re-derives the same layout.
  *
  * Lifecycle: first capture saves a PENDING baseline → the human confirms it
  * once (`confirmBaseline`) → later runs compare against the confirmed
@@ -21,7 +24,7 @@ import { RENDER_SNAPSHOT_VERSION, type LayoutSnapshot } from './types.ts'
 import { parseSnapshotJson, serializeSnapshotJson, stableStringify } from './serialize.ts'
 // Path discipline has exactly one home since M2: @clue-harness/util. The
 // re-exports below keep this package's public API stable.
-import { clueHome, encodeSegment, sha256File } from '@clue-harness/util'
+import { clueHome, encodeSegment, sha256File, workspaceBaselinesDir } from '@clue-harness/util'
 
 export { clueHome, encodeSegment }
 
@@ -44,14 +47,25 @@ export interface BaselineRecord {
   snapshotJson: string
 }
 
-/** Baselines directory for one project (workspace-bound, decision #6 revised). */
-export function baselinesDir(projectRoot: string): string {
-  return path.join(projectRoot, '.clue', 'render-baselines')
+/**
+ * The central baselines directory of one workspace (`<home>/baselines/<key>`).
+ * @param projectRoot - any path spelling of the workspace.
+ * @param home - ClueHarness home override (tests/demos).
+ * @returns absolute directory path (not created here).
+ */
+export function baselinesDir(projectRoot: string, home: string = clueHome()): Promise<string> {
+  return workspaceBaselinesDir(projectRoot, home)
 }
 
-/** Baseline file path for one page. */
-export function baselinePath(projectRoot: string, pageRel: string): string {
-  return path.join(baselinesDir(projectRoot), `${encodeSegment(pageRel)}.json`)
+/**
+ * Baseline file path for one page.
+ * @param projectRoot - any path spelling of the workspace.
+ * @param pageRel - project-relative page path (the record's `target`).
+ * @param home - ClueHarness home override.
+ * @returns the absolute JSON path the record lives (or would live) at.
+ */
+export async function baselinePath(projectRoot: string, pageRel: string, home?: string): Promise<string> {
+  return path.join(await baselinesDir(projectRoot, home), `${encodeSegment(pageRel)}.json`)
 }
 
 /** sha256 of a file's bytes (delegates to the shared util since M2). */
@@ -61,10 +75,13 @@ export async function sourceHash(filePath: string): Promise<string> {
 
 /**
  * Load a baseline record, refusing foreign record versions.
+ * @param projectRoot - any path spelling of the workspace.
+ * @param pageRel - project-relative page path.
+ * @param home - ClueHarness home override.
  * @returns the record, or null when none exists yet.
  */
-export async function loadBaseline(projectRoot: string, pageRel: string): Promise<BaselineRecord | null> {
-  const file = baselinePath(projectRoot, pageRel)
+export async function loadBaseline(projectRoot: string, pageRel: string, home?: string): Promise<BaselineRecord | null> {
+  const file = await baselinePath(projectRoot, pageRel, home)
   let text: string
   try {
     text = await readFile(file, 'utf8')
@@ -83,6 +100,7 @@ export async function saveBaseline(
   projectRoot: string,
   snapshot: LayoutSnapshot,
   sourceHashes: Record<string, string>,
+  home?: string,
 ): Promise<{ path: string; record: BaselineRecord }> {
   const record: BaselineRecord = {
     version: BASELINE_RECORD_VERSION,
@@ -94,19 +112,19 @@ export async function saveBaseline(
     confirmedAt: null,
     snapshotJson: serializeSnapshotJson(snapshot),
   }
-  const file = baselinePath(projectRoot, snapshot.target)
+  const file = await baselinePath(projectRoot, snapshot.target, home)
   await mkdir(path.dirname(file), { recursive: true })
   await writeFile(file, `${stableStringify(record)}\n`, 'utf8')
   return { path: file, record }
 }
 
 /** Mark the stored baseline as human-confirmed (the one manual act §4.5 requires). */
-export async function confirmBaseline(projectRoot: string, pageRel: string): Promise<BaselineRecord> {
-  const record = await loadBaseline(projectRoot, pageRel)
+export async function confirmBaseline(projectRoot: string, pageRel: string, home?: string): Promise<BaselineRecord> {
+  const record = await loadBaseline(projectRoot, pageRel, home)
   if (record === null) throw new Error(`没有可确认的基准: ${pageRel}(先运行 --record)`)
   record.confirmed = true
   record.confirmedAt = new Date().toISOString()
-  const file = baselinePath(projectRoot, pageRel)
+  const file = await baselinePath(projectRoot, pageRel, home)
   await writeFile(file, `${stableStringify(record)}\n`, 'utf8')
   return record
 }

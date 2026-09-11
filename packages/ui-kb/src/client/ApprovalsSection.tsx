@@ -10,6 +10,12 @@
  * mid-batch leaves the earlier decisions committed and the rest pending
  * (honest partial progress, no transaction illusion).
  *
+ * M9 adds the third dimension of an address: WHICH workspace's central
+ * library is being reviewed. The roster comes from ClueHarness's own registry
+ * (WorkspacePicker), so the panel manages knowledge per already-created
+ * workspace instead of being pinned to whatever directory the surface
+ * happened to start in.
+ *
  * Data discipline: this component owns LOCAL state only (fetch on mount,
  * refetch after actions and on demand) — nothing here is shared across
  * entries or survives remounts, so no store is declared (slot rule 5).
@@ -18,8 +24,9 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
-import { kbApi, KbApiError, type ApprovalCard, type KbScope } from './api.ts'
+import { kbApi, KbApiError, type ApprovalCard, type KbTarget } from './api.ts'
 import { actionCopy, shortId, stateBadge } from './parse.ts'
+import { GLOBAL_VALUE, targetOf, WorkspacePicker } from './WorkspacePicker.tsx'
 
 /**
  * Format an ISO instant for card display.
@@ -37,7 +44,11 @@ function when(iso: string): string {
  * @returns the approval center panel.
  */
 export function ApprovalsSection() {
-  const [scope, setScope] = useState<KbScope>('project')
+  // The addressed library: a workspace key, or the global tier. Initialised to
+  // the global tier and immediately re-pointed by the picker at the workspace
+  // this surface was launched in (M9: the roster is the source of truth).
+  const [address, setAddress] = useState<string>(GLOBAL_VALUE)
+  const target: KbTarget = targetOf(address)
   const [cards, setCards] = useState<ApprovalCard[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -47,11 +58,11 @@ export function ApprovalsSection() {
   // the human stays the approver, the model stays the typist.
   const [polish, setPolish] = useState<Record<string, { loading?: boolean; text?: string; error?: string }>>({})
 
-  const load = useCallback(async (tier: KbScope) => {
+  const load = useCallback(async (where: KbTarget) => {
     setLoading(true)
     setError(null)
     try {
-      const payload = await kbApi.approvals(tier)
+      const payload = await kbApi.approvals(where)
       setCards(payload.approvals)
     } catch (cause) {
       setCards(null)
@@ -61,7 +72,7 @@ export function ApprovalsSection() {
     }
   }, [])
 
-  useEffect(() => { void load(scope) }, [scope, load])
+  useEffect(() => { void load(target) }, [address, load])
 
   /**
    * Resolve one request, then refresh the queue.
@@ -72,8 +83,8 @@ export function ApprovalsSection() {
     setBusy(requestId)
     setError(null)
     try {
-      await kbApi.resolve(scope, requestId, approved)
-      await load(scope)
+      await kbApi.resolve(target, requestId, approved)
+      await load(target)
     } catch (cause) {
       setError(cause instanceof KbApiError ? cause.message : String(cause))
     } finally {
@@ -88,7 +99,7 @@ export function ApprovalsSection() {
     setError(null)
     for (const card of queue) {
       try {
-        await kbApi.resolve(scope, card.request.id, approved)
+        await kbApi.resolve(target, card.request.id, approved)
       } catch (cause) {
         // A mid-batch failure is reported, earlier decisions stay committed.
         setError(`批量处理在 ${card.request.id} 中断: ${cause instanceof KbApiError ? cause.message : String(cause)}`)
@@ -96,7 +107,7 @@ export function ApprovalsSection() {
       }
     }
     setBusy(null)
-    await load(scope)
+    await load(target)
   }
 
   /**
@@ -107,7 +118,7 @@ export function ApprovalsSection() {
   const requestPolish = async (requestId: string, entryId: string): Promise<void> => {
     setPolish((previous) => ({ ...previous, [requestId]: { loading: true } }))
     try {
-      const result = await kbApi.polish(scope, entryId)
+      const result = await kbApi.polish(target, entryId)
       setPolish((previous) => ({ ...previous, [requestId]: { text: result.polished } }))
     } catch (cause) {
       const message = cause instanceof KbApiError ? cause.message : String(cause)
@@ -125,13 +136,13 @@ export function ApprovalsSection() {
     setBusy(requestId)
     setError(null)
     try {
-      await kbApi.updateText(scope, entryId, text, '审批中心采纳 AI 润色稿')
+      await kbApi.updateText(target, entryId, text, '审批中心采纳 AI 润色稿')
       setPolish((previous) => {
         const next = { ...previous }
         delete next[requestId]
         return next
       })
-      await load(scope)
+      await load(target)
     } catch (cause) {
       setError(cause instanceof KbApiError ? cause.message : String(cause))
     } finally {
@@ -146,18 +157,13 @@ export function ApprovalsSection() {
         <div><div className="clue-eyebrow">CLUE / REVIEW QUEUE</div><h2>知识审批中心</h2><p>把跨项目沉淀的经验，变成可追溯、可复核的团队资产。</p></div>
         <div className="clue-counter">{loading ? '—' : pending.length}<small>待处理</small></div>
       </div>
+      <WorkspacePicker value={address} onChange={setAddress} stats />
       <div className="clue-toolbar">
-        <Button size="sm" variant={scope === 'project' ? 'primary' : 'outline'} onClick={() => { setScope('project') }}>
-          项目库
-        </Button>
-        <Button size="sm" variant={scope === 'global' ? 'primary' : 'outline'} onClick={() => { setScope('global') }}>
-          全局库
-        </Button>
         <span className="clue-count">
           {loading ? '加载中…' : `待批 ${pending.length} 条`}
         </span>
         <span className="clue-spacer" />
-        <Button size="sm" variant="ghost" disabled={loading || pending.length === 0 || busy !== null} onClick={() => { void load(scope) }}>
+        <Button size="sm" variant="ghost" disabled={loading || pending.length === 0 || busy !== null} onClick={() => { void load(target) }}>
           刷新
         </Button>
         <Button size="sm" variant="primary" disabled={pending.length === 0 || busy !== null} onClick={() => { void decideAll(true) }}>

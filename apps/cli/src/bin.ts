@@ -50,11 +50,15 @@ if (command === '--help' || command === '-h') {
   const { kbMain } = await import('./kb-cli.ts')
   process.exitCode = await kbMain(rest)
 } else if (command === undefined) {
-  const { clueHostHome } = await import('@clue-harness/util')
+  const { clueHostHome, clueSessionsDir } = await import('@clue-harness/util')
   // Same host-home rule as `clue web`: DSH_HOME is ASSIGNED to the clue host
   // home (CLUE_HOST_HOME overrides), never inherited — an exported DSH_HOME
   // from a surrounding dsh is exactly the sharing this decouples.
   process.env.DSH_HOME = process.env.CLUE_HOST_HOME ?? clueHostHome()
+  // M9: the session log is central too (`<home>/sessions/cli`), so running
+  // `clue` in somebody's repository leaves nothing behind in it. The
+  // composition reads this through CLUE_SESSIONS_ROOT.
+  process.env.CLUE_SESSIONS_ROOT = process.env.CLUE_SESSIONS_DIR ?? clueSessionsDir('cli')
   const { loadLayeredEnv, installFailLoud, boot } = await import('@deepseek-ai/dsh-app-boot')
   const { runChat } = await import('./chat.ts')
   // .env layering (DEEPSEEK_API_KEY usually lands here), then the fail-loud

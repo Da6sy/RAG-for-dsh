@@ -55,6 +55,7 @@
  */
 import path from 'node:path'
 import { readFile } from 'node:fs/promises'
+import { clueHome } from '@clue-harness/util'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
@@ -64,12 +65,18 @@ import { createUserMessage, type ImageBlock } from '@deepseek-ai/dsh-llm'
 import {
   openGlobalStore,
   openProjectStore,
+  panelWorkspaces,
   queryKb,
+  readWorkspaces,
+  syncWorkspaces,
+  type HostWorkspaceRow,
   type KbEntry,
   type KbKind,
   type KbStore,
   type QueryHit,
   type SignalInput,
+  type WorkspaceRecord,
+  type WorkspaceSyncReport,
 } from '@clue-harness/kb'
 import {
   buildWorkLog,
@@ -101,6 +108,9 @@ export interface Config {
    * Default KB anchor (default: process.cwd() at mount). M5: sessions
    * carrying a validated header cwd anchor to their OWN project root; this
    * remains the fallback and the host-plane service face (kb-web panels).
+   * M9: the anchor is only ever a PATH — which central tier it names is a
+   * pure derivation (`<home>/kb/<workspace-key>`), so panel, CLI and session
+   * gate cannot read two different books for one workspace.
    */
   cwd?: string
   /** Retrieval top-K for pre-step injection and kb_search default. */
@@ -207,10 +217,29 @@ export async function routeSupportsImage(llm: ImageProbeLlm | undefined, agent: 
 export interface ClueKb {
   /** Resolved project root this face anchors to. */
   readonly projectRoot: string
-  /** Open (cached) project + global stores. */
+  /** Open (cached) project + global stores at the launch anchor. */
   stores(): Promise<{ project: KbStore; global: KbStore }>
-  /** Retrieval with the face defaults applied. */
-  query(text: string, options?: { limit?: number; includeExpired?: boolean }): Promise<QueryHit[]>
+  /** The same pair for ANY workspace root (M9: sessions route by their cwd). */
+  storesFor(root: string): Promise<{ project: KbStore; global: KbStore }>
+  /** The ClueHarness workspace roster (its own list — never dsh's workspaces). */
+  workspaces(): Promise<WorkspaceRecord[]>
+  /** The home every workspace path resolves against (kb-web passes it on). */
+  readonly home: string
+  /**
+   * Reconcile the side table with the HOST's workspace registry (M9.1). This
+   * is the face's job, not the web host's: the face owns the configured home,
+   * and it is the plugin that knows whether a registry exists at all (the CLI
+   * composition has none, and there a sync must be a no-op rather than a
+   * mass-orphaning).
+   */
+  syncHostWorkspaces(): Promise<WorkspaceSyncReport>
+  /** Which host workspace owns one session (the conversation drawer's address). */
+  hostWorkspaceForSession(sessionId: string): Promise<HostWorkspaceRow | null>
+  /** The rows the settings panel may show (live workspaces + orphan questions). */
+  panelWorkspaces(): Promise<WorkspaceRecord[]>
+  /** Retrieval with the face defaults applied (M9: pass `root` to search
+   *  another workspace's tiers; absent = the launch anchor). */
+  query(text: string, options?: { limit?: number; includeExpired?: boolean; root?: string }): Promise<QueryHit[]>
   /** Model/human proposal — always lands as candidate. */
   propose(input: { kind: KbKind; title: string; text: string; tags?: string[]; bindings?: string[]; createdBy?: string }): Promise<KbEntry>
   /** Record one weighted signal. */
@@ -364,6 +393,28 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
   // The launch-anchor pair (service face + sessions without a validated cwd).
   const stores = (): Promise<{ project: KbStore; global: KbStore }> => storesFor(resolved.projectRoot)
+  const roster = (): Promise<WorkspaceRecord[]> => readWorkspaces(resolved.home)
+  /** The host registry, when this composition has one (the web plane does). */
+  interface HostRegistryLike {
+    list(): Array<{ id: string; path: string; title: string; sessionIds: readonly string[] }>
+  }
+  const hostRegistry = (): HostRegistryLike | undefined =>
+    ctx.get('workspaceRegistry') as HostRegistryLike | undefined
+  const syncHostWorkspaces = async (): Promise<WorkspaceSyncReport> => {
+    const registry = hostRegistry()
+    if (registry === undefined) {
+      // No registry (CLI/headless): nobody can have been "removed", so the
+      // side table stands exactly as it is and the panel reads local rows.
+      const rows = await panelWorkspaces(resolved.home)
+      return { live: rows, newlyOrphaned: [], revived: [], cliOnly: rows.length }
+    }
+    const rows: HostWorkspaceRow[] = registry.list().map((row) => ({ id: row.id, path: row.path, title: row.title }))
+    return syncWorkspaces(rows, resolved.home)
+  }
+  const hostWorkspaceForSession = async (sessionId: string): Promise<HostWorkspaceRow | null> => {
+    const host = hostRegistry()?.list().find((row) => row.sessionIds.includes(sessionId))
+    return host === undefined ? null : { id: host.id, path: host.path, title: host.title }
+  }
 
   /**
    * The KB root of one agent's session: the validated header cwd when the
@@ -559,7 +610,13 @@ export function apply(ctx: Context, config: Config = {}): void {
   const service: ClueKb = {
     projectRoot: resolved.projectRoot,
     stores,
-    query,
+    storesFor,
+    workspaces: roster,
+    home: resolved.home ?? clueHome(),
+    syncHostWorkspaces,
+    hostWorkspaceForSession,
+    panelWorkspaces: () => panelWorkspaces(resolved.home),
+    query: (text, options) => queryFor(options?.root ?? resolved.projectRoot)(text, options),
     propose: async (input) => {
       const { project, global } = await stores()
       // Global-tier proposals are an M3c concern (human-only); the face
@@ -766,7 +823,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     // The gate works in the SESSION's project: surface config, worklog root,
     // stores, and inspection all anchor to the validated session cwd (M5).
     const root = sessionRoot(agent)
-    const surface = await loadRenderSurfaceConfig(root)
+    const surface = await loadRenderSurfaceConfig(root, resolved.home)
     const { renderable } = classifyChanges([...state.changedFiles], surface)
     const decision = gateDecision(state, renderable, {
       gate: resolved.gate,

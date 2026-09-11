@@ -15,9 +15,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { Button, IconSearchOutline16, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   kbApi, KbApiError,
-  type EntryPayload, type KbScope, type ScorePayload, type SignalPayload,
+  type EntryPayload, type KbScope, type KbTarget, type ScorePayload, type SignalPayload,
 } from './api.ts'
 import { shortId, stateBadge } from './parse.ts'
+import { GLOBAL_VALUE, targetOf, WorkspacePicker } from './WorkspacePicker.tsx'
+import { MenuSelect } from './MenuSelect.tsx'
 
 /** The lifecycle filter vocabulary (plus 'all' and the orthogonal flag). */
 const STATUS_FILTERS = [
@@ -143,7 +145,9 @@ function EntryDossier({ dossier, busy, onReverify }: {
  * @returns the browsing panel.
  */
 export function KbSection() {
-  const [scope, setScope] = useState<KbScope>('project')
+  // M9: WHICH library is addressed first (a workspace key or the global tier),
+  // then what inside it is filtered. The roster is ClueHarness's own.
+  const [address, setAddress] = useState<string>(GLOBAL_VALUE)
   const [status, setStatus] = useState('')
   const [needsReviewOnly, setNeedsReviewOnly] = useState(false)
   const [q, setQ] = useState('')
@@ -154,20 +158,21 @@ export function KbSection() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
 
-  const load = useCallback(async (tier: KbScope, statusFilter: string, reviewOnly: boolean, query: string) => {
+  const load = useCallback(async (where: KbTarget, statusFilter: string, reviewOnly: boolean, query: string) => {
+    const tier = where.scope
     setLoading(true)
     setError(null)
     try {
       if (query.trim() !== '') {
         // Retrieval mode answers across tiers with ranking; the scope toggle
         // still narrows (the route filters hits by tier when scope is set).
-        const payload = await kbApi.entries({ scope: tier, q: query, limit: 100 }) as {
+        const payload = await kbApi.entries({ ...where, q: query, limit: 100 }) as {
           entries: { entry: EntryPayload }[]
         }
         setEntries(payload.entries.map(hit => hit.entry))
       } else {
         const payload = await kbApi.entries({
-          scope: tier,
+          ...where,
           ...(statusFilter !== '' ? { status: statusFilter } : {}),
           ...(reviewOnly ? { needsReview: true } : {}),
         }) as { entries: EntryPayload[] }
@@ -184,8 +189,8 @@ export function KbSection() {
   useEffect(() => {
     setSelected(null)
     setDossier(null)
-    void load(scope, status, needsReviewOnly, q)
-  }, [scope, status, needsReviewOnly, load]) // q rides the search button/Enter, not keystrokes
+    void load(targetOf(address), status, needsReviewOnly, q)
+  }, [address, status, needsReviewOnly, load]) // q rides the search button/Enter, not keystrokes
 
   /**
    * Open one entry's dossier.
@@ -196,7 +201,7 @@ export function KbSection() {
     setDossier(null)
     setError(null)
     try {
-      setDossier(await kbApi.entry(scope, id))
+      setDossier(await kbApi.entry(targetOf(address), id))
     } catch (cause) {
       setError(cause instanceof KbApiError ? cause.message : String(cause))
     }
@@ -210,9 +215,9 @@ export function KbSection() {
     if (selected === null) return
     setBusy(true)
     try {
-      await kbApi.reverify(scope, selected, accept)
-      setDossier(await kbApi.entry(scope, selected))
-      await load(scope, status, needsReviewOnly, q)
+      await kbApi.reverify(targetOf(address), selected, accept)
+      setDossier(await kbApi.entry(targetOf(address), selected))
+      await load(targetOf(address), status, needsReviewOnly, q)
     } catch (cause) {
       setError(cause instanceof KbApiError ? cause.message : String(cause))
     } finally {
@@ -225,13 +230,13 @@ export function KbSection() {
     setBusy(true)
     setError(null)
     try {
-      const result = await kbApi.sweep(scope)
+      const result = await kbApi.sweep(targetOf(address))
       const summary = ['expired', 'discarded', 'purged', 'promotions']
         .map(bucket => `${bucket}: ${result.result[bucket]?.length ?? 0}`)
         .join(' · ')
       setError(null)
       window.alert(`清扫完成 — ${summary}`)
-      await load(scope, status, needsReviewOnly, q)
+      await load(targetOf(address), status, needsReviewOnly, q)
     } catch (cause) {
       setError(cause instanceof KbApiError ? cause.message : String(cause))
     } finally {
@@ -246,16 +251,14 @@ export function KbSection() {
         <div><div className="clue-eyebrow">CLUE / KNOWLEDGE GRAPH</div><h2>知识库</h2><p>浏览项目经验、全局规则和它们被验证过的完整轨迹。</p></div>
         <div className="clue-counter">{loading ? '—' : list.length}<small>条知识</small></div>
       </div>
+      <WorkspacePicker value={address} onChange={setAddress} />
       <div className="clue-toolbar">
-        <Button size="sm" variant={scope === 'project' ? 'primary' : 'outline'} onClick={() => { setScope('project') }}>
-          项目库
-        </Button>
-        <Button size="sm" variant={scope === 'global' ? 'primary' : 'outline'} onClick={() => { setScope('global') }}>
-          全局库
-        </Button>
-        <select className="clue-select" value={status} onChange={event => { setStatus(event.target.value) }}>
-          {STATUS_FILTERS.map(filter => <option value={filter.value} key={filter.value}>{filter.label}</option>)}
-        </select>
+        <MenuSelect
+          value={status}
+          options={STATUS_FILTERS.map(filter => ({ id: filter.value || 'all', label: filter.label }))}
+          onChange={(id) => { setStatus(id === 'all' ? '' : id) }}
+          ariaLabel="按生命周期状态筛选"
+        />
         <label className="clue-dim" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <input type="checkbox" checked={needsReviewOnly} onChange={event => { setNeedsReviewOnly(event.target.checked) }} />
           仅待复核
@@ -267,10 +270,10 @@ export function KbSection() {
           value={q}
           onChange={event => { setQ(event.target.value) }}
           onKeyDown={event => {
-            if (event.key === 'Enter') void load(scope, status, needsReviewOnly, q)
+            if (event.key === 'Enter') void load(targetOf(address), status, needsReviewOnly, q)
           }}
         />
-        <Button size="sm" variant="outline" onClick={() => { void load(scope, status, needsReviewOnly, q) }}>检索</Button>
+        <Button size="sm" variant="outline" onClick={() => { void load(targetOf(address), status, needsReviewOnly, q) }}>检索</Button>
         <span className="clue-spacer" />
         <span className="clue-count">{loading ? '加载中…' : `${list.length} 条`}</span>
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => { void sweep() }}>清扫(sweep)</Button>

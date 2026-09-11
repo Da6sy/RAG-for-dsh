@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, readdir, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { RENDER_SNAPSHOT_VERSION, type LayoutSnapshot } from '../src/types.ts'
@@ -12,6 +12,7 @@ import {
   BASELINE_RECORD_VERSION,
   baselinePath,
   baselineSnapshot,
+  baselinesDir,
   confirmBaseline,
   encodeSegment,
   isStale,
@@ -45,9 +46,25 @@ test('encodeSegment is path-safe and stable', () => {
   assert.equal(encodeSegment('x'), encodeSegment('x'))
 })
 
-test('baseline path lives with the workspace: <projectRoot>/.clue/render-baselines', () => {
-  const file = baselinePath('/proj/root', 'pages/a.html')
-  assert.equal(file, path.join('/proj/root', '.clue', 'render-baselines', 'pages-a-html.json'))
+test('baseline path is central and workspace-keyed: <home>/baselines/<key>', async () => {
+  const { home, project } = await tmpHome()
+  const file = await baselinePath(project, 'pages/a.html', home)
+  assert.equal(path.dirname(file), path.join(home, 'baselines', path.basename(await baselinesDir(project, home))))
+  assert.equal(file, path.join(await baselinesDir(project, home), 'pages-a-html.json'))
+  // The workspace directory carries nothing of ours (M9).
+  assert.equal((await readdir(project)).length, 0)
+})
+
+test('two workspaces with the same basename get distinct central keys', async () => {
+  const { home } = await tmpHome()
+  const one = await mkdtemp(path.join(tmpdir(), 'clue-same-'))
+  const two = await mkdtemp(path.join(tmpdir(), 'clue-same-'))
+  const nested = path.join(one, 'site')
+  await mkdir(nested, { recursive: true })
+  const d1 = await baselinesDir(nested, home)
+  const d2 = await baselinesDir(two, home)
+  assert.notEqual(d1, d2)
+  assert.ok(d1.includes('-site'))
 })
 
 test('save → load round-trips; records start unconfirmed', async (t) => {
@@ -55,10 +72,10 @@ test('save → load round-trips; records start unconfirmed', async (t) => {
   t.after(async () => { const { rm } = await import('node:fs/promises'); await rm(home, { recursive: true, force: true }); await rm(project, { recursive: true, force: true }) })
 
   const hashes = { 'search.html': await sourceHash(path.join(import.meta.dirname, 'fixtures/sample.html')) }
-  const saved = await saveBaseline(project, snapshot(), hashes)
+  const saved = await saveBaseline(project, snapshot(), hashes, home)
   assert.equal(saved.record.confirmed, false)
 
-  const loaded = await loadBaseline(project, 'search.html')
+  const loaded = await loadBaseline(project, 'search.html', home)
   assert.ok(loaded)
   assert.equal(loaded.version, BASELINE_RECORD_VERSION)
   assert.deepEqual(loaded.sourceHashes, hashes)
@@ -71,26 +88,26 @@ test('confirm flips the record and stamps confirmedAt', async (t) => {
   const { home, project } = await tmpHome()
   t.after(async () => { const { rm } = await import('node:fs/promises'); await rm(home, { recursive: true, force: true }); await rm(project, { recursive: true, force: true }) })
 
-  await saveBaseline(project, snapshot(), { 'search.html': 'h0' })
-  const confirmed = await confirmBaseline(project, 'search.html')
+  await saveBaseline(project, snapshot(), { 'search.html': 'h0' }, home)
+  const confirmed = await confirmBaseline(project, 'search.html', home)
   assert.equal(confirmed.confirmed, true)
   assert.ok(confirmed.confirmedAt !== null)
-  const reloaded = await loadBaseline(project, 'search.html')
+  const reloaded = await loadBaseline(project, 'search.html', home)
   assert.equal(reloaded?.confirmed, true)
 })
 
 test('confirming a missing baseline teaches the next step', async (t) => {
   const { home, project } = await tmpHome()
   t.after(async () => { const { rm } = await import('node:fs/promises'); await rm(home, { recursive: true, force: true }); await rm(project, { recursive: true, force: true }) })
-  await assert.rejects(() => confirmBaseline(project, 'nope.html'), /先运行 --record/)
+  await assert.rejects(() => confirmBaseline(project, 'nope.html', home), /先运行 --record/)
 })
 
 test('isStale detects changed AND newly-bound source files', async (t) => {
   const { home, project } = await tmpHome()
   t.after(async () => { const { rm } = await import('node:fs/promises'); await rm(home, { recursive: true, force: true }); await rm(project, { recursive: true, force: true }) })
 
-  await saveBaseline(project, snapshot(), { 'search.html': 'aaa', 'style.css': 'bbb' })
-  const record = (await loadBaseline(project, 'search.html'))!
+  await saveBaseline(project, snapshot(), { 'search.html': 'aaa', 'style.css': 'bbb' }, home)
+  const record = (await loadBaseline(project, 'search.html', home))!
   assert.equal(isStale(record, { 'search.html': 'aaa', 'style.css': 'bbb' }), false)
   assert.equal(isStale(record, { 'search.html': 'CHANGED', 'style.css': 'bbb' }), true)
   assert.equal(isStale(record, { 'search.html': 'aaa', 'style.css': 'bbb', 'new.js': 'ccc' }), true)
@@ -100,10 +117,10 @@ test('load refuses a foreign record version (no auto-migration)', async (t) => {
   const { home, project } = await tmpHome()
   t.after(async () => { const { rm } = await import('node:fs/promises'); await rm(home, { recursive: true, force: true }); await rm(project, { recursive: true, force: true }) })
 
-  const file = baselinePath(project, 'search.html')
+  const file = await baselinePath(project, 'search.html', home)
   await mkdir(path.dirname(file), { recursive: true })
   await writeFile(file, JSON.stringify({ version: 999 }), 'utf8')
-  await assert.rejects(() => loadBaseline(project, 'search.html'), /版本不匹配/)
+  await assert.rejects(() => loadBaseline(project, 'search.html', home), /版本不匹配/)
 })
 
 test('sourceHash is sha256 of bytes and stable', async () => {

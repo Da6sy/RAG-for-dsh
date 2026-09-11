@@ -34,6 +34,8 @@ export interface InspectOptions {
   /** Page path, project-relative (posix or win separators both accepted). */
   page: string
   mode: InspectMode
+  /** ClueHarness home the baselines live under (M9 central storage). */
+  home?: string
   viewport?: { width: number; height: number }
   dpr?: number
   /** Extra volatile-region selectors to mask before capture. */
@@ -75,11 +77,12 @@ export async function inspectPage(options: InspectOptions): Promise<InspectResul
 
   // confirm needs no capture at all — the fast path.
   if (options.mode === 'confirm') {
-    const record = await confirmBaseline(projectRoot, pageRel)
+    const record = await confirmBaseline(projectRoot, pageRel, options.home)
+    const confirmedFile = await baselinePath(projectRoot, pageRel, options.home)
     return {
       snapshot: null, snapshotText: '', baseline: record, stale: false, diff: null,
-      report: `基准已人工确认: ${pageRel}\n  文件: ${baselinePath(projectRoot, pageRel)}\n`,
-      baselinePath: baselinePath(projectRoot, pageRel), exitOk: true,
+      report: `基准已人工确认: ${pageRel}\n  文件: ${confirmedFile}\n`,
+      baselinePath: confirmedFile, exitOk: true,
     }
   }
 
@@ -147,8 +150,8 @@ export async function inspectPage(options: InspectOptions): Promise<InspectResul
   }
 
   if (options.mode === 'record') {
-    const existing = await loadBaseline(projectRoot, pageRel)
-    const saved = await saveBaseline(projectRoot, snapshot, hashes)
+    const existing = await loadBaseline(projectRoot, pageRel, options.home)
+    const saved = await saveBaseline(projectRoot, snapshot, hashes, options.home)
     const lines = [
       `基准已保存(待人工确认): ${pageRel}`,
       `  文件: ${saved.path}`,
@@ -164,7 +167,7 @@ export async function inspectPage(options: InspectOptions): Promise<InspectResul
   }
 
   // compare
-  const record = await loadBaseline(projectRoot, pageRel)
+  const record = await loadBaseline(projectRoot, pageRel, options.home)
   if (record === null) {
     return {
       snapshot, snapshotText, baseline: null, stale: false, diff: null,
@@ -180,7 +183,7 @@ export async function inspectPage(options: InspectOptions): Promise<InspectResul
   return {
     snapshot, snapshotText, baseline: record, stale, diff,
     report: `${diffText}\n${assertionsText}\n\n当前结构树:\n${snapshotText}`,
-    baselinePath: baselinePath(projectRoot, pageRel),
+    baselinePath: await baselinePath(projectRoot, pageRel, options.home),
     exitOk: !diffErrors && !failedError,
   }
 }

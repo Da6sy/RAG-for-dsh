@@ -45,12 +45,14 @@
       You are ClueHarness, an evidence-driven coding assistant.
       Keep answers brief and factual. Verify claims when you can.
 
-# Durable session log: JSONL + zstd frames under ./.sessions (gitignored).
-# Every turn is replayable from here (lesson 8: the log is the truth).
+# Durable session log: JSONL + zstd frames under the CENTRAL home
+# ($CLUE_SESSIONS_ROOT, which the `clue` bin assigns to ~/.clue/sessions/cli).
+# M9: nothing clue-owned is written into the workspace any more. Every turn is
+# replayable from here (lesson 8: the log is the truth).
 - id: persistence
   name: '@deepseek-ai/dsh-session-persistence-jsonl'
   config:
-    root: './.sessions'
+    root: !!js (process.env.CLUE_SESSIONS_ROOT ?? '.sessions')
 
 # --- Filesystem capability (M3a): the chat agent can read/write/edit files ---
 # Attachment store first: tool-fs's read_image waits on ctx.attachments.

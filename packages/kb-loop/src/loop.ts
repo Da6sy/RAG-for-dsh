@@ -104,7 +104,7 @@ export function evidenceFailureStreak(signals: readonly SignalRecord[]): number 
 export async function runEvidenceLoop(options: LoopOptions): Promise<LoopReport> {
   const { worklog } = options
   const store = await openProjectStore(worklog.projectRoot, options.home)
-  const surface = await loadRenderSurfaceConfig(worklog.projectRoot)
+  const surface = await loadRenderSurfaceConfig(worklog.projectRoot, options.home)
   const { renderable, other } = classifyChanges(worklog.changedFiles, surface)
 
   // Load the referenced entries across BOTH tiers: a session may have cited

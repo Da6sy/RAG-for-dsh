@@ -5,14 +5,16 @@
  * changed files intersect the project's render surface. Pure-backend turns
  * never open a browser and are never blocked by the evidence gate.
  *
- * The render surface is project-configurable (`.clue/render-surface.json`,
- * arrays REPLACE the defaults — explicit over implicit), with sane defaults
- * for the M1 scope (plain HTML/CSS projects).
+ * The render surface is per-workspace configurable (M9: it lives in the
+ * workspace's record inside `<home>/workspaces.json` — the old
+ * `<root>/.clue/render-surface.json` file was imported by `clue kb migrate`,
+ * so no ClueHarness state stays inside the project directory). Arrays REPLACE
+ * the defaults — explicit over implicit — with sane defaults for the M1 scope
+ * (plain HTML/CSS projects).
  *
  * @module @clue-harness/kb-loop/classify
  */
-import path from 'node:path'
-import { readJsonOrNull } from '@clue-harness/util'
+import { getRenderSurface, type RenderSurfaceSettings } from '@clue-harness/kb'
 
 /** What counts as "renderable" in this project. */
 export interface RenderSurfaceConfig {
@@ -28,20 +30,20 @@ export const DEFAULT_RENDER_SURFACE: RenderSurfaceConfig = {
 }
 
 /**
- * Load the project's render-surface config, falling back to defaults.
- * A present config REPLACES both arrays (no merge surprises); a malformed
- * file fails loud (misconfiguration must not silently widen/narrow triggers).
- * @param projectRoot - absolute project root.
+ * Load one workspace's render surface: its stored override when it has one,
+ * else the shipped defaults. A stored array REPLACES that array's defaults (no
+ * merge surprises). A malformed roster fails loud inside the registry read,
+ * so a misconfiguration can never silently widen or narrow what triggers.
+ * @param projectRoot - any path spelling of the workspace.
+ * @param home - ClueHarness home override (default CLUE_HOME/~/.clue).
  * @returns the effective config.
  */
-export async function loadRenderSurfaceConfig(projectRoot: string): Promise<RenderSurfaceConfig> {
-  const file = path.join(projectRoot, '.clue', 'render-surface.json')
-  const custom = await readJsonOrNull<Partial<RenderSurfaceConfig>>(file)
-  if (custom === null) return DEFAULT_RENDER_SURFACE
-  const extensions = custom.extensions ?? DEFAULT_RENDER_SURFACE.extensions
-  const pathPrefixes = custom.pathPrefixes ?? DEFAULT_RENDER_SURFACE.pathPrefixes
+export async function loadRenderSurfaceConfig(projectRoot: string, home?: string): Promise<RenderSurfaceConfig> {
+  const stored: RenderSurfaceSettings | undefined = await getRenderSurface(projectRoot, home)
+  const extensions = stored?.extensions ?? DEFAULT_RENDER_SURFACE.extensions
+  const pathPrefixes = stored?.pathPrefixes ?? DEFAULT_RENDER_SURFACE.pathPrefixes
   if (!Array.isArray(extensions) || !Array.isArray(pathPrefixes)) {
-    throw new Error(`渲染面配置格式错误: ${file}(extensions/pathPrefixes 必须是数组)`)
+    throw new Error(`渲染面配置格式错误: ${projectRoot} 的 renderSurface.extensions/pathPrefixes 必须是数组`)
   }
   return {
     extensions: extensions.map((e) => e.toLowerCase().startsWith('.') ? e.toLowerCase() : `.${e.toLowerCase()}`),

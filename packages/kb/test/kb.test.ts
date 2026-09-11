@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
@@ -34,7 +34,7 @@ async function lab(): Promise<{ root: string; home: string; project: string; pro
 }
 
 test('add always starts at candidate; facts round-trip through disk', async (t) => {
-  const { root, projectStore } = await lab()
+  const { root, home, project, projectStore } = await lab()
   t.after(() => rm(root, { recursive: true, force: true }))
 
   const entry = await projectStore.add({
@@ -52,8 +52,10 @@ test('add always starts at candidate; facts round-trip through disk', async (t) 
   const listed = await projectStore.list()
   assert.equal(listed.length, 1)
   assert.equal((await projectStore.list({ status: 'trusted' })).length, 0)
-  // The store lives under <home>/kb/<encoded project key> — decision #6.
-  assert.match(projectStore.dir, /\.clue[\\/]kb$/) // M8: 项目库随工作区
+  // M9 (decision #6 re-revised): the project tier is CENTRAL, keyed by the
+  // workspace path — the workspace directory itself carries nothing of ours.
+  assert.ok(projectStore.dir.startsWith(path.join(home, 'kb')), `中心库应在 <home>/kb 下: ${projectStore.dir}`)
+  assert.equal(await readdir(path.join(project, '.clue')).catch(() => null), null, '工作区内不得出现 .clue/')
 })
 
 test('entry files refuse foreign versions (house style)', async (t) => {
@@ -160,7 +162,7 @@ test('query touches lastReferencedAt but records NO signal (retrieved≠used)', 
   assert.equal(score.counted, 0, '检索命中不得记任何信号(决策 #9: 没用到不扣分,也不算用到)')
 })
 
-test('project tier binds to the workspace: dir, git exclusion, registry (M8 revision)', async (t) => {
+test('project tier is central and workspace-keyed; the roster is clue\'s own (M9)', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'clue-bind-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const home = path.join(root, 'home')
@@ -173,19 +175,23 @@ test('project tier binds to the workspace: dir, git exclusion, registry (M8 revi
 
   const storeA = await openProjectStore(siteA, home)
   const realA = await realpath(siteA)
-  assert.equal(storeA.dir, path.join(realA, '.clue', 'kb'), '项目库必须落在工作区里')
-  const exclude = await readFile(path.join(realA, '.git', 'info', 'exclude'), 'utf8')
-  assert.ok(exclude.includes('.clue/'), 'git 仓库必须被自动排除 .clue(本地 exclude,不动 .gitignore)')
-  const registry = JSON.parse(await readFile(path.join(home, 'projects.json'), 'utf8')) as { projects: Array<{ projectRoot: string }> }
-  assert.deepEqual(registry.projects.map((p) => p.projectRoot), [realA], 'open 即入注册表(泛化发现源)')
+  assert.ok(storeA.dir.startsWith(path.join(home, 'kb')), '项目库必须在中心 home 里')
+  assert.ok(storeA.dir.endsWith('-site'), `键由路径编码而来: ${storeA.dir}`)
+  // 中心化的代价换来的一条硬保证:工作区目录一个字节都不属于 clue。
+  assert.equal(await readdir(path.join(siteA, '.clue')).catch(() => null), null, '工作区内不得出现 .clue/')
+  assert.equal(
+    await readFile(path.join(siteA, '.git', 'info', 'exclude')).catch(() => null), null,
+    'M9: 我们再也不碰用户的 git 簿记',
+  )
+  const roster = JSON.parse(await readFile(path.join(home, 'workspaces.json'), 'utf8')) as { workspaces: Array<{ root: string; key: string }> }
+  assert.deepEqual(roster.workspaces.map((w) => w.root), [realA], 'open 即入名单(面板与泛化的花名册)')
 
-  // 同名不同路径天然各归各库:目录本身就是键,旧碰撞后缀机制退役。
+  // 同名不同路径各归各库:键尾带根路径摘要,天然不撞。
   const storeB = await openProjectStore(siteB, home)
   assert.notEqual(storeA.dir, storeB.dir)
-  // 重复 open 不重复注册、不重复写 exclude。
+  assert.notEqual(storeA.key, storeB.key)
+  // 重复 open 不重复登记。
   await openProjectStore(siteA, home)
-  const again = JSON.parse(await readFile(path.join(home, 'projects.json'), 'utf8')) as { projects: Array<{ projectRoot: string }> }
-  assert.equal(again.projects.filter((p) => p.projectRoot === realA).length, 1, '重复 open 不重复注册')
-  const exclude2 = await readFile(path.join(realA, '.git', 'info', 'exclude'), 'utf8')
-  assert.equal(exclude2.split('.clue/').length - 1, 1, 'exclude 行必须幂等')
+  const again = JSON.parse(await readFile(path.join(home, 'workspaces.json'), 'utf8')) as { workspaces: Array<{ root: string }> }
+  assert.equal(again.workspaces.filter((w) => w.root === realA).length, 1, '重复 open 不重复登记')
 })

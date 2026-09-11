@@ -12,7 +12,8 @@
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 
 /**
  * The ClueHarness home directory.
@@ -36,6 +37,86 @@ export function clueHome(): string {
  */
 export function clueHostHome(): string {
   return process.env.CLUE_HOST_HOME ?? path.join(clueHome(), 'host')
+}
+
+/**
+ * The canonical form of a workspace root: its realpath when the directory
+ * exists, else the absolute given path. Every central path below funnels
+ * through this, so the KB, the baselines and the registry can never disagree
+ * about WHICH root a key names.
+ * @param projectRoot - any path spelling of the workspace.
+ * @returns the canonical absolute root.
+ */
+export function canonicalRoot(projectRoot: string): string {
+  try {
+    return realpathSync(projectRoot)
+  } catch {
+    return path.resolve(projectRoot)
+  }
+}
+
+/**
+ * The central key of one workspace (M9: 集中式存储,一工作区一本库).
+ * Base form is `encodeSegment(canonicalRoot)` — human-browsable in the file
+ * manager — and a directory already anchored to a DIFFERENT root pushes the
+ * next candidate to `<base>-2`, `-3`, … (the M2-era anchor walk, revived
+ * because the storage is central again and two same-name projects must not
+ * share one ledger).
+ * @param projectRoot - any path spelling of the workspace.
+ * @param home - ClueHarness home override (default {@link clueHome}).
+ * @returns the key that this root owns (or may create).
+ * @throws when a candidate directory exists without a readable anchor — a
+ *   hand-made directory must not be adopted silently (fail loud).
+ */
+export async function workspaceKey(projectRoot: string, home: string = clueHome()): Promise<string> {
+  const root = canonicalRoot(projectRoot)
+  const base = encodeSegment(root)
+  for (let attempt = 1; attempt <= 1000; attempt += 1) {
+    const key = attempt === 1 ? base : `${base}-${String(attempt)}`
+    const dir = path.join(home, 'kb', key)
+    const metaFile = path.join(dir, 'meta.json')
+    const meta = await readJsonOrNull<{ projectRoot?: unknown }>(metaFile)
+    if (meta === null) {
+      if ((await stat(dir).catch(() => null)) === null) return key
+      if ((await readdir(dir).catch(() => ['?'])).length === 0) return key
+      throw new Error(`工作区目录已存在但缺少可读锚点: ${metaFile} — 请修正后再打开(不静默接管陌生数据)`)
+    }
+    if (meta.projectRoot === root) return key
+  }
+  throw new Error(`工作区键名走位超过 1000 次仍冲突: ${root}`)
+}
+
+/**
+ * The central project-tier KB directory of one workspace: `<home>/kb/<key>`.
+ * @param projectRoot - any path spelling of the workspace.
+ * @param home - ClueHarness home override.
+ * @returns absolute directory path (not created here).
+ */
+export async function workspaceKbDir(projectRoot: string, home: string = clueHome()): Promise<string> {
+  return path.join(home, 'kb', await workspaceKey(projectRoot, home))
+}
+
+/**
+ * The central render-baseline directory of one workspace: `<home>/baselines/<key>`.
+ * Same key as the KB, so one workspace's evidence and its knowledge sit side
+ * by side in the home (nothing of clue's is written inside the workspace).
+ * @param projectRoot - any path spelling of the workspace.
+ * @param home - ClueHarness home override.
+ * @returns absolute directory path (not created here).
+ */
+export async function workspaceBaselinesDir(projectRoot: string, home: string = clueHome()): Promise<string> {
+  return path.join(home, 'baselines', await workspaceKey(projectRoot, home))
+}
+
+/**
+ * Where session logs live for every ClueHarness surface (M9: `./.sessions` and
+ * `./.clue-sessions` inside the workspace are retired).
+ * @param surface - which launcher owns the log.
+ * @param home - ClueHarness home override.
+ * @returns an absolute directory path.
+ */
+export function clueSessionsDir(surface: 'cli' | 'web' = 'cli', home: string = clueHome()): string {
+  return path.join(home, 'sessions', surface)
 }
 
 /**

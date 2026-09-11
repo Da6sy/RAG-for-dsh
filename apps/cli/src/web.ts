@@ -39,7 +39,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 import type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
 import { DSH_LAUNCH_ENVIRONMENT_KEY, type LaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
-import { clueHostHome } from '@clue-harness/util'
+import { clueHostHome, clueSessionsDir } from '@clue-harness/util'
 
 /** This installation's anchor: apps/cli's own package.json. */
 const INSTALL_ANCHOR = fileURLToPath(new URL('../package.json', import.meta.url))
@@ -150,6 +150,11 @@ export async function runWeb(options: RunWebOptions): Promise<WebHandle> {
   // deliberately share). `resolveDshHome` reads the env per call, so this
   // lands before the first consumer.
   process.env.DSH_HOME = process.env.CLUE_HOST_HOME ?? clueHostHome()
+  // M9 parity with the chat bin: clue's session log is central too, so a web
+  // surface launched inside a repository writes nothing into it. The bundle's
+  // session-persistence row takes an absolute root from here (launcher-owned
+  // overlay below), never a project-relative one.
+  const sessionsRoot = process.env.CLUE_SESSIONS_DIR ?? clueSessionsDir('web')
   const flags = { port: options.port, host: options.host, rest: [...(options.args ?? [])] }
   const {
     boot, composeEntries, healProfilesModuleFallback, initProfile, loadProfile,
@@ -202,6 +207,12 @@ export async function runWeb(options: RunWebOptions): Promise<WebHandle> {
     config: { host: flags.host ?? '127.0.0.1', port: flags.port ?? DEFAULT_PORT },
   })
 
+  // The session log's home: an absolute central directory (M9). Restating the
+  // row's whole config is the patch contract, and `root` is its only key.
+  if (rows.has('session-persistence-jsonl')) {
+    overlays.push({ id: 'session-persistence-jsonl', config: { root: sessionsRoot } })
+  }
+
   // Privacy switch parity with dsh: ANY non-empty value disables telemetry
   // (off-by-mistake beats on-by-mistake).
   if ((process.env.DSH_TELEMETRY_DISABLED ?? '') !== '' && rows.has(TELEMETRY_ROW_ID)) {
@@ -248,7 +259,13 @@ export async function runWeb(options: RunWebOptions): Promise<WebHandle> {
   const webServer = ctx.get('webServer') as { port: number } | undefined
   if (webServer === undefined) throw new Error('clue web: webserver 服务缺失(组合被破坏了?)')
   const host = flags.host ?? '127.0.0.1'
-  return { ctx, port: webServer.port, url: `http://${host}:${webServer.port}/`, shutdown, done }
+  // Origin form, NO trailing slash — the format dsh's own `dsh web: <url>`
+  // print uses. Launcher tools (ClueHarnessApp's parseUrl) capture this line
+  // verbatim and probe `url + '/'`; a slashed base makes that request the
+  // path `//`, which the host webserver cannot parse and answers with a
+  // blanket 400 (new URL("//", base) throws Invalid URL, and every handler
+  // rejection funnels into 400). Keep this print machine-readable.
+  return { ctx, port: webServer.port, url: `http://${host}:${webServer.port}`, shutdown, done }
 }
 
 /**
@@ -272,7 +289,9 @@ export async function webMain(args: readonly string[]): Promise<number> {
     handle.current = web
     // The web-runtime row prints dsh's own URL line; this is the clue one
     // (the approval center's home), printed once the tree has settled.
-    console.log(`clue web: ${web.url} — 审批中心在 设置 → 知识库审批,浏览在 设置 → 知识库`)
+    // One line, no decoration: the bundle's own URL print is switched off in
+    // clue.web.patch.yml, so this is the only startup output.
+    console.log(`clue web: ${web.url}`)
     return await web.done
   } catch (error) {
     console.error(`clue web: ${error instanceof Error ? error.message : String(error)}`)

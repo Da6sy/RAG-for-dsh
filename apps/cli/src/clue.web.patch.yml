@@ -25,12 +25,28 @@
 - id: ui-brand-official
   disabled: true
 
+# Startup output: the bundle's web-runtime row prints `dsh web: <url>` plus a
+# browser-handoff notice. Both are noise here: the URL line would duplicate
+# clue's own (and mis-announce the product as dsh), and auto-launching a
+# browser tab on every restart is not what a dev surface should do. Patch rows
+# replace the WHOLE config, so every key the row owns is restated; `trustedHosts`
+# keeps the bundle's expression (the LAN-trust fence is not ours to weaken).
+- id: web-runtime
+  config:
+    openBrowser: false
+    printUrl: false
+    surfaceContext: true
+    trustedHosts: !!js ctx.webStartup.trustedHosts
+
 # Session-store separation: the base persists to $DSH_HOME/sessions, which
-# would mix clue's test/dogfood turns into the user's dsh GUI session list.
-# Anchor the web surface's sessions under the launched project directory.
+# would mix clue's turns into a co-installed dsh's GUI session list. M9 moves
+# ClueHarness's own log to the CENTRAL home (~/.clue/sessions/web), so a
+# workspace directory carries nothing of ours; `clue web` overrides this row
+# with that absolute path (apps/cli/src/web.ts), and the expression below is
+# the fallback for a boot that bypasses the launcher.
 - id: session-persistence-jsonl
   config:
-    root: ./.clue-sessions
+    root: !!js (process.env.CLUE_SESSIONS_ROOT ?? '.clue-sessions')
 
 - insert:
     # The ClueHarness knowledge-base face (M3b/M4/M5): ctx.kb, kb_search /

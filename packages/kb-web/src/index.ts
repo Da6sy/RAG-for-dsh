@@ -42,7 +42,24 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { ClueKb } from '@clue-harness/kb-face'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { identityScript } from './identity.ts'
-import { KbEntryId, readSignals, type KbKind, type KbStatus, type KbStore } from '@clue-harness/kb'
+import {
+  KbEntryId,
+  addWorkspace,
+  findWorkspace,
+  keepWorkspace,
+  panelWorkspaces,
+  purgeAllOrphans,
+  purgeWorkspace,
+  readSignals,
+  readWorkspaces,
+  removeWorkspace,
+  renameWorkspace,
+  WorkspaceNotPurgeableError,
+  WorkspaceUnknownError,
+  type KbKind,
+  type KbStatus,
+  type KbStore,
+} from '@clue-harness/kb'
 
 /** The minimal llm face the polish route needs (one-shot prepareCall). */
 interface PolishLlm {
@@ -169,15 +186,46 @@ export function apply(ctx: Context, config: Config = {}): void {
   const kb: ClueKb = ctx.kb
 
   /**
+   * Reconcile the side table with the host registry, through the FACE — it owns
+   * the configured home, and this plugin must never write to a default home it
+   * does not control (the bug this indirection exists to prevent). The registry
+   * emits no events, so this read-time diff IS the observation channel.
+   */
+  async function syncFromHost(): Promise<void> {
+    await kb.syncHostWorkspaces()
+  }
+
+  /**
    * Resolve the addressed tier store.
    * @param scope - 'project' (default) or 'global'.
+   * @param workspace - M9: which workspace's project tier (key, root, or any
+   *   path spelling). Absent = the face's launch anchor, so pre-workspace
+   *   callers (and the CLI-era tests) keep working unchanged.
    * @returns the store for that tier.
    */
-  async function storeFor(scope: string | null): Promise<KbStore> {
-    const stores = await kb.stores()
-    if (scope === 'global') return stores.global
-    if (scope === 'project' || scope === null) return stores.project
-    throw Object.assign(new Error(`未知 scope "${scope}"(可选: project | global)`), { status: 400 })
+  async function storeFor(scope: string | null, workspace?: string | null): Promise<KbStore> {
+    if (scope === 'global') return (await kb.stores()).global
+    if (scope !== 'project' && scope !== null) {
+      throw Object.assign(new Error(`未知 scope "${scope}"(可选: project | global)`), { status: 400 })
+    }
+    if (workspace === null || workspace === undefined || workspace === '') {
+      return (await kb.stores()).project
+    }
+    const found = await findWorkspace(workspace, kb.home)
+    if (found === null) {
+      throw Object.assign(new Error(`工作区未登记: ${workspace}(先用 /workspaces/add 添加)`), { status: 404 })
+    }
+    return (await kb.storesFor(found.root)).project
+  }
+
+  /** The addressed workspace's root (null for the global tier / launch anchor). */
+  async function workspaceRoot(workspace?: string | null): Promise<string | null> {
+    if (workspace === null || workspace === undefined || workspace === '') return null
+    const found = await findWorkspace(workspace, kb.home)
+    if (found === null) {
+      throw Object.assign(new Error(`工作区未登记: ${workspace}(先用 /workspaces/add 添加)`), { status: 404 })
+    }
+    return found.root
   }
 
   /**
@@ -195,47 +243,190 @@ export function apply(ctx: Context, config: Config = {}): void {
         sendJson(res, 200, {
           api: 'clue-kb',
           endpoints: [
-            'GET /status', 'GET /approvals?scope=', 'POST /approvals/resolve',
-            'GET /entries?scope=&status=&kind=&needsReview=&q=', 'GET /entry?scope=&id=',
+            'GET /status?workspace=', 'GET /workspaces', 'POST /workspaces/add',
+            'POST /workspaces/rename', 'POST /workspaces/remove',
+            'GET /approvals?scope=&workspace=', 'POST /approvals/resolve',
+            'GET /entries?scope=&workspace=&status=&kind=&needsReview=&q=',
+            'GET /entry?scope=&workspace=&id=',
             'POST /entry/reverify', 'POST /sweep',
           ],
         })
         return
       }
 
-      // GET /status — both tiers summarized (panel header + polling).
+      // GET /status — both tiers summarized (panel header + polling), for the
+      // ADDRESSED workspace (M9: the panel's dropdown is a workspace, and the
+      // tiers it names are that workspace's central project tier + global).
       if (sub === '/status' && method === 'GET') {
-        const stores = await kb.stores()
+        const root = await workspaceRoot(url.searchParams.get('workspace'))
+        const stores = root === null ? await kb.stores() : await kb.storesFor(root)
         sendJson(res, 200, {
-          projectRoot: kb.projectRoot,
+          projectRoot: stores.project.projectRoot ?? kb.projectRoot,
+          workspace: root === null ? null : (await findWorkspace(root, kb.home))?.record ?? null,
           project: await tierStatus(stores.project),
           global: await tierStatus(stores.global),
         })
         return
       }
 
+      // GET /workspaces — the panel's list: the HOST's workspaces (synced on
+      // read), with any orphan questions riding along for the caller to ask.
+      if (sub === '/workspaces' && method === 'GET') {
+        const withStats = url.searchParams.get('stats') === '1'
+        await syncFromHost()
+        const rows = []
+        for (const record of await kb.panelWorkspaces()) {
+          const row: Record<string, unknown> = { ...record }
+          if (withStats) {
+            try {
+              const { project } = await kb.storesFor(record.root)
+              row.status = await tierStatus(project)
+            } catch (error) {
+              row.status = null
+              row.error = error instanceof Error ? error.message : String(error)
+            }
+          }
+          rows.push(row)
+        }
+        sendJson(res, 200, {
+          workspaces: rows.filter((row) => row.state !== 'orphaned'),
+          orphans: rows.filter((row) => row.state === 'orphaned'),
+          defaultRoot: kb.projectRoot,
+        })
+        return
+      }
+
+      // POST /workspaces/purge — the orphan question, answered "delete it".
+      // Everything moves to <home>/trash/<stamp>/<key>/ (never a bare rm).
+      if (sub === '/workspaces/purge' && method === 'POST') {
+        const body = await readJsonBody(req, maxBodyBytes) as { key?: string }
+        if (typeof body.key !== 'string' || body.key === '') {
+          throw Object.assign(new Error('需要 key(string)'), { status: 400 })
+        }
+        // Typed errors, not message sniffing: an unknown key is a 404,
+        // a row that is not awaiting an answer is a 400.
+        try {
+          sendJson(res, 200, await purgeWorkspace(body.key, kb.home))
+        } catch (error) {
+          if (error instanceof WorkspaceUnknownError) throw Object.assign(error, { status: 404 })
+          if (error instanceof WorkspaceNotPurgeableError) throw Object.assign(error, { status: 400 })
+          throw error
+        }
+        return
+      }
+
+      // POST /workspaces/keep — answered "keep it": stops asking, changes nothing.
+      if (sub === '/workspaces/keep' && method === 'POST') {
+        const body = await readJsonBody(req, maxBodyBytes) as { key?: string }
+        if (typeof body.key !== 'string' || body.key === '') {
+          throw Object.assign(new Error('需要 key(string)'), { status: 400 })
+        }
+        try {
+          sendJson(res, 200, { record: await keepWorkspace(body.key, kb.home) })
+        } catch (error) {
+          if (error instanceof WorkspaceUnknownError) throw Object.assign(error, { status: 404 })
+          throw error
+        }
+        return
+      }
+
+      // POST /workspaces/purge-all — the batch answer, same trash discipline.
+      if (sub === '/workspaces/purge-all' && method === 'POST') {
+        sendJson(res, 200, await purgeAllOrphans(kb.home))
+        return
+      }
+
+      // GET /workspace-for-session — which workspace THIS conversation is in
+      // (the drawer's address). Resolved host-side from the registry's own
+      // session accounting, so the client never has to guess from a path.
+      if (sub === '/workspace-for-session' && method === 'GET') {
+        const sessionId = url.searchParams.get('sessionId')
+        if (sessionId === null || sessionId === '') {
+          throw Object.assign(new Error('需要 sessionId(string)'), { status: 400 })
+        }
+        await syncFromHost()
+        // The face answers null (honestly "no host workspace owns this
+        // session") — test truthiness, not `!== undefined`, or the fallback
+        // branch is dead and every unknown session claims registry provenance.
+        const host = await kb.hostWorkspaceForSession(sessionId)
+        const root = host?.path ?? kb.projectRoot
+        const found = await findWorkspace(root, kb.home)
+        sendJson(res, 200, {
+          record: found?.record ?? null,
+          root,
+          source: host ? 'registry' : 'launch-anchor',
+        })
+        return
+      }
+
+      // POST /workspaces/add — register a directory by hand (settings panel).
+      if (sub === '/workspaces/add' && method === 'POST') {
+        const body = await readJsonBody(req, maxBodyBytes) as { root?: string; label?: string }
+        if (typeof body.root !== 'string' || body.root.trim() === '') {
+          throw Object.assign(new Error('需要 root(string,工作区目录)'), { status: 400 })
+        }
+        const record = await addWorkspace(body.root.trim(), typeof body.label === 'string' ? body.label : undefined, kb.home)
+        // Opening the tier is what gives a brand-new workspace its home in the
+        // central layout (meta anchor + empty ledgers); the panel can list it
+        // immediately afterwards.
+        const { project } = await kb.storesFor(record.root)
+        sendJson(res, 200, { record, kbDir: project.dir })
+        return
+      }
+
+      // POST /workspaces/rename — a display label only; key and data untouched.
+      if (sub === '/workspaces/rename' && method === 'POST') {
+        const body = await readJsonBody(req, maxBodyBytes) as { key?: string; label?: string }
+        if (typeof body.key !== 'string' || typeof body.label !== 'string') {
+          throw Object.assign(new Error('需要 key(string) 与 label(string)'), { status: 400 })
+        }
+        try {
+          sendJson(res, 200, { record: await renameWorkspace(body.key, body.label, kb.home) })
+        } catch (error) {
+          throw Object.assign(error instanceof Error ? error : new Error(String(error)), { status: 404 })
+        }
+        return
+      }
+
+      // POST /workspaces/remove — UNREGISTER only. The tier and the baselines
+      // stay in the home, and the root re-registers itself the moment any
+      // session works in it again: a panel action never destroys knowledge.
+      if (sub === '/workspaces/remove' && method === 'POST') {
+        const body = await readJsonBody(req, maxBodyBytes) as { key?: string }
+        if (typeof body.key !== 'string' || body.key === '') {
+          throw Object.assign(new Error('需要 key(string)'), { status: 400 })
+        }
+        try {
+          sendJson(res, 200, await removeWorkspace(body.key, kb.home))
+        } catch (error) {
+          throw Object.assign(error instanceof Error ? error : new Error(String(error)), { status: 404 })
+        }
+        return
+      }
+
       // GET /approvals — the batched queue with entry payloads merged.
       if (sub === '/approvals' && method === 'GET') {
-        const store = await storeFor(url.searchParams.get('scope'))
+        const workspace = url.searchParams.get('workspace')
+        const store = await storeFor(url.searchParams.get('scope'), workspace)
         const pendingOnly = url.searchParams.get('pending') !== 'all'
         const requests = await store.listApprovals(pendingOnly)
         const cards: ApprovalCard[] = []
         for (const request of requests) {
           cards.push({ request, entry: await store.get(request.entryId) })
         }
-        sendJson(res, 200, { scope: store.tier, approvals: cards })
+        sendJson(res, 200, { scope: store.tier, workspace: store.projectRoot, approvals: cards })
         return
       }
 
       // POST /approvals/resolve — one decision (approve/reject) on a request.
       if (sub === '/approvals/resolve' && method === 'POST') {
         const body = await readJsonBody(req, maxBodyBytes) as {
-          scope?: string; requestId?: string; approved?: boolean
+          scope?: string; workspace?: string; requestId?: string; approved?: boolean
         }
         if (typeof body.requestId !== 'string' || typeof body.approved !== 'boolean') {
           throw Object.assign(new Error('需要 requestId(string) 与 approved(boolean)'), { status: 400 })
         }
-        const store = await storeFor(body.scope ?? null)
+        const store = await storeFor(body.scope ?? null, body.workspace ?? null)
         // Pre-check for accurate statuses: the store throws bare Errors for
         // unknown/already-resolved requests, which would surface as 500.
         const existing = (await store.listApprovals(false)).find(item => item.id === body.requestId)
@@ -253,9 +444,12 @@ export function apply(ctx: Context, config: Config = {}): void {
       // GET /entries — filtered list, or retrieval-ranked when q is present.
       if (sub === '/entries' && method === 'GET') {
         const scope = url.searchParams.get('scope')
+        const workspace = url.searchParams.get('workspace')
+        const root = workspace === null ? undefined : (await workspaceRoot(workspace)) ?? undefined
         const q = url.searchParams.get('q')
         if (q !== null && q.trim() !== '') {
           const hits = await kb.query(q, {
+            ...(root !== undefined ? { root } : {}),
             limit: Number(url.searchParams.get('limit') ?? '50'),
             // Retrieval always includes expired hits WITH their annotations —
             // the UI shows the annotation and lets the status filter narrow.
@@ -270,7 +464,7 @@ export function apply(ctx: Context, config: Config = {}): void {
           })
           return
         }
-        const store = await storeFor(scope)
+        const store = await storeFor(scope, workspace)
         const status = url.searchParams.get('status')
         const kind = url.searchParams.get('kind')
         const needsReview = url.searchParams.get('needsReview')
@@ -287,13 +481,13 @@ export function apply(ctx: Context, config: Config = {}): void {
           ...(kind !== null ? { kind: kind as KbKind } : {}),
           ...(needsReview === '1' ? { needsReview: true } : {}),
         })
-        sendJson(res, 200, { scope: store.tier, entries })
+        sendJson(res, 200, { scope: store.tier, workspace: store.projectRoot, entries })
         return
       }
 
       // GET /entry — one entry with its window score and full signal ledger.
       if (sub === '/entry' && method === 'GET') {
-        const store = await storeFor(url.searchParams.get('scope'))
+        const store = await storeFor(url.searchParams.get('scope'), url.searchParams.get('workspace'))
         const id = url.searchParams.get('id')
         if (id === null || id === '') {
           throw Object.assign(new Error('需要 id 查询参数'), { status: 400 })
@@ -314,12 +508,12 @@ export function apply(ctx: Context, config: Config = {}): void {
       // POST /entry/reverify — resolve the orthogonal needs-review flag.
       if (sub === '/entry/reverify' && method === 'POST') {
         const body = await readJsonBody(req, maxBodyBytes) as {
-          scope?: string; id?: string; accept?: boolean
+          scope?: string; workspace?: string; id?: string; accept?: boolean
         }
         if (typeof body.id !== 'string' || typeof body.accept !== 'boolean') {
           throw Object.assign(new Error('需要 id(string) 与 accept(boolean)'), { status: 400 })
         }
-        const store = await storeFor(body.scope ?? null)
+        const store = await storeFor(body.scope ?? null, body.workspace ?? null)
         const existing = await store.get(KbEntryId(body.id))
         if (existing === null) {
           throw Object.assign(new Error(`没有条目 "${body.id}"`), { status: 404 })
@@ -331,8 +525,8 @@ export function apply(ctx: Context, config: Config = {}): void {
 
       // POST /sweep — run maintenance (expire/discard/purge + promotion proposals).
       if (sub === '/sweep' && method === 'POST') {
-        const body = await readJsonBody(req, maxBodyBytes) as { scope?: string }
-        const store = await storeFor(body.scope ?? null)
+        const body = await readJsonBody(req, maxBodyBytes) as { scope?: string; workspace?: string }
+        const store = await storeFor(body.scope ?? null, body.workspace ?? null)
         sendJson(res, 200, { scope: store.tier, result: await store.sweep() })
         return
       }
@@ -342,11 +536,11 @@ export function apply(ctx: Context, config: Config = {}): void {
       // model-free), returning a rewritten draft WITHOUT writing it — the
       // human adopts it explicitly through /entry/text, then approves.
       if (sub === '/polish' && method === 'POST') {
-        const body = await readJsonBody(req, maxBodyBytes) as { scope?: string; id?: string }
+        const body = await readJsonBody(req, maxBodyBytes) as { scope?: string; workspace?: string; id?: string }
         if (typeof body.id !== 'string' || body.id === '') {
           throw Object.assign(new Error('需要 id(string)'), { status: 400 })
         }
-        const store = await storeFor(body.scope ?? null)
+        const store = await storeFor(body.scope ?? null, body.workspace ?? null)
         const entry = await store.get(KbEntryId(body.id))
         if (entry === null) {
           throw Object.assign(new Error(`没有条目 "${body.id}"`), { status: 404 })
@@ -392,11 +586,11 @@ export function apply(ctx: Context, config: Config = {}): void {
 
       // POST /entry/text — adopt an edited/polished body (audited history).
       if (sub === '/entry/text' && method === 'POST') {
-        const body = await readJsonBody(req, maxBodyBytes) as { scope?: string; id?: string; text?: string; reason?: string }
+        const body = await readJsonBody(req, maxBodyBytes) as { scope?: string; workspace?: string; id?: string; text?: string; reason?: string }
         if (typeof body.id !== 'string' || typeof body.text !== 'string') {
           throw Object.assign(new Error('需要 id(string) 与 text(string)'), { status: 400 })
         }
-        const store = await storeFor(body.scope ?? null)
+        const store = await storeFor(body.scope ?? null, body.workspace ?? null)
         const existing = await store.get(KbEntryId(body.id))
         if (existing === null) {
           throw Object.assign(new Error(`没有条目 "${body.id}"`), { status: 404 })
@@ -411,7 +605,8 @@ export function apply(ctx: Context, config: Config = {}): void {
       }
 
       // Known subpath, wrong method → 405; anything else → 404.
-      const known = ['/status', '/approvals', '/approvals/resolve', '/entries', '/entry', '/entry/reverify', '/sweep', '/polish', '/entry/text']
+      const known = ['/status', '/workspaces', '/workspaces/add', '/workspaces/rename', '/workspaces/remove',
+        '/workspaces/purge', '/workspaces/keep', '/workspaces/purge-all', '/workspace-for-session', '/approvals', '/approvals/resolve', '/entries', '/entry', '/entry/reverify', '/sweep', '/polish', '/entry/text']
       sendJson(res, known.includes(sub) ? 405 : 404, { error: method === 'GET' || method === 'POST' ? '方法不匹配' : '未知端点', path: sub })
     } catch (error) {
       const status = typeof error === 'object' && error !== null && 'status' in error

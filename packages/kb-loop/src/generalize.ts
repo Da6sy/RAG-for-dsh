@@ -29,7 +29,7 @@
  */
 import path from 'node:path'
 import {
-  listKnownProjects,
+  listActiveWorkspaces,
   openGlobalStore,
   openProjectStore,
   readSignals,
@@ -133,16 +133,16 @@ export async function suggestGeneralizations(options: GeneralizationOptions = {}
   const threshold = options.threshold ?? DEFAULT_THRESHOLD
   const skipped: string[] = []
 
-  // ── discover workspace-bound project tiers via the central registry ─────
-  // (M8 binding revision: project KBs live at <root>/.clue/kb — no central
-  // directory to list anymore; the registry <home>/projects.json is written
-  // on every store open, so a project joins the loop by being USED. A
-  // vanished workspace drops out inside listKnownProjects.)
+  // ── discover the central per-workspace tiers via the roster ─────────────
+  // (M9 central storage: one tier per workspace key under <home>/kb, and the
+  // <home>/workspaces.json roster is written on every store open, so a
+  // project joins the loop by being USED. "Active" filters both a directory
+  // that is unmounted right now and a roster row whose tier was never opened.)
   const home = options.home ?? clueHome()
   const global = await openGlobalStore(home)
   const projects: KbStore[] = []
-  for (const root of await listKnownProjects(home)) {
-    projects.push(await openProjectStore(root, home))
+  for (const workspace of await listActiveWorkspaces(home)) {
+    projects.push(await openProjectStore(workspace.root, home))
   }
 
   // ── collect verified entries per project ───────────────────────────────

@@ -14,7 +14,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { inspectPage, probeBrowser } from '../src/index.ts'
@@ -56,21 +56,26 @@ test('record → compare: identical verdict, baseline pending confirmation', { s
 
   const recorded = await inspectPage({
     projectRoot: project, page: 'sample.html', mode: 'record',
-    maskSelectors: ['.volatile'],
+    maskSelectors: ['.volatile'], home,
   })
   assert.ok(recorded.baselinePath)
+  assert.ok(recorded.baselinePath.startsWith(home), `基准必须落在中心 home: ${recorded.baselinePath}`)
+  assert.equal(
+    await readdir(path.join(project, '.clue')).catch(() => null), null,
+    'M9: 工作区目录里不再出现 .clue/',
+  )
   assert.match(recorded.report, /待人工确认/)
 
   const compared = await inspectPage({
     projectRoot: project, page: 'sample.html', mode: 'compare',
-    maskSelectors: ['.volatile'],
+    maskSelectors: ['.volatile'], home,
   })
   assert.ok(compared.diff)
   assert.equal(compared.diff.identical, true)
   assert.match(compared.report, /与基准完全一致/)
   assert.match(compared.report, /尚未经人工确认/)
 
-  const confirmed = await inspectPage({ projectRoot: project, page: 'sample.html', mode: 'confirm' })
+  const confirmed = await inspectPage({ projectRoot: project, page: 'sample.html', mode: 'confirm', home })
   assert.equal(confirmed.baseline?.confirmed, true)
 })
 
@@ -94,7 +99,7 @@ test('baseline lifecycle: edit source → stale flag + moved/relation diff', { s
   const { project, home } = await freshProject()
   t.after(() => rm(path.dirname(project), { recursive: true, force: true }))
 
-  await inspectPage({ projectRoot: project, page: 'sample.html', mode: 'record', maskSelectors: ['.volatile'] })
+  await inspectPage({ projectRoot: project, page: 'sample.html', mode: 'record', maskSelectors: ['.volatile'], home })
 
   // Break the layout the way real bugs do: the form goes vertical, so the
   // submit button drops from "beside the input" to "below the input".
@@ -107,7 +112,7 @@ test('baseline lifecycle: edit source → stale flag + moved/relation diff', { s
 
   const compared = await inspectPage({
     projectRoot: project, page: 'sample.html', mode: 'compare',
-    maskSelectors: ['.volatile'],
+    maskSelectors: ['.volatile'], home,
   })
   assert.ok(compared.diff)
   assert.equal(compared.stale, true, '源文件变了必须标 stale(待复核)')

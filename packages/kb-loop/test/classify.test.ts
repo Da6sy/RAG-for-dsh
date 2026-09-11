@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
@@ -12,6 +12,7 @@ import {
   loadRenderSurfaceConfig,
   normalizeRelative,
 } from '../src/classify.ts'
+import { openProjectStore, registerWorkspace } from '@clue-harness/kb'
 
 test('default surface: html/css extensions and styles/ prefix are renderable', () => {
   const { renderable, other } = classifyChanges([
@@ -38,24 +39,37 @@ test('windows separators and ./ prefixes normalize away', () => {
   assert.deepEqual(renderable, ['pages/a.HTML'], '扩展名匹配大小写不敏感')
 })
 
-test('project config REPLACES defaults (explicit over implicit) and fails loud when malformed', async (t) => {
+test('the workspace record REPLACES defaults (explicit over implicit) and fails loud when malformed', async (t) => {
+  // M9: the surface is per-workspace SETTINGS inside the roster, not a file
+  // written into the user's project directory.
+  const { setRenderSurface } = await import('@clue-harness/kb')
   const root = await mkdtemp(path.join(tmpdir(), 'clue-surface-'))
+  const home = path.join(root, 'home')
+  const proj = path.join(root, 'proj')
   t.after(() => rm(root, { recursive: true, force: true }))
-  await mkdir(path.join(root, '.clue'), { recursive: true })
+  await mkdir(proj, { recursive: true })
+  await openProjectStore(proj, home) // registers the workspace
 
   // No config → defaults.
-  assert.deepEqual(await loadRenderSurfaceConfig(root), DEFAULT_RENDER_SURFACE)
+  assert.deepEqual(await loadRenderSurfaceConfig(proj, home), DEFAULT_RENDER_SURFACE)
 
   // Config replaces: .jsx becomes renderable, .html no longer is.
-  await writeFile(path.join(root, '.clue/render-surface.json'), JSON.stringify({ extensions: ['.jsx'], pathPrefixes: ['ui/'] }), 'utf8')
-  const custom = await loadRenderSurfaceConfig(root)
+  const record = await registerWorkspace(proj, { home })
+  await setRenderSurface(record.key, { extensions: ['.jsx'], pathPrefixes: ['ui/'] }, home)
+  const custom = await loadRenderSurfaceConfig(proj, home)
   assert.deepEqual(custom.extensions, ['.jsx'])
   const { renderable } = classifyChanges(['index.html', 'ui/app.jsx'], custom)
   assert.deepEqual(renderable, ['ui/app.jsx'])
 
   // Dot-less extensions get dotted; malformed shapes throw.
-  await writeFile(path.join(root, '.clue/render-surface.json'), JSON.stringify({ extensions: ['tsx'] }), 'utf8')
-  assert.deepEqual((await loadRenderSurfaceConfig(root)).extensions, ['.tsx'])
-  await writeFile(path.join(root, '.clue/render-surface.json'), '{"extensions":"nope"}', 'utf8')
-  await assert.rejects(() => loadRenderSurfaceConfig(root), /格式错误/)
+  await setRenderSurface(record.key, { extensions: ['tsx'] }, home)
+  assert.deepEqual((await loadRenderSurfaceConfig(proj, home)).extensions, ['.tsx'])
+  const doc = JSON.parse(await readFile(path.join(home, 'workspaces.json'), 'utf8'))
+  doc.workspaces[0].renderSurface = { extensions: 'nope' }
+  await writeFile(path.join(home, 'workspaces.json'), JSON.stringify(doc), 'utf8')
+  await assert.rejects(() => loadRenderSurfaceConfig(proj, home), /格式错误/)
+
+  // Clearing the override falls back to the shipped defaults.
+  await setRenderSurface(record.key, null, home)
+  assert.deepEqual(await loadRenderSurfaceConfig(proj, home), DEFAULT_RENDER_SURFACE)
 })

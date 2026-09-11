@@ -3,6 +3,9 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "bin": {
+    "clue": "./src/bin.ts"
+  },
   "description": "The clue command entry: loads layered env, boots the fixed M0 composition through dsh-app-boot, and runs the interactive chat driver.",
   "exports": {
     ".": "./src/bin.ts"

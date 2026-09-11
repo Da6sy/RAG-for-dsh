@@ -12,7 +12,8 @@
  *   clue kb reverify <id> [--accept]
  *   clue kb signal <id> <human-confirm|evidence-pass|implicit-use|evidence-fail|user-reject> [--note n]
  *   clue kb sweep          (过期/遗弃/清退 + 提升建议入队)
- *   clue kb migrate        (旧中心布局迁入工作区 .clue/kb,决策 #6 修订)
+ *   clue kb workspace <list|add|rename|remove>   (M9: 工作区名单,ClueHarness 自己的)
+ *   clue kb migrate        (把工作区里的 .clue/kb 收回到中心 ~/.clue,决策 #6 再修订)
  *   clue kb generalize [--dry-run] [--threshold n]  (跨项目泛化扫描)
  *   clue kb status
  *
@@ -24,15 +25,22 @@
 import path from 'node:path'
 import {
   KbEntryId,
+  addWorkspace,
+  migrateWorkspaceKbsToCentral,
   openGlobalStore,
   openProjectStore,
   queryKb,
+  readWorkspaces,
+  registerWorkspace,
+  removeWorkspace,
+  renameWorkspace,
   type KbKind,
   type KbStore,
   type SignalInput,
 } from '@clue-harness/kb'
 import { buildWorkLog, loadWorkLog, runEvidenceLoop, saveWorkLog, suggestGeneralizations } from '@clue-harness/kb-loop'
-import { migrateLegacyProjectKbs } from '@clue-harness/kb'
+import { clueHome } from '@clue-harness/util'
+import { mkdir } from 'node:fs/promises'
 
 const USAGE = `用法: clue kb <命令> [选项]
 
@@ -124,8 +132,13 @@ export async function kbMain(argv: string[]): Promise<number> {
     return 0
   }
   try {
-    const both = await stores(args)
-    const store = storeFor(args, both)
+    // Lazy anchors: the store pair is opened by the commands that actually
+    // address a tier — `workspace`, `migrate` and `generalize` do not (they
+    // work on the roster and the home), and eagerly opening it made them die
+    // on an unwritable/absent launch anchor before doing any work at all.
+    let cache: { project: KbStore; global: KbStore } | null = null
+    const both = async (): Promise<{ project: KbStore; global: KbStore }> => cache ??= await stores(args)
+    const store = async (): Promise<KbStore> => storeFor(args, await both())
     switch (args.command) {
       case 'add': {
         const kind = flag(args, 'kind') as KbKind | undefined
@@ -133,7 +146,7 @@ export async function kbMain(argv: string[]): Promise<number> {
         const text = flag(args, 'text')
         if (kind === undefined || !KINDS.includes(kind)) throw new Error(`--kind 必须是 ${KINDS.join('|')} 之一`)
         if (title === undefined || text === undefined) throw new Error('add 需要 --title 与 --text')
-        const entry = await store.add({
+        const entry = await (await store()).add({
           kind, title, text,
           tags: multi(args, 'tag'),
           bindings: multi(args, 'bind'),
@@ -146,30 +159,32 @@ export async function kbMain(argv: string[]): Promise<number> {
       case 'list': {
         const status = flag(args, 'status')
         const kind = flag(args, 'kind')
-        const entries = await store.list({
+        const entries = await (await store()).list({
           ...(status !== undefined ? { status: status as never } : {}),
           ...(kind !== undefined ? { kind: kind as never } : {}),
           ...(has(args, 'review') ? { needsReview: true } : {}),
         })
         for (const entry of entries) console.log(entryLine(entry))
-        console.log(`共 ${entries.length} 条(${store.tier === 'global' ? '全局库' : `项目库 ${store.dir}`})`)
+        const addressed = await store()
+        console.log(`共 ${entries.length} 条(${addressed.tier === 'global' ? '全局库' : `项目库 ${addressed.dir}`})`)
         return 0
       }
       case 'show': {
         const id = args.positional[0]
         if (id === undefined) throw new Error('show 需要条目 id')
-        const entry = await store.get(KbEntryId(id))
+        const entry = await (await store()).get(KbEntryId(id))
         if (entry === null) throw new Error(`条目不存在: ${id}`)
-        const score = await store.score(entry.id)
+        const score = await (await store()).score(entry.id)
         console.log(JSON.stringify({ ...entry, windowScore: score }, null, 2))
         return 0
       }
       case 'query': {
         const text = args.positional.join(' ')
         if (text.trim() === '') throw new Error('query 需要检索词')
+        const anchors = await both()
         const hits = await queryKb(
-          both.project,
-          has(args, 'no-global') ? null : both.global,
+          anchors.project,
+          has(args, 'no-global') ? null : anchors.global,
           {
             text,
             includeExpired: has(args, 'include-expired'),
@@ -187,7 +202,8 @@ export async function kbMain(argv: string[]): Promise<number> {
       }
       case 'approvals': {
         const seen = new Set<string>()
-        for (const tier of [both.project, both.global]) {
+        const anchors = await both()
+        for (const tier of [anchors.project, anchors.global]) {
           const requests = await tier.listApprovals(!has(args, 'all'))
           for (const request of requests) {
             seen.add(request.id)
@@ -203,7 +219,8 @@ export async function kbMain(argv: string[]): Promise<number> {
       case 'reject': {
         const requestId = args.positional[0]
         if (requestId === undefined) throw new Error(`${args.command} 需要请求 id`)
-        for (const tier of [both.project, both.global]) {
+        const anchors = await both()
+        for (const tier of [anchors.project, anchors.global]) {
           const pending = await tier.listApprovals(true)
           if (!pending.some((a) => a.id === requestId)) continue
           const { request, entry } = await tier.resolveApproval(requestId, args.command === 'approve')
@@ -216,7 +233,7 @@ export async function kbMain(argv: string[]): Promise<number> {
       case 'reverify': {
         const id = args.positional[0]
         if (id === undefined) throw new Error('reverify 需要条目 id')
-        const entry = await store.reverify(KbEntryId(id), has(args, 'accept'))
+        const entry = await (await store()).reverify(KbEntryId(id), has(args, 'accept'))
         console.log(`重验完成: ${entryLine(entry)}${entry.needsReview ? `(仍需复核: ${entry.reviewReason})` : ''}`)
         return 0
       }
@@ -226,9 +243,10 @@ export async function kbMain(argv: string[]): Promise<number> {
         if (id === undefined || signal === undefined || !SIGNALS.includes(signal)) {
           throw new Error(`signal 需要 <id> <${SIGNALS.join('|')}>`)
         }
-        const record = await store.recordSignal(KbEntryId(id), signal, flag(args, 'note') ?? '')
-        const score = await store.score(KbEntryId(id))
-        console.log(`已记信号 ${record.polarity}/${record.source} 权重${record.weight};当前窗口分数 ${score.score}(阈值 ±${store.config.trustThreshold})`)
+        const addressed = await store()
+        const record = await addressed.recordSignal(KbEntryId(id), signal, flag(args, 'note') ?? '')
+        const score = await addressed.score(KbEntryId(id))
+        console.log(`已记信号 ${record.polarity}/${record.source} 权重${record.weight};当前窗口分数 ${score.score}(阈值 ±${addressed.config.trustThreshold})`)
         return 0
       }
       case 'worklog': {
@@ -242,7 +260,9 @@ export async function kbMain(argv: string[]): Promise<number> {
           ...(flag(args, 'page') !== undefined ? { page: flag(args, 'page') } : {}),
           ...(flag(args, 'note') !== undefined ? { note: flag(args, 'note') } : {}),
         })
-        const out = flag(args, 'out') ?? path.join(log.projectRoot, '.clue', `worklog-${Date.now().toString(36)}.json`)
+        const out = flag(args, 'out')
+          ?? path.join(flag(args, 'home') ?? clueHome(), 'worklogs', `worklog-${Date.now().toString(36)}.json`)
+        if (flag(args, 'out') === undefined) await mkdir(path.dirname(out), { recursive: true })
         await saveWorkLog(out, log)
         console.log(`工单已写入: ${out}`)
         console.log(`  改动 ${log.changedFiles.length} 个文件 · 引用 ${log.referencedEntryIds.length} 条知识${log.page !== undefined ? ` · 页面 ${log.page}` : ''}`)
@@ -285,7 +305,8 @@ export async function kbMain(argv: string[]): Promise<number> {
         return 0
       }
       case 'sweep': {
-        const result = { project: await both.project.sweep(), global: await both.global.sweep() }
+        const anchors = await both()
+        const result = { project: await anchors.project.sweep(), global: await anchors.global.sweep() }
         for (const [tierName, swept] of Object.entries(result)) {
           console.log(`[${tierName}] 过期 ${swept.expired.length} · 强负遗弃 ${swept.discarded.length} · 清退 ${swept.purged.length} · 新提升建议 ${swept.promotions.length}`)
           for (const id of swept.expired) console.log(`  ↓过期 ${id}`)
@@ -320,18 +341,75 @@ export async function kbMain(argv: string[]): Promise<number> {
         else console.log('提示: 用 clue kb approvals 查看待批队列(两层都会列出),approve 后成为全局可信知识。')
         return 0
       }
+      case 'workspace': {
+        // M9: the roster is ClueHarness's OWN workspace list (settings panel
+        // and generalize scan both read it) — dsh's workspace service is never
+        // consulted; a path is the only input taken from outside.
+        const home = flag(args, 'home')
+        const verb = args.positional[0] ?? 'list'
+        if (verb === 'list') {
+          const records = await readWorkspaces(home)
+          for (const record of records) {
+            console.log(`${record.key}  [${record.label}]  ${record.root}  (${record.source}, 最近可见 ${record.lastSeenAt})`)
+            if (record.renderSurface !== undefined) console.log(`  渲染面覆盖: ${JSON.stringify(record.renderSurface)}`)
+          }
+          console.log(`共 ${records.length} 个工作区(中心库 ${path.join(home ?? clueHome(), 'kb')})。`)
+          return 0
+        }
+        if (verb === 'add') {
+          const target = args.positional[1]
+          if (target === undefined) throw new Error('workspace add 需要 <目录>')
+          const record = await addWorkspace(target, args.positional[2], home)
+          const store = await openProjectStore(record.root, home)
+          console.log(`已登记: ${record.key} [${record.label}] ${record.root}`)
+          console.log(`  中心库: ${store.dir}`)
+          return 0
+        }
+        if (verb === 'rename') {
+          const key = args.positional[1]
+          const label = args.positional.slice(2).join(' ')
+          if (key === undefined || label === '') throw new Error('workspace rename 需要 <key> <标签>')
+          const record = await renameWorkspace(key, label, home)
+          console.log(`已改名: ${record.key} → [${record.label}]`)
+          return 0
+        }
+        if (verb === 'remove') {
+          const key = args.positional[1]
+          if (key === undefined) throw new Error('workspace remove 需要 <key>')
+          const { record, kbDir, baselinesDir } = await removeWorkspace(key, home)
+          console.log(`已解除登记: ${record.key} [${record.label}] ${record.root}`)
+          console.log(`  数据未删: ${kbDir} · ${baselinesDir}(该目录再被用到会自动重新登记)`)
+          return 0
+        }
+        throw new Error(`未知 workspace 子命令: ${verb}(list|add|rename|remove)`)
+      }
       case 'migrate': {
-        // M8 workspace binding (decision #6 revision): import the legacy
-        // central layout into each workspace's .clue/kb. Never overwrites;
-        // a vanished project is reported and left alone.
-        const report = await migrateLegacyProjectKbs(flag(args, 'home'))
-        for (const item of report) console.log(`${item.moved ? '✔ 迁入' : '· 保持'} ${item.from}${item.to ? ` → ${item.to}` : ''} —— ${item.reason}`)
+        // M9 (decision #6 re-revision): pull the M8 workspace-bound state back
+        // into the central home. Never overwrites; leftovers are reported.
+        const report = await migrateWorkspaceKbsToCentral({
+          home: flag(args, 'home'),
+          roots: multi(args, 'root'),
+          ...(has(args, 'dry-run') ? { dryRun: true } : {}),
+        })
+        for (const item of report) {
+          console.log(`${item.moved ? '✔ 收回' : '· 保持'} [${item.kind}] ${item.from}${item.to ? ` → ${item.to}` : ''} —— ${item.reason}`)
+        }
         const moved = report.filter((r) => r.moved).length
-        console.log(`共 ${moved} 项迁入工作区,${report.length - moved} 项保持原样。`)
+        if (report.length === 0) console.log('没有需要收回的工作区状态(中心式布局已就位,或工作区里没有 .clue)。')
+        else console.log(`共 ${moved} 项收回中心,${report.length - moved} 项保持原样。`)
+        // Roots named by the legacy registry get re-registered even when their
+        // .clue is already gone, so `workspace list` reflects the truth.
+        for (const root of multi(args, 'root')) await registerWorkspace(root, { home: flag(args, 'home'), source: 'manual' })
         return 0
       }
       case 'status': {
-        for (const tier of [both.project, both.global]) {
+        const roster = await readWorkspaces(flag(args, 'home'))
+        if (roster.length > 0) {
+          console.log(`[工作区名单] ${roster.length} 个`)
+          for (const record of roster) console.log(`  ${record.key}  [${record.label}]  ${record.root}`)
+        }
+        const anchors = await both()
+        for (const tier of [anchors.project, anchors.global]) {
           const entries = await tier.list()
           const byStatus = entries.reduce<Record<string, number>>((acc, e) => { acc[e.status] = (acc[e.status] ?? 0) + 1; return acc }, {})
           const review = entries.filter((e) => e.needsReview).length
