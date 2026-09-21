@@ -50,6 +50,14 @@ export interface IndexEntry {
    * nDCG@10 minus `lexical+rerank`'s (null when a report lacks either row).
    */
   hybridMinusLexical?: number | null
+  /**
+   * P4 of the D-plan: the second hard line — `hybrid+rerank` vs `hybrid+no-rerank`
+   * (the reranker may not lose to the fusion it reorders). Absent in reports
+   * written before that column existed.
+   */
+  rerankMinusFusion?: number | null
+  okRerankVsFusion?: boolean
+  okHybridVsLexical?: boolean
   ok: boolean
   caveats: string[]
 }
@@ -73,6 +81,10 @@ async function collect(): Promise<IndexEntry[]> {
       ok?: boolean
       /** F0's cross-config verdict, when the report carries it. */
       hybridMinusLexical?: number | null
+      /** P4 of the D-plan: the second hard line and its two halves. */
+      rerankMinusFusion?: number | null
+      okHybridVsLexical?: boolean
+      okRerankVsFusion?: boolean
       caveats?: string[]
     }
     const rows: Record<string, Record<string, number>> = {}
@@ -100,6 +112,9 @@ async function collect(): Promise<IndexEntry[]> {
       judgeVersion: report.judge?.promptVersion ?? null,
       rows,
       ...(report.hybridMinusLexical !== undefined ? { hybridMinusLexical: report.hybridMinusLexical } : {}),
+      ...(report.rerankMinusFusion !== undefined ? { rerankMinusFusion: report.rerankMinusFusion } : {}),
+      ...(report.okHybridVsLexical !== undefined ? { okHybridVsLexical: report.okHybridVsLexical } : {}),
+      ...(report.okRerankVsFusion !== undefined ? { okRerankVsFusion: report.okRerankVsFusion } : {}),
       ok: report.ok ?? true,
       caveats: report.caveats ?? [],
     })
@@ -184,10 +199,20 @@ async function diff(a: string, b: string): Promise<number> {
    */
   const verdict = (label: string, entry: IndexEntry): void => {
     const delta = entry.hybridMinusLexical
-    if (delta === undefined || delta === null) return
-    const failed = entry.ok === false
-    if (failed) regressed = true
-    console.log(`  [硬线] ${label} hybrid−lexical nDCG@10 = ${delta >= 0 ? '+' : ''}${delta.toFixed(4)}${failed ? '  ✗ 混合劣于单词法' : '  ✓ 通过'}`)
+    if (delta !== undefined && delta !== null) {
+      const failed = entry.okHybridVsLexical === false || (entry.okHybridVsLexical === undefined && entry.ok === false)
+      if (failed) regressed = true
+      console.log(`  [硬线] ${label} hybrid−lexical nDCG@10 = ${delta >= 0 ? '+' : ''}${delta.toFixed(4)}${failed ? '  ✗ 混合劣于单词法' : '  ✓ 通过'}`)
+    }
+    // The D-plan's line: the reranker may not lose to the fusion order it
+    // reorders. On a real endpoint this is the defect being fixed (0.4265 vs
+    // 0.4829), so it gets its own verdict rather than hiding inside line 1.
+    const vsFusion = entry.rerankMinusFusion
+    if (vsFusion !== undefined && vsFusion !== null) {
+      const failed = entry.okRerankVsFusion === false
+      if (failed) regressed = true
+      console.log(`  [硬线] ${label} hybrid+rerank − hybrid+no-rerank = ${vsFusion >= 0 ? '+' : ''}${vsFusion.toFixed(4)}${failed ? '  ✗ 精排劣于融合序' : '  ✓ 通过'}`)
+    }
   }
   verdict('之前', left)
   verdict('之后', right)

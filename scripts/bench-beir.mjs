@@ -455,13 +455,29 @@ try {
       ...(extraCaveat === null ? [] : [extraCaveat]),
     ],
     /**
-     * F0's hard line (规划 §5 不变量 2): with reranking on, hybrid may not lose to
-     * lexical. Tolerance is zero — the plan's own wording.
+     * The hard lines, each with ZERO tolerance (both plans say so in those words).
+     *
+     * 1. F0 (规划 §5 不变量 2): with reranking on, hybrid may not lose to lexical.
+     * 2. P4 of `docs/修复方案-精排量纲与语义名次.md`: on a REAL endpoint, the
+     *    reranker may not lose to the fusion it is reordering. That is the defect
+     *    the D-plan exists for (0.4265 vs 0.4829), and it is checked separately
+     *    from line 1 because it is the one the D1/D2 switches are supposed to fix.
      */
-    ok: (() => {
+    ...(() => {
       const lexical = rows.find((row) => row.config === 'lexical+rerank')?.['nDCG@10']
       const hybrid = rows.find((row) => row.config === 'hybrid+rerank')?.['nDCG@10']
-      return lexical === undefined || hybrid === undefined ? true : hybrid >= lexical
+      const hybridNoRerank = rows.find((row) => row.config === 'hybrid+no-rerank')?.['nDCG@10']
+      const vsLexical = lexical === undefined || hybrid === undefined ? true : hybrid >= lexical
+      const vsFusion = hybridNoRerank === undefined || hybrid === undefined ? true : hybrid >= hybridNoRerank
+      return {
+        ok: vsLexical && vsFusion,
+        okHybridVsLexical: vsLexical,
+        okRerankVsFusion: vsFusion,
+        /** How much the reranker cost (or gained) against the fusion order. */
+        rerankMinusFusion: hybridNoRerank === undefined || hybrid === undefined
+          ? null
+          : Math.round((hybrid - hybridNoRerank) * 10000) / 10000,
+      }
     })(),
   }
   await mkdir(runsRoot, { recursive: true })
