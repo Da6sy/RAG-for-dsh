@@ -35,6 +35,21 @@ export interface Embedder {
    */
   readonly dim: number
   /**
+   * What the embedder can actually do, SELF-REPORTED (F1 of
+   * `docs/修改规划-混合检索反超单BM25.md`).
+   *
+   * `none` means "this is a deterministic fallback, not a semantic model" —
+   * `hashEmbedder` is a hashed bag of tokens, so its ranking carries no meaning
+   * beyond the tokens the lexical channel already has. Measured consequence of
+   * ignoring that: fusion let a no-ability channel REPLACE half the lexical
+   * results (cosqa hybrid+rerank 0.2558 vs lexical 0.3003), and the one change
+   * that fixed it was switching the semantic contribution off.
+   *
+   * Absent = "unknown, treat as a real embedder" (third-party ports and test
+   * doubles keep working without declaring anything).
+   */
+  readonly semantics?: 'none' | 'endpoint'
+  /**
    * Batch-embed texts, in order. The returned array has exactly one vector per
    * input, each `dim` long and L2-normalized.
    * @param texts - the units to embed.
@@ -86,6 +101,9 @@ export function hashEmbedder(options: { dim?: number } = {}): Embedder {
   return {
     id: `${HASH_EMBEDDER_ID}${options.dim === undefined ? '' : `-${dim}`}`,
     dim,
+    // Declares itself honestly: it has NO semantic ability, and the retrieval
+    // layer uses that to keep it out of fusion (F1).
+    semantics: 'none' as const,
     async embed(texts: readonly string[]): Promise<Float32Array[]> {
       return texts.map((text) => {
         const vector = new Float32Array(dim)

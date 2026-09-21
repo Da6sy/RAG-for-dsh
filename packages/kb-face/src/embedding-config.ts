@@ -50,7 +50,7 @@ import {
 import { settingsNamespace, type SettingsDescriptor } from '@deepseek-ai/dsh-settings'
 import type { Context } from '@deepseek-ai/cordis'
 import { embedderVersion } from '@clue-harness/kb'
-import { DEFAULT_FEATURE_WEIGHTS, type RerankFeatureWeights } from '@clue-harness/rag'
+import { DEFAULT_FEATURE_WEIGHTS, RETRIEVAL_DEFAULTS, type RerankFeatureWeights } from '@clue-harness/rag'
 
 /**
  * The provider namespace (规划 §9.2/§9.3 A) — with one RECORDED DEVIATION.
@@ -93,16 +93,9 @@ export type EmbeddingConfig = typeof DEFAULT_EMBEDDING_CONFIG
 
 /** The shipped retrieval defaults (规划 §9.3 B). */
 export const DEFAULT_RETRIEVAL_CONFIG = {
-  fusion: 'rrf' as const,
-  rrfK: 60,
-  channelWeights: { lexical: 1, vector: 1 },
-  recallDepth: 50,
-  rerankCandidates: 30,
-  rerank: true,
-  llmRerank: false,
-  ranklog: true,
-  queryStyle: 'intent' as 'intent' | 'keywords',
-  lexicalScorer: 'bm25' as 'bm25' | 'weights',
+  ...RETRIEVAL_DEFAULTS,
+  fusion: RETRIEVAL_DEFAULTS.fusion as 'rrf',
+  channelWeights: { ...RETRIEVAL_DEFAULTS.channelWeights },
   featureWeights: DEFAULT_FEATURE_WEIGHTS as RerankFeatureWeights,
 }
 
@@ -132,27 +125,30 @@ export const EmbeddingSchema = z.object({
 
 /** The retrieval-tuning schema. */
 export const RetrievalSchema = z.object({
-  fusion: z.union([z.const('rrf'), z.const('weighted')]).default('rrf'),
-  rrfK: z.natural().default(60),
-  channelWeights: z.object({ lexical: z.number().default(1), vector: z.number().default(1) }).default({ lexical: 1, vector: 1 }),
-  recallDepth: z.natural().default(50),
-  rerankCandidates: z.natural().default(30),
-  rerank: z.boolean().default(true),
-  llmRerank: z.boolean().default(false),
-  ranklog: z.boolean().default(true),
+  fusion: z.union([z.const('rrf'), z.const('weighted')]).default(RETRIEVAL_DEFAULTS.fusion),
+  rrfK: z.natural().default(RETRIEVAL_DEFAULTS.rrfK),
+  channelWeights: z.object({
+    lexical: z.number().default(RETRIEVAL_DEFAULTS.channelWeights.lexical),
+    vector: z.number().default(RETRIEVAL_DEFAULTS.channelWeights.vector),
+  }).default({ ...RETRIEVAL_DEFAULTS.channelWeights }),
+  recallDepth: z.natural().default(RETRIEVAL_DEFAULTS.recallDepth),
+  rerankCandidates: z.natural().default(RETRIEVAL_DEFAULTS.rerankCandidates),
+  rerank: z.boolean().default(RETRIEVAL_DEFAULTS.rerank),
+  llmRerank: z.boolean().default(RETRIEVAL_DEFAULTS.llmRerank),
+  ranklog: z.boolean().default(RETRIEVAL_DEFAULTS.ranklog),
   /**
    * V3 (规划 §11): which query-writing doctrine the `tool:kb` prompt teaches.
    * `intent` is the plan's target; `keywords` is the pre-V3 text, kept because
    * the A/B has to be able to run both and because a deployment can pin the
    * old behavior while it evaluates.
    */
-  queryStyle: z.union([z.const('intent'), z.const('keywords')]).default('intent'),
+  queryStyle: z.union([z.const('intent'), z.const('keywords')]).default(RETRIEVAL_DEFAULTS.queryStyle),
   /**
    * R2 of `docs/修复规划-一级检索BM25化.md`: which first-level ranking formula
    * ships. `bm25` is the new default; `weights` reproduces the pre-R2 order
    * exactly (the rollback switch, pinned by a test).
    */
-  lexicalScorer: z.union([z.const('bm25'), z.const('weights')]).default('bm25'),
+  lexicalScorer: z.union([z.const('bm25'), z.const('weights')]).default(RETRIEVAL_DEFAULTS.lexicalScorer),
   featureWeights: z.object({
     bm25ish: z.number().default(DEFAULT_FEATURE_WEIGHTS.bm25ish),
     exactPhrase: z.number().default(DEFAULT_FEATURE_WEIGHTS.exactPhrase),

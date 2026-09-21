@@ -209,6 +209,8 @@ export function createHttpEmbedder(options: HttpEmbedderOptions): Embedder & { r
     get dim(): number {
       return options.getConfig().dim
     },
+    /** A real embedding endpoint: it may participate in fusion (F1). */
+    semantics: 'endpoint' as const,
     get endpoint(): string {
       return endpointHost(options.getConfig().baseUrl)
     },

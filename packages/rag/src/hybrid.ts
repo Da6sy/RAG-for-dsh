@@ -63,6 +63,7 @@ import {
   type RerankResult,
 } from './rerank.ts'
 import { normalizeQuery, resolveProfile, type ChannelProfile, type NormalizedQuery } from './profiles.ts'
+import { RETRIEVAL_DEFAULTS } from './defaults.ts'
 import { llmRerank as runLlmRerank, type LlmRankPort, type LlmRerankOutcome } from './llm-rerank.ts'
 
 /** Which recall channels participate. */
@@ -104,6 +105,25 @@ export interface HybridConfig {
   rerankCandidates?: number
   /** Whether to rerank. Default true. */
   rerank?: boolean
+  /**
+   * F2 (规划 §3.2): the cap on candidates that ONLY the vector channel recalled.
+   *
+   * Semantics SUPPLEMENT the lexical channel, never replace it. The measured
+   * damage was exactly that replacement: with equal RRF weights a vector-only
+   * candidate outranks a lexically-recalled one sitting at rank 25–30, and since
+   * the reranker only sees `rerankCandidates` rows, 1.10 gold documents per
+   * query never reached it. Lexically-recalled candidates are never capped.
+   * Absent = no cap (today's behavior).
+   */
+  maxVectorOnly?: number
+  /**
+   * F1 escape hatch: run the vector channel even when the embedder reports no
+   * semantic ability (`semantics: 'none'`). Off by default — the gate is the
+   * correct production behavior — and used by the pipeline probes (offline
+   * tests and harness runs) whose whole purpose is to exercise the vector path
+   * with a deterministic fake.
+   */
+  allowNoAbilityEmbedder?: boolean
   /**
    * Which first-level formula ranks the lexical channel (R2 of the BM25 plan).
    * Default 'bm25'; 'weights' reproduces pre-R2 behavior exactly, which is the
@@ -182,9 +202,14 @@ export interface HybridRetrieval {
   llmRerank?: LlmRerankOutcome | null
 }
 
-/** The shipped defaults (规划 §9.3 B). */
-export const DEFAULT_RECALL_DEPTH = 50
-export const DEFAULT_RERANK_CANDIDATES = 30
+/**
+ * The shipped defaults — re-exported from the engine's single table
+ * (`defaults.ts`), never re-typed here: two copies of a default is how a
+ * benchmark silently measured the wrong configuration (F0 of the F-plan).
+ */
+export { RETRIEVAL_DEFAULTS } from './defaults.ts'
+export const DEFAULT_RECALL_DEPTH = RETRIEVAL_DEFAULTS.recallDepth
+export const DEFAULT_RERANK_CANDIDATES = RETRIEVAL_DEFAULTS.rerankCandidates
 
 /**
  * Internal control-flow signal: "this query has nothing for the semantic
@@ -237,15 +262,32 @@ export function createHybridRetriever(
   config: HybridConfig = {},
 ): RagRetriever & { retrieveDetailed(query: string, options?: RetrieveOptions & { kinds?: KbKind[]; noTouch?: boolean }): Promise<HybridRetrieval> } {
   const channels = config.channels ?? 'hybrid'
+  // (the ability gate below re-derives `effectiveChannels` once `config` is in scope)
   const profile = resolveProfile(config.profile)
-  const rerankEnabled = config.rerank ?? true
+  const rerankEnabled = config.rerank ?? RETRIEVAL_DEFAULTS.rerank
   const topK = config.topK ?? 5
-  const recallDepth = config.recallDepth ?? DEFAULT_RECALL_DEPTH
-  const rerankCandidates = config.rerankCandidates ?? DEFAULT_RERANK_CANDIDATES
-  const rrfK = config.rrfK ?? DEFAULT_RRF_K
+  const recallDepth = config.recallDepth ?? RETRIEVAL_DEFAULTS.recallDepth
+  const rerankCandidates = config.rerankCandidates ?? RETRIEVAL_DEFAULTS.rerankCandidates
+  const rrfK = config.rrfK ?? RETRIEVAL_DEFAULTS.rrfK
   const lexWeight = config.channelWeights?.lexical ?? profile.lexicalWeight
   const vecWeight = config.channelWeights?.vector ?? profile.semanticWeight
-  const lexicalOnly = channels === 'lexical' && !rerankEnabled
+  /**
+   * F1: a no-ability embedder may not enter fusion.
+   *
+   * `hashEmbedder` self-reports `semantics: 'none'`; letting it fuse is how the
+   * measured deficit was produced (its rank noise displaced lexical results),
+   * and the plan's fix is explicit: "semantics === 'none' 的 hashEmbedder ⇒
+   * 直接 0,且不进入融合". The channel is not removed — it is DECLARED inactive
+   * with a reason, so every surface can say why (不变量 5).
+   */
+  const abilityGated = config.embedder !== undefined
+    && config.embedder.semantics === 'none'
+    && config.allowNoAbilityEmbedder !== true
+  const effectiveChannels: RecallChannels = abilityGated ? 'lexical' : channels
+  const channelStateNote = abilityGated
+    ? '嵌入器自报语义能力=0(确定性兜底),按 F1 不进入融合 — 本次为纯词法结果'
+    : null
+  const lexicalOnly = effectiveChannels === 'lexical' && !rerankEnabled
   // Invariant 9 is satisfied by CONSTRUCTION, not by imitation: the exact
   // today's-behavior configuration IS the shipped full-text retriever.
   const fulltext = createFulltextRetriever(project, global, {
@@ -374,11 +416,17 @@ export function createHybridRetriever(
     // The rollback path, delegated (不变量 9).
     if (lexicalOnly) {
       const hits = await fulltext.retrieve(query, options)
+      // The F1 ability gate delegates here too, so its REASON must survive the
+      // delegation: a reader who sees pure-lexical results is entitled to know
+      // whether they asked for that or the embedder could not help.
+      const annotated = channelStateNote === null
+        ? hits
+        : hits.map((hit) => ({ ...hit, annotations: [...hit.annotations, channelStateNote] }))
       return {
-        hits,
-        vector: { status: 'disabled', note: '本次只走词法通道(--channel lexical --rerank off)' },
+        hits: annotated,
+        vector: { status: 'disabled', note: channelStateNote ?? '本次只走词法通道(--channel lexical --rerank off)' },
         profile,
-        channels,
+        channels: effectiveChannels,
         rerank: false,
         recalled: { lexical: hits.length, vector: 0 },
         fused: hits.length,
@@ -388,9 +436,9 @@ export function createHybridRetriever(
     if (queryTokens.length === 0) {
       return {
         hits: [],
-        vector: { status: channels === 'vector' ? 'used' : 'disabled', note: '空查询' },
+        vector: { status: effectiveChannels === 'vector' ? 'used' : 'disabled', note: '空查询' },
         profile,
-        channels,
+        channels: effectiveChannels,
         rerank: rerankEnabled,
         recalled: { lexical: 0, vector: 0 },
         fused: 0,
@@ -405,7 +453,7 @@ export function createHybridRetriever(
     })
     const byId = new Map(members.map((member) => [String(member.entry.id), member]))
     const weights: RetrievalWeights = { title: 3, tag: 2, text: 1, ...(config.weights ?? {}) }
-    const lexicalScorer: LexicalScorer = config.lexicalScorer ?? 'bm25'
+    const lexicalScorer: LexicalScorer = config.lexicalScorer ?? RETRIEVAL_DEFAULTS.lexicalScorer
     // One stats pass per retrieval serves BOTH levels: the lexical channel's
     // BM25F and the reranker's `bm25ish` feature normalize the same numbers.
     const corpusStats = lexicalScorer === 'bm25' || rerankEnabled
@@ -417,7 +465,7 @@ export function createHybridRetriever(
       : undefined
 
     // ── lexical channel ────────────────────────────────────────────────────
-    const lexical = channels === 'vector'
+    const lexical = effectiveChannels === 'vector'
       ? []
       : members
         .map((member) => ({
@@ -439,8 +487,8 @@ export function createHybridRetriever(
     let state: VectorChannelState
     const semanticById = new Map<string, number>()
     let vectorRanked: string[] = []
-    if (channels === 'lexical') {
-      state = { status: 'disabled', note: '本次只走词法通道(--channel lexical)' }
+    if (effectiveChannels === 'lexical') {
+      state = { status: 'disabled', note: channelStateNote ?? '本次只走词法通道(--channel lexical)' }
     } else if (config.embedder === undefined) {
       state = { status: 'not-configured', note: '嵌入端点未配置(enabled=false 或缺 baseUrl/model)' }
     } else {
@@ -496,13 +544,29 @@ export function createHybridRetriever(
     }
 
     // ── RRF fusion ────────────────────────────────────────────────────────
-    const fusedCandidates = channels === 'vector'
+    const fusedCandidates = effectiveChannels === 'vector'
       ? rrfFuse([{ name: 'vector', weight: vecWeight, ranked: vectorRanked }], rrfK)
       : rrfFuse([
         { name: 'lexical', weight: lexWeight, ranked: lexicalRanked },
         { name: 'vector', weight: vecWeight, ranked: vectorRanked },
       ], rrfK)
-    const fused = fusedCandidates.slice(0, rerankCandidates)
+    // F2: apply the vector-only quota BEFORE the window slice, keeping the
+    // fusion order (the quota decides who gets IN, never the order among them).
+    const capped = config.maxVectorOnly === undefined
+      ? fusedCandidates
+      : (() => {
+        const kept: FusedCandidate[] = []
+        let vectorOnly = 0
+        for (const row of fusedCandidates) {
+          if (row.ranks.lexical === undefined) {
+            if (vectorOnly >= (config.maxVectorOnly as number)) continue
+            vectorOnly += 1
+          }
+          kept.push(row)
+        }
+        return kept
+      })()
+    const fused = capped.slice(0, rerankCandidates)
 
     // ── deterministic rerank (or the fused order, honestly labeled) ───────
     const note = degradationNote(state)
@@ -631,7 +695,10 @@ export function createHybridRetriever(
     for (const hit of ordered.slice(0, limit)) {
       const store = storeOf(hit.entry)
       const enriched = await enrichHit(store, hit.entry, hit, { at, ...(options.noTouch === true ? { noTouch: true } : {}) })
-      final.push(note === null ? enriched : { ...enriched, annotations: [...enriched.annotations, note] })
+      // Two honest notes can apply: the channel's own degradation, and F1's
+      // ability gate. Both must reach the reader.
+      const notes = [note, channelStateNote].filter((value): value is string => value !== null && value !== undefined)
+      final.push(notes.length === 0 ? enriched : { ...enriched, annotations: [...enriched.annotations, ...notes] })
     }
 
     if (config.onRank !== undefined) {
@@ -639,7 +706,7 @@ export function createHybridRetriever(
         await config.onRank({
           at,
           profile: profile.name,
-          channels,
+          channels: effectiveChannels,
           rerank: rerankEnabled,
           query,
           candidates: final.map((hit) => ({
@@ -660,7 +727,7 @@ export function createHybridRetriever(
       hits: final,
       vector: state,
       profile,
-      channels,
+      channels: effectiveChannels,
       rerank: rerankEnabled,
       recalled: { lexical: lexical.length, vector: vectorRanked.length },
       fused: fusedCandidates.length,

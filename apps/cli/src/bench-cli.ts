@@ -45,6 +45,11 @@ export interface IndexEntry {
   judgeVersion: string | null
   /** config → metrics, flattened for a terminal table. */
   rows: Record<string, Record<string, number>>
+  /**
+   * F0's cross-config verdict, straight from the report: `hybrid+rerank`'s
+   * nDCG@10 minus `lexical+rerank`'s (null when a report lacks either row).
+   */
+  hybridMinusLexical?: number | null
   ok: boolean
   caveats: string[]
 }
@@ -66,6 +71,8 @@ async function collect(): Promise<IndexEntry[]> {
       judge?: { id: string; promptVersion: string }
       rows?: Array<{ config: string; metrics?: Record<string, number> } & Record<string, unknown>>
       ok?: boolean
+      /** F0's cross-config verdict, when the report carries it. */
+      hybridMinusLexical?: number | null
       caveats?: string[]
     }
     const rows: Record<string, Record<string, number>> = {}
@@ -92,6 +99,7 @@ async function collect(): Promise<IndexEntry[]> {
       judge: report.judge?.id ?? null,
       judgeVersion: report.judge?.promptVersion ?? null,
       rows,
+      ...(report.hybridMinusLexical !== undefined ? { hybridMinusLexical: report.hybridMinusLexical } : {}),
       ok: report.ok ?? true,
       caveats: report.caveats ?? [],
     })
@@ -139,6 +147,22 @@ async function diff(a: string, b: string): Promise<number> {
   }
   console.log(`${left.dataset}(${left.generatedAt.slice(0, 19)}) → ${right.dataset}(${right.generatedAt.slice(0, 19)})`)
   let regressed = false
+  /**
+   * F0 of `docs/修改规划-混合检索反超单BM25.md`: the plan's hard line is a
+   * CROSS-CONFIG one — with reranking on, `hybrid` may not lose to `lexical`
+   * (tolerance 0). The bench writes that verdict into each report as
+   * `ok` / `hybridMinusLexical`; this is where a human sees it and where CI
+   * would fail on it.
+   */
+  const verdict = (label: string, entry: IndexEntry): void => {
+    const delta = entry.hybridMinusLexical
+    if (delta === undefined || delta === null) return
+    const failed = entry.ok === false
+    if (failed) regressed = true
+    console.log(`  [硬线] ${label} hybrid−lexical nDCG@10 = ${delta >= 0 ? '+' : ''}${delta.toFixed(4)}${failed ? '  ✗ 混合劣于单词法' : '  ✓ 通过'}`)
+  }
+  verdict('之前', left)
+  verdict('之后', right)
   for (const config of Object.keys(right.rows)) {
     const before = left.rows[config]
     const after = right.rows[config]

@@ -112,6 +112,7 @@ export {
   type RerankFeatureWeights,
   type RerankResult,
 } from './rerank.ts'
+export { RETRIEVAL_DEFAULTS, type RetrievalDefaults } from './defaults.ts'
 export {
   DEFAULT_RECALL_DEPTH,
   DEFAULT_RERANK_CANDIDATES,

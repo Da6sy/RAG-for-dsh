@@ -87,6 +87,9 @@ function scoreQuery(ranked, gold, k) {
 }
 
 const args = parseArgs(process.argv.slice(2))
+// Loaded BEFORE the defaults below are read: the engine's single defaults table is
+// what those lines reference (a top-level `await import` is evaluated in order).
+const { buildVectorIndex, createHybridRetriever, hashEmbedder, CHANNEL_PROFILES, RETRIEVAL_DEFAULTS } = await import('@clue-harness/rag')
 /**
  * Which first-level formula to measure (R2 of `docs/修复规划-一级检索BM25化.md`).
  *
@@ -96,8 +99,30 @@ const args = parseArgs(process.argv.slice(2))
  * archived values exactly — otherwise "same dataset, new numbers" would be two
  * different experiments wearing one name.
  */
-const scorer = args.scorer ?? 'bm25'
+const scorer = args.scorer ?? RETRIEVAL_DEFAULTS.lexicalScorer
 if (scorer !== 'bm25' && scorer !== 'weights') throw new Error(`--scorer 只接受 bm25|weights,收到 ${scorer}`)
+
+/**
+ * F0 of `docs/修改规划-混合检索反超单BM25.md`: the fusion/rerank knobs must be
+ * reachable FROM HERE.
+ *
+ * Why this is F0 rather than a nicety: the harness used to pass none of these,
+ * so it silently measured the library's fallback values. Changing the settings
+ * default moved nothing, and three runs with materially different settings
+ * produced byte-identical numbers — a measurement of the wrong configuration
+ * that looked like a result. Every knob the plan asks about now has a flag.
+ */
+const knobs = {
+  ...(args['rerank-candidates'] !== undefined ? { rerankCandidates: Number(args['rerank-candidates']) } : {}),
+  ...(args['recall-depth'] !== undefined ? { recallDepth: Number(args['recall-depth']) } : {}),
+  ...(args['max-vector-only'] !== undefined ? { maxVectorOnly: Number(args['max-vector-only']) } : {}),
+  ...(args['semantic-normalization'] !== undefined ? { semanticNormalization: String(args['semantic-normalization']) } : {}),
+  ...(args['semantic-gate'] !== undefined ? { semanticGate: String(args['semantic-gate']) } : {}),
+  ...(args['channel-weight-vector'] !== undefined
+    ? { channelWeights: { lexical: Number(args['channel-weight-lexical'] ?? 1), vector: Number(args['channel-weight-vector']) } }
+    : {}),
+}
+if (Object.keys(knobs).length > 0) console.log(`[beir] 旋钮: ${JSON.stringify(knobs)}`)
 const dataset = args.dataset ?? 'nfcorpus'
 const maxQueries = Number(args.queries ?? 300)
 const embedderKind = args.embedder ?? 'hash'
@@ -120,7 +145,6 @@ console.log(`[beir] ${dataset}: 语料 ${corpus.length} 篇 · qrels 查询 ${qr
 
 // ── the retriever, exactly as the product wires it ────────────────────────
 const { openProjectStore } = await import('@clue-harness/kb')
-const { buildVectorIndex, createHybridRetriever, hashEmbedder, CHANNEL_PROFILES } = await import('@clue-harness/rag')
 
 const workdir = await mkdtemp(path.join(tmpdir(), 'clue-beir-'))
 const store = await openProjectStore(path.join(workdir, 'p'), path.join(workdir, 'h'))
@@ -236,6 +260,7 @@ try {
       profile: 'tool',
       lexicalScorer: scorer,
       topK: depth,
+      ...knobs,
       embedder,
       home,
       rebuildOnRead: false,
@@ -246,10 +271,53 @@ try {
     let recall = 0
     let rr = 0
     let vectorUsed = 0
+    // F0 diagnostics: how much of the gold set even REACHES the rerank window,
+    // and how much the semantic scores actually separate. The plan's measured
+    // damage was a candidate-window effect (1.10 gold documents per query
+    // pushed out), which recall@10 cannot show — a document that never entered
+    // the window is indistinguishable from one that ranked badly.
+    let goldInWindow = 0
+    let goldTotal = 0
+    const statusCounts = {}
+    const spreads = []
+    /**
+     * The window is measured with rerank OFF: that order IS the fusion result,
+     * i.e. exactly what the reranker is handed (`rerankCandidates` deep).
+     */
+    const windowRetriever = config.rerank ? createHybridRetriever(store, null, {
+      channels: config.channels,
+      rerank: false,
+      profile: 'tool',
+      lexicalScorer: scorer,
+      topK: knobs.rerankCandidates ?? RETRIEVAL_DEFAULTS.rerankCandidates,
+      embedder,
+      home,
+      rebuildOnRead: false,
+      ...knobs,
+    }) : null
     for (const qid of evaluated) {
       const gold = qrels.get(qid) ?? new Map()
-      const detailed = await retriever.retrieveDetailed(queries.get(qid) ?? '', { limit: depth, noTouch: true })
+      const query = queries.get(qid) ?? ''
+      const detailed = await retriever.retrieveDetailed(query, { limit: depth, noTouch: true })
       if (detailed.vector.status === 'used') vectorUsed += 1
+      statusCounts[detailed.vector.status] = (statusCounts[detailed.vector.status] ?? 0) + 1
+      const sem = detailed.hits.map((hit) => hit.explain?.semantic).filter((value) => typeof value === 'number')
+      if (sem.length > 1) {
+        const sorted = [...sem].sort((a, b) => b - a)
+        spreads.push(sorted[0] - sorted[Math.floor(sorted.length / 2)])
+      }
+      if (windowRetriever !== null) {
+        const window = await windowRetriever.retrieveDetailed(query, {
+          limit: knobs.rerankCandidates ?? RETRIEVAL_DEFAULTS.rerankCandidates,
+          noTouch: true,
+        })
+        const windowGold = new Set(window.hits.map((hit) => entryToGold.get(String(hit.entry.id)) ?? String(hit.entry.id)))
+        for (const goldId of gold.keys()) {
+          if (!gold.has(goldId)) continue
+          goldTotal += 1
+          if (windowGold.has(goldId)) goldInWindow += 1
+        }
+      }
       const ranked = detailed.hits.map((hit) => entryToGold.get(String(hit.entry.id)) ?? String(hit.entry.id))
       const scored = scoreQuery(ranked, gold, k)
       ndcg += scored.ndcg
@@ -265,6 +333,12 @@ try {
       'recall@10': Math.round((recall / n) * 10000) / 10000,
       'MRR@10': Math.round((rr / n) * 10000) / 10000,
       vectorUsed,
+      /** F0: gold documents that entered the rerank window (the candidate gate). */
+      goldInWindow: goldTotal === 0 ? null : Math.round((goldInWindow / goldTotal) * 10000) / 10000,
+      /** F0: which vector-channel states the queries saw. */
+      vectorStatus: statusCounts,
+      /** F0: mean spread (top − median) of the returned hits' cosine scores. */
+      semanticSpread: spreads.length === 0 ? null : Math.round((spreads.reduce((a, b) => a + b, 0) / spreads.length) * 10000) / 10000,
       seconds: Math.round((Date.now() - t1) / 100) / 10,
     })
     console.log(`[beir] ${config.id.padEnd(18)} nDCG@10 ${(ndcg / n).toFixed(4)} · recall@10 ${(recall / n).toFixed(4)} · MRR@10 ${(rr / n).toFixed(4)} · ${((Date.now() - t1) / 1000).toFixed(1)}s`)
@@ -277,10 +351,17 @@ try {
     corpus: { documents: corpus.length, queries: evaluated.length, qrelsQueries: qrels.size },
     ks: [k],
     embedder: { id: embedder.id, dim: embedder.dim, semantics },
-    retrieval: { lexicalScorer: scorer },
+    retrieval: { lexicalScorer: scorer, knobs },
     index: { rows: build.rows, calls: build.calls, cacheHits: build.cacheHits, seconds: Math.round(indexSeconds * 10) / 10 },
     rows,
     baseline: 'lexical+no-rerank',
+    /** F0: the plan's headline number, computed where both rows exist. */
+    hybridMinusLexical: (() => {
+      const lexical = rows.find((row) => row.config === 'lexical+rerank')?.['nDCG@10']
+      const hybrid = rows.find((row) => row.config === 'hybrid+rerank')?.['nDCG@10']
+      if (lexical === undefined || hybrid === undefined) return null
+      return Math.round((hybrid - lexical) * 10000) / 10000
+    })(),
     caveats: [
       '公开基准(BEIR):语料与 qrels 都不是本项目的,结论**不得**与内部合成集/金标集的数字混算',
       `本次只评 ${evaluated.length} 条查询(qrels 全量 ${qrels.size});取子集是为了时间,不做调参依据`,
@@ -290,7 +371,15 @@ try {
       'weights 档对四条配置行都生效:lexical-only 行经 fulltext 委派,该路径已在 R2 重测时补上 lexicalScorer 转发(packages/rag/src/retrieve.ts)',
       ...(extraCaveat === null ? [] : [extraCaveat]),
     ],
-    ok: true,
+    /**
+     * F0's hard line (规划 §5 不变量 2): with reranking on, hybrid may not lose to
+     * lexical. Tolerance is zero — the plan's own wording.
+     */
+    ok: (() => {
+      const lexical = rows.find((row) => row.config === 'lexical+rerank')?.['nDCG@10']
+      const hybrid = rows.find((row) => row.config === 'hybrid+rerank')?.['nDCG@10']
+      return lexical === undefined || hybrid === undefined ? true : hybrid >= lexical
+    })(),
   }
   await mkdir(runsRoot, { recursive: true })
   const stamp = report.generatedAt.replace(/[:.]/g, '-')

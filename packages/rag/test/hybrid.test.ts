@@ -175,7 +175,7 @@ test('降级诚实: 向量层缺失 → 待建标注;版本过期 → 过期标�
 
   // 用旧 embedder 建好,再用新 embedder 查 ⇒ 报"过期"
   await buildVectorIndex(store, { home, embedder, target: { kind: 'entries' } })
-  const other: Embedder = { ...hashEmbedder({ dim: 4 }), id: 'another-model' }
+  const other: Embedder = { ...hashEmbedder({ dim: 4 }), id: 'another-model', semantics: 'endpoint' }
   const stale = await createHybridRetriever(store, global, { channels: 'hybrid', embedder: other, home, rebuildOnRead: false, topK: 2 }).retrieveDetailed('键盘')
   assert.equal(stale.vector.status, 'index-stale')
   assert.ok(stale.hits.every((hit) => hit.annotations.some((note) => note.includes('版本已过期'))))
@@ -199,7 +199,7 @@ test('降级诚实: 嵌入调用失败 → 退回纯词法并标注原因(不抛
 test('查询期重建有护栏: 索引缺失时按预算自动建好,随后即可用', async (t) => {
   const { store, global, home } = await world(t)
   const embedder = conceptEmbedder()
-  const retriever = createHybridRetriever(store, global, { channels: 'hybrid', embedder, home, topK: 2 })
+  const retriever = createHybridRetriever(store, global, { channels: 'hybrid', embedder, home, topK: 2, allowNoAbilityEmbedder: true })
   const result = await retriever.retrieveDetailed('键盘 可达性')
   assert.equal(result.vector.status, 'used')
   const index = await readVectorIndex(store.dir, { kind: 'entries' })
@@ -232,7 +232,7 @@ test('不变量 7: 同 query + 同 embedder + 同库 ⇒ 同序;ranklog 只落 i
 
 test('V0 兜底: hashEmbedder 全链路可跑(不变量 7 的确定性锚点)', async (t) => {
   const { store, global, home } = await world(t)
-  const embedder = hashEmbedder({ dim: 32 })
+  const embedder = { ...hashEmbedder({ dim: 32 }), semantics: 'endpoint' as const }
   await buildVectorIndex(store, { home, embedder, target: { kind: 'entries' } })
   const result = await createHybridRetriever(store, global, { channels: 'hybrid', embedder, home, topK: 3 }).retrieveDetailed('分片 重建')
   assert.equal(result.vector.status, 'used')
