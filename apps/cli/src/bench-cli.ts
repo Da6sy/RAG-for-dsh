@@ -148,6 +148,19 @@ async function diff(a: string, b: string): Promise<number> {
   console.log(`${left.dataset}(${left.generatedAt.slice(0, 19)}) → ${right.dataset}(${right.generatedAt.slice(0, 19)})`)
   let regressed = false
   /**
+   * P0 of `docs/修复方案-精排量纲与语义名次.md` §10: the comparison used to treat
+   * EVERY numeric field as a quality metric, so a run that got FASTER was
+   * reported as a regression and the command exited 1 — a measurement defect
+   * that would have masked real ones.
+   *
+   * Three classes now: quality (higher is better), cost (lower is better), and
+   * observation (no verdict either way — counts, coverage, spread).
+   */
+  const LOWER_IS_BETTER = new Set(['seconds'])
+  const OBSERVATION = new Set(['vectorUsed', 'goldInWindow', 'semanticSpread', 'vectorStatus'])
+  const direction = (metric: string): 'quality' | 'cost' | 'observe' =>
+    OBSERVATION.has(metric) ? 'observe' : LOWER_IS_BETTER.has(metric) ? 'cost' : 'quality'
+  /**
    * F0 of `docs/修改规划-混合检索反超单BM25.md`: the plan's hard line is a
    * CROSS-CONFIG one — with reranking on, `hybrid` may not lose to `lexical`
    * (tolerance 0). The bench writes that verdict into each report as
@@ -171,8 +184,15 @@ async function diff(a: string, b: string): Promise<number> {
       const previous = before[metric]
       if (previous === undefined) continue
       const delta = value - previous
-      const flag = delta < -0.005 ? ' ✗ 回退' : delta > 0.005 ? ' ✓ 提升' : ''
-      if (flag === ' ✗ 回退') regressed = true
+      const kind = direction(metric)
+      const worse = kind === 'cost' ? delta > 0.005 : delta < -0.005
+      const better = kind === 'cost' ? delta < -0.005 : delta > 0.005
+      const flag = kind === 'observe' ? ' · 观察'
+        : worse ? (kind === 'cost' ? ' ✗ 变慢' : ' ✗ 回退')
+          : better ? (kind === 'cost' ? ' ✓ 更快' : ' ✓ 提升') : ''
+      // Only a QUALITY regression fails the command: cost and observation
+      // numbers are context, never verdicts.
+      if (kind === 'quality' && worse) regressed = true
       console.log(`  ${config.padEnd(24)} ${metric.padEnd(12)} ${previous} → ${value} (${delta >= 0 ? '+' : ''}${delta.toFixed(4)})${flag}`)
     }
   }

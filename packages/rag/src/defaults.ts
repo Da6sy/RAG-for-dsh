@@ -39,6 +39,14 @@ export const RETRIEVAL_DEFAULTS = {
   queryStyle: 'intent' as 'intent' | 'keywords',
   /** The first-level ranking formula (`bm25` | `weights`). */
   lexicalScorer: 'bm25' as 'bm25' | 'weights',
+  /** D1: `bm25ish` scale — `candidates` (today) or `absolute` (pool-level). */
+  lexicalNormalization: 'candidates' as 'candidates' | 'absolute',
+  /** D2: cosine scale — `raw` (today) or `calibrated` ([0,1] via floor/ceil). */
+  semanticScale: 'raw' as 'raw' | 'calibrated',
+  /** D2's calibration floor (text-embedding-v4 family initial value). */
+  semanticFloor: 0.3,
+  /** D2's calibration ceiling. */
+  semanticCeil: 0.8,
 } as const
 
 /** The type of the table (so a schema can be typed from it). */

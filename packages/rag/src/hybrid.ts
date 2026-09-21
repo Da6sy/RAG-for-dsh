@@ -136,6 +136,13 @@ export interface HybridConfig {
   channelWeights?: { lexical?: number; vector?: number }
   /** Feature weights (§8.2). */
   featureWeights?: Partial<RerankFeatureWeights>
+  /** D1: what `bm25ish` is relative to (`candidates` = today, `absolute` = pool scale). */
+  lexicalNormalization?: 'candidates' | 'absolute'
+  /** D2: whether the cosine is calibrated onto [0,1] (`raw` = today). */
+  semanticScale?: 'raw' | 'calibrated'
+  /** D2's calibration bounds (from the embedder family, not per corpus). */
+  semanticFloor?: number
+  semanticCeil?: number
   /** The embedder in effect (absent = lexical only, honestly annotated). */
   embedder?: Embedder
   /** ClueHarness home — where the shared embed cache and rebuild writes live. */
@@ -628,6 +635,10 @@ export function createHybridRetriever(
         trustThreshold: config.trustThreshold ?? project?.config.trustThreshold ?? global?.config.trustThreshold ?? 20,
         now,
         ...(config.featureWeights !== undefined ? { weights: config.featureWeights } : {}),
+        ...(config.lexicalNormalization !== undefined ? { lexicalNormalization: config.lexicalNormalization } : {}),
+        ...(config.semanticScale !== undefined ? { semanticScale: config.semanticScale } : {}),
+        ...(config.semanticFloor !== undefined ? { semanticFloor: config.semanticFloor } : {}),
+        ...(config.semanticCeil !== undefined ? { semanticCeil: config.semanticCeil } : {}),
         profile,
       })
       for (const result of results) {

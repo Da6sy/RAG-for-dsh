@@ -116,8 +116,14 @@ const knobs = {
   ...(args['rerank-candidates'] !== undefined ? { rerankCandidates: Number(args['rerank-candidates']) } : {}),
   ...(args['recall-depth'] !== undefined ? { recallDepth: Number(args['recall-depth']) } : {}),
   ...(args['max-vector-only'] !== undefined ? { maxVectorOnly: Number(args['max-vector-only']) } : {}),
-  ...(args['semantic-normalization'] !== undefined ? { semanticNormalization: String(args['semantic-normalization']) } : {}),
-  ...(args['semantic-gate'] !== undefined ? { semanticGate: String(args['semantic-gate']) } : {}),
+  // P0 of the D-plan: the report may only record switches the ENGINE actually
+  // supports. `--semantic-normalization` / `--semantic-gate` were recorded here
+  // while no such option existed (a "phantom knob"), so they are gone; the real
+  // ones are D1's `lexicalNormalization` and D2's `semanticScale`.
+  ...(args['lexical-normalization'] !== undefined ? { lexicalNormalization: String(args['lexical-normalization']) } : {}),
+  ...(args['semantic-scale'] !== undefined ? { semanticScale: String(args['semantic-scale']) } : {}),
+  ...(args['semantic-floor'] !== undefined ? { semanticFloor: Number(args['semantic-floor']) } : {}),
+  ...(args['semantic-ceil'] !== undefined ? { semanticCeil: Number(args['semantic-ceil']) } : {}),
   ...(args['channel-weight-vector'] !== undefined
     ? { channelWeights: { lexical: Number(args['channel-weight-lexical'] ?? 1), vector: Number(args['channel-weight-vector']) } }
     : {}),

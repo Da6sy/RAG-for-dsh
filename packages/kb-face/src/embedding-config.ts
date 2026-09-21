@@ -149,6 +149,13 @@ export const RetrievalSchema = z.object({
    * exactly (the rollback switch, pinned by a test).
    */
   lexicalScorer: z.union([z.const('bm25'), z.const('weights')]).default(RETRIEVAL_DEFAULTS.lexicalScorer),
+  /** D1 (`docs/修复方案-精排量纲与语义名次.md`): lexical feature scale. */
+  lexicalNormalization: z.union([z.const('candidates'), z.const('absolute')]).default(RETRIEVAL_DEFAULTS.lexicalNormalization),
+  /** D2: semantic feature scale. */
+  semanticScale: z.union([z.const('raw'), z.const('calibrated')]).default(RETRIEVAL_DEFAULTS.semanticScale),
+  /** D2's calibration bounds (per embedder family, not per corpus). */
+  semanticFloor: z.number().default(RETRIEVAL_DEFAULTS.semanticFloor),
+  semanticCeil: z.number().default(RETRIEVAL_DEFAULTS.semanticCeil),
   featureWeights: z.object({
     bm25ish: z.number().default(DEFAULT_FEATURE_WEIGHTS.bm25ish),
     exactPhrase: z.number().default(DEFAULT_FEATURE_WEIGHTS.exactPhrase),

@@ -180,6 +180,26 @@ export interface RerankContext {
   weights?: Partial<RerankFeatureWeights>
   /** The channel profile (recorded in the explanation; weights live in fusion). */
   profile?: ChannelProfile
+  /**
+   * D1 (`docs/修复方案-精排量纲与语义名次.md` §3): what `bm25ish` is relative TO.
+   *
+   * `candidates` (default, = today) divides by the best raw score IN the
+   * candidate set, so SOME document is always scaled to 1.0 — the feature cannot
+   * express "this query has no real lexical evidence in this corpus".
+   * `absolute` saturates against a POOL-level scale instead:
+   * `bm25abs = raw / (raw + scale_q)`, so a weak pool produces weak values.
+   */
+  lexicalNormalization?: 'candidates' | 'absolute'
+  /**
+   * D2 (§3): whether the raw cosine is mapped onto the same [0,1] scale as the
+   * other features. `raw` (default, = today) keeps the uncalibrated cosine;
+   * `calibrated` clamps `(cos − floor)/(ceil − floor)`.
+   */
+  semanticScale?: 'raw' | 'calibrated'
+  /** The calibration floor (a cosine below this counts as no semantic evidence). */
+  semanticFloor?: number
+  /** The calibration ceiling (a cosine at or above this counts as full evidence). */
+  semanticCeil?: number
 }
 
 /** One reranked candidate with its full arithmetic. */
@@ -287,10 +307,22 @@ export function rerankOne(candidate: RerankCandidate, context: RerankContext, bm
   const entry = candidate.entry
 
   const raw = bm25Raw(entry, context.queryTokens, context.stats, fieldWeights)
-  const bm25ish = bm25Normalizer <= 0 ? 0 : raw / bm25Normalizer
+  const lexicalMode = context.lexicalNormalization ?? 'candidates'
+  const bm25ish = lexicalMode === 'absolute'
+    // D1: corpus-level saturation. `bm25Normalizer` carries the POOL scale in
+    // this mode (see rerankAll); the value stays < 1 for a weak pool, which is
+    // the whole point — "no real lexical evidence" becomes expressible.
+    ? (raw <= 0 ? 0 : raw / (raw + Math.max(bm25Normalizer, 1e-9)))
+    : (bm25Normalizer <= 0 ? 0 : raw / bm25Normalizer)
   const haystack = normalizePhrase(`${entry.title} ${entry.tags.join(' ')} ${entryTextAfterRedlines(entry)}`)
   const exactPhrase = exactPhraseFeature(haystack, context.queryText)
-  const semantic = candidate.semantic ?? 0
+  const semanticRaw = candidate.semantic ?? 0
+  // D2: put the cosine on the same scale as everything else. The floor/ceil come
+  // from the embedder family's calibration (a setting), never from the candidate
+  // set — a per-candidate-set scaling would just be D1's problem again.
+  const semantic = (context.semanticScale ?? 'raw') === 'calibrated'
+    ? Math.max(0, Math.min(1, (semanticRaw - (context.semanticFloor ?? 0.3)) / Math.max(1e-9, (context.semanticCeil ?? 0.8) - (context.semanticFloor ?? 0.3))))
+    : semanticRaw
   const specificity = context.queryTokens.length === 0 ? 0 : candidate.matched.length / context.queryTokens.length
   const bindingOverlap = (context.bindingWeightEnabled ?? false) && context.changedFiles !== undefined
     ? bindingOverlapOf(entry, context.changedFiles)
@@ -375,12 +407,28 @@ export function rerankOne(candidate: RerankCandidate, context: RerankContext, bm
  */
 export function rerankAll(candidates: readonly RerankCandidate[], context: RerankContext): RerankResult[] {
   const fieldWeights = context.fieldWeights ?? DEFAULT_WEIGHTS
+  const raws = candidates.map((candidate) => bm25Raw(candidate.entry, context.queryTokens, context.stats, fieldWeights))
   let best = 0
-  for (const candidate of candidates) {
-    best = Math.max(best, bm25Raw(candidate.entry, context.queryTokens, context.stats, fieldWeights))
-  }
+  for (const raw of raws) best = Math.max(best, raw)
+  /**
+   * D1's `scale_q`: a POOL-level statistic, deliberately not "the best one".
+   *
+   * The plan recommends a corpus-wide quantile once the inverted index exists
+   * and a recall-pool quantile as the documented approximation until then. The
+   * pool here IS the recall pool (`rerankCandidates` deep), so p90 of its raw
+   * scores is that approximation; with fewer than 3 candidates it degrades to
+   * the max (nothing to estimate from) and the caller should treat the value as
+   * approximate.
+   */
+  const scaleQ = (() => {
+    const positive = raws.filter((raw) => raw > 0).sort((a, b) => a - b)
+    if (positive.length === 0) return 0
+    if (positive.length < 3) return positive[positive.length - 1] as number
+    return positive[Math.min(positive.length - 1, Math.floor(positive.length * 0.9))] as number
+  })()
+  const lexicalMode = context.lexicalNormalization ?? 'candidates'
   return candidates
-    .map((candidate) => rerankOne(candidate, context, best))
+    .map((candidate) => rerankOne(candidate, context, lexicalMode === 'absolute' ? scaleQ : best))
     .sort((a, b) =>
       b.score - a.score
       || (a.candidate.entry.tier === b.candidate.entry.tier ? 0 : a.candidate.entry.tier === 'project' ? -1 : 1)
