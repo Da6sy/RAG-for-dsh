@@ -333,6 +333,38 @@ export interface ConfigWriteResult {
   /** Populated on refusal — one entry per failing field, plus a whole-section error. */
   errors: FieldError[]
   config: EmbeddingConfig
+  /**
+   * The retrieval section after the write (it has its OWN namespace, so a patch
+   * that mixes both sections has two results — see {@link writeEmbeddingConfig}).
+   */
+  retrieval?: RetrievalConfig
+}
+
+/**
+ * The keys that belong to the RETRIEVAL namespace, not the embedding one.
+ *
+ * This list exists because of a measured defect: the page's「保存」button sends
+ * ONE patch (`rerank`, `channelWeights`, `featureWeights`, …) to
+ * `/embedding/config`, and the writer put the WHOLE patch into
+ * `clue-kb-embedding`. Every retrieval-tuning save from the UI was therefore a
+ * silent no-op — `readRetrievalConfig` reads `clue-kb-retrieval` and kept
+ * answering with the defaults while the settings document accumulated orphan
+ * keys under the embedding section. A round-trip test now pins both halves.
+ */
+export const RETRIEVAL_PATCH_KEYS: readonly string[] = Object.keys(RetrievalSchema.dict ?? {})
+
+/** Split a mixed patch into its two namespaces (unlisted keys stay embedding-side). */
+export function splitRetrievalPatch(patch: Record<string, unknown>): {
+  retrievalPatch: Record<string, unknown>
+  embeddingPatch: Record<string, unknown>
+} {
+  const retrievalPatch: Record<string, unknown> = {}
+  const embeddingPatch: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(patch)) {
+    if (RETRIEVAL_PATCH_KEYS.includes(key)) retrievalPatch[key] = value
+    else embeddingPatch[key] = value
+  }
+  return { retrievalPatch, embeddingPatch }
 }
 
 /**
@@ -357,15 +389,42 @@ export async function writeEmbeddingConfig(
 ): Promise<ConfigWriteResult> {
   const settings = ctx.get('settings')
   if (settings === undefined) throw new Error('写入嵌入配置失败: 该上下文没有 settings 服务(宿主未挂载设置文档)')
-  const merged = { ...readEmbeddingConfig(ctx), ...patch } as EmbeddingConfig
-  const errors = validateEmbeddingPatch(patch, merged)
-  if (errors.length > 0) return { ok: false, errors, config: readEmbeddingConfig(ctx) }
-  try {
-    await settings.update(EMBEDDING_NAMESPACE, patch, expectedRevision)
-  } catch (error) {
-    return { ok: false, errors: [{ field: '(整个 section)', message: error instanceof Error ? error.message : String(error) }], config: readEmbeddingConfig(ctx) }
+  const { retrievalPatch, embeddingPatch } = splitRetrievalPatch(patch)
+  const merged = { ...readEmbeddingConfig(ctx), ...embeddingPatch } as EmbeddingConfig
+  const errors = validateEmbeddingPatch(embeddingPatch, merged)
+  if (errors.length > 0) return { ok: false, errors, config: readEmbeddingConfig(ctx), retrieval: readRetrievalConfig(ctx) }
+  // Both sections are validated BEFORE either is written: a patch that is half
+  // acceptable must not leave the document half updated (規劃 §9.2).
+  if (Object.keys(retrievalPatch).length > 0) {
+    // Schemastery validates by CALLING the schema (there is no `safeParse`), and
+    // a throw here is a field-level refusal: the section would not parse.
+    try {
+      RetrievalSchema({ ...readRetrievalConfig(ctx), ...retrievalPatch })
+    } catch (error) {
+      return {
+        ok: false,
+        errors: [{ field: '(整个 section)', message: error instanceof Error ? error.message : String(error) }],
+        config: readEmbeddingConfig(ctx),
+        retrieval: readRetrievalConfig(ctx),
+      }
+    }
   }
-  return { ok: true, errors: [], config: readEmbeddingConfig(ctx) }
+  try {
+    if (Object.keys(embeddingPatch).length > 0) await settings.update(EMBEDDING_NAMESPACE, embeddingPatch, expectedRevision)
+    if (Object.keys(retrievalPatch).length > 0) {
+      // The revision belongs to the section being written: the caller passes the
+      // embedding revision for provider fields and the retrieval one for tuning.
+      await settings.update(RETRIEVAL_NAMESPACE, retrievalPatch, expectedRevision)
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      errors: [{ field: '(整个 section)', message: error instanceof Error ? error.message : String(error) }],
+      config: readEmbeddingConfig(ctx),
+      retrieval: readRetrievalConfig(ctx),
+    }
+  }
+  return { ok: true, errors: [], config: readEmbeddingConfig(ctx), retrieval: readRetrievalConfig(ctx) }
 }
 
 /**

@@ -661,6 +661,18 @@ export interface RetrievalTuningPayload {
   llmRerank: boolean
   ranklog: boolean
   featureWeights: Record<string, number>
+  /**
+   * D1/D2/D3 of `docs/修复方案-精排量纲与语义名次.md`: the SCALE switches.
+   *
+   * They are in the payload (not only in the schema) because the page has to be
+   * able to show which档位 is in force — a switch nobody can see is how the F0
+   * "phantom knob" happened.
+   */
+  lexicalNormalization: 'candidates' | 'absolute'
+  semanticScale: 'raw' | 'calibrated'
+  semanticFloor: number
+  semanticCeil: number
+  missingFeatureMode: 'zero' | 'absent'
 }
 
 /** V1: one derived index's health. */

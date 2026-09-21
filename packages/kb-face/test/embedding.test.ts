@@ -140,6 +140,70 @@ test('设置命名空间可读写,且命名空间名符合宿主契约(dot 非�
   assert.equal(again.rebuildImplied, true, '维度变了 ⇒ 整层作废')
 })
 
+/**
+ * 回归：检索调优的「保存」必须真的写进检索命名空间。
+ *
+ * 这条测试的存在理由就是它此前不存在：页面把整份 patch（`rerank`、
+ * `channelWeights`、`featureWeights`、D1/D2/D3 的档位）发给 `/embedding/config`，
+ * 写入端却把**整份 patch** 写进了 `clue-kb-embedding` —— 于是「检索调优」的每一次保存
+ * 都是静默空操作：`readRetrievalConfig` 读的是 `clue-kb-retrieval`，永远回答默认值，
+ * 而设置文档在嵌入 section 底下攒了一堆孤儿键（`rrfK`、`missingFeatureMode`…）。
+ * 这正是 F0 抓到的"报告说设了、引擎不认"的同一类缺陷，所以两半都要钉住：
+ * 该写的写进去，不该去的别去。
+ */
+test('回归: 检索调优保存写进 clue-kb-retrieval,且不污染 clue-kb-embedding', async (t) => {
+  const { ctx, home } = await host(t)
+  assert.equal(readRetrievalConfig(ctx).rrfK, 60)
+  assert.equal(readRetrievalConfig(ctx).missingFeatureMode, 'zero')
+
+  const result = await writeEmbeddingConfig(ctx, {
+    rerank: true,
+    ranklog: false,
+    channelWeights: { lexical: 1, vector: 2 },
+    featureWeights: { semanticRank: 0.35, fusedRank: 0 },
+    lexicalNormalization: 'absolute',
+    semanticScale: 'calibrated',
+    semanticFloor: 0.28,
+    semanticCeil: 0.82,
+    missingFeatureMode: 'absent',
+  })
+  assert.equal(result.ok, true)
+  const retrieval = readRetrievalConfig(ctx)
+  assert.equal(retrieval.ranklog, false, '检索侧的开关必须真的落盘')
+  assert.equal(retrieval.channelWeights.vector, 2)
+  assert.equal(retrieval.featureWeights.semanticRank, 0.35)
+  assert.equal(retrieval.lexicalNormalization, 'absolute')
+  assert.equal(retrieval.semanticScale, 'calibrated')
+  assert.equal(retrieval.semanticFloor, 0.28)
+  assert.equal(retrieval.semanticCeil, 0.82)
+  assert.equal(retrieval.missingFeatureMode, 'absent')
+  assert.deepEqual(result.retrieval?.missingFeatureMode, 'absent', '写入结果要带回检索 section,页面才能回显')
+
+  // 另一侧必须干净：孤儿键会让"这份文档到底哪段生效"变得无法判断。
+  const document = await readFile(path.join(home, 'settings.yaml'), 'utf8')
+  const embeddingSection = document.split('clue-kb-retrieval')[0] ?? ''
+  for (const orphan of ['rrfK', 'channelWeights', 'featureWeights', 'missingFeatureMode', 'lexicalNormalization']) {
+    assert.ok(!embeddingSection.includes(orphan), `嵌入 section 不得出现检索键 ${orphan}`)
+  }
+  assert.ok(!Object.keys(readEmbeddingConfig(ctx)).includes('rrfK'), '解析后的嵌入配置里也不该有检索键')
+})
+
+/** 一次混合 patch：两段各自写各自的命名空间，一次调用完成。 */
+test('混合 patch: 提供商字段与调优字段各进各的 section', async (t) => {
+  const { ctx } = await host(t)
+  const result = await writeEmbeddingConfig(ctx, { baseUrl: 'https://api.example.cn/v1', model: 'bge-m3', rrfK: 42 })
+  assert.equal(result.ok, true)
+  assert.equal(readEmbeddingConfig(ctx).model, 'bge-m3')
+  assert.equal(readEmbeddingConfig(ctx).baseUrl, 'https://api.example.cn/v1')
+  assert.equal(readRetrievalConfig(ctx).rrfK, 42)
+
+  // 非法档位必须被拒，且拒了就不许留半个 section。
+  const refused = await writeEmbeddingConfig(ctx, { rrfK: 7, semanticScale: 'nonsense' })
+  assert.equal(refused.ok, false)
+  assert.equal(refused.errors[0]?.field, '(整个 section)')
+  assert.equal(readRetrievalConfig(ctx).rrfK, 42, '被拒绝的 patch 不得留下半个 section')
+})
+
 // ── the key: write, status, resolve, never echoed (§9.4) ──────────────────
 
 test('不变量 10: 密钥只进密钥库,设置文档与一切摘要里都没有它', async (t) => {

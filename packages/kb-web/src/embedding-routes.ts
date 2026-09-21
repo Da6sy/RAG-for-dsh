@@ -174,7 +174,13 @@ export function createEmbeddingRoutes(deps: EmbeddingRoutesDeps): (
       if (patch === null || typeof patch !== 'object') return { status: 400, payload: { error: 'patch 必须是对象' } }
       const revision = typeof body.revision === 'number' ? body.revision : undefined
       const result = await writeEmbeddingConfig(ctx, patch as Record<string, unknown>, revision)
-      return { status: result.ok ? 200 : 400, payload: { ...result, retrieval: readRetrievalConfig(ctx) } }
+      // The write splits the patch across two namespaces, so the answer carries
+      // BOTH sections back (a tuning save must not report success while the
+      // retrieval section still shows the old values).
+      return {
+        status: result.ok ? 200 : 400,
+        payload: { ...result, retrieval: result.retrieval ?? readRetrievalConfig(ctx) },
+      }
     }
 
     // ── the secret: one direction, no echo ────────────────────────────────

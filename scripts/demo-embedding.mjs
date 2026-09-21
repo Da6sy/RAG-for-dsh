@@ -127,24 +127,30 @@ try {
   await page.waitForTimeout(2500)
 
   // First-run onboarding: dsh's ordered dialogs own #root until dismissed.
+  // Facts worth keeping: one modal's `aria-hidden` mask swallows every click
+  // behind it, so a navigation attempted while one is open times out instead of
+  // failing loudly — every entry into the settings page goes through this.
   const DISMISS = /^(Continue|Configure later|Skip|Later|Close|Got it|完成|跳过|关闭|稍后配置)$/i
-  for (let step = 0; step < 6; step += 1) {
-    const dialog = page.locator('[role="dialog"]').last()
-    if ((await dialog.count()) === 0 || !(await dialog.isVisible().catch(() => false))) break
-    const buttons = dialog.getByRole('button')
-    const total = await buttons.count()
-    let clicked = false
-    for (let i = 0; i < total; i += 1) {
-      const label = ((await buttons.nth(i).textContent()) ?? '').trim()
-      if (DISMISS.test(label)) {
-        await buttons.nth(i).click()
-        await page.waitForTimeout(700)
-        clicked = true
-        break
+  const dismissDialogs = async () => {
+    for (let step = 0; step < 6; step += 1) {
+      const dialog = page.locator('[role="dialog"]').last()
+      if ((await dialog.count()) === 0 || !(await dialog.isVisible().catch(() => false))) break
+      const buttons = dialog.getByRole('button')
+      const total = await buttons.count()
+      let clicked = false
+      for (let i = 0; i < total; i += 1) {
+        const label = ((await buttons.nth(i).textContent()) ?? '').trim()
+        if (DISMISS.test(label)) {
+          await buttons.nth(i).click()
+          await page.waitForTimeout(700)
+          clicked = true
+          break
+        }
       }
+      if (!clicked) break
     }
-    if (!clicked) break
   }
+  await dismissDialogs()
 
   // ── open the page ────────────────────────────────────────────────────────
   await page.getByRole('button', { name: /设置|Settings/i }).first().click({ timeout: 10_000 })
@@ -246,6 +252,41 @@ try {
   check('勾选确认后主操作可点', !(await confirmButton.isDisabled().catch(() => true)))
   await dialog.getByRole('button', { name: '取消' }).click().catch(() => {})
   await page.waitForTimeout(200)
+
+  // (5) THE TUNING SAVE MUST LAND. This check exists because the defect it
+  // pins was invisible for a whole round: the page sent ONE patch to
+  // `/embedding/config` and the writer put all of it into `clue-kb-embedding`,
+  // so「检索调优」was a silent no-op — the page said 已保存 and
+  // `readRetrievalConfig` kept answering with the defaults. The assertion is on
+  // the SETTINGS DOCUMENT (not on the toast), because a toast is exactly what
+  // was lying.
+  const tuningCard = section.locator('.clue-card').filter({ hasText: '检索调优' }).first()
+  await tuningCard.getByText('量纲与名次').first().click()
+  await page.waitForTimeout(400)
+  const scaleSelect = tuningCard.locator('select').first()
+  check('量纲与名次折叠面板里有档位下拉(D1/D2/D3 的开关可见)', (await tuningCard.locator('select').count()) >= 3)
+  await scaleSelect.selectOption('absolute')
+  await page.waitForTimeout(200)
+  await tuningCard.locator('.clue-card-actions').getByRole('button', { name: '保存' }).click()
+  await page.waitForTimeout(1400)
+  const tuningDoc = await readFile(path.join(workdir, 'dsh-home', 'settings.yaml'), 'utf8')
+  const retrievalSection = tuningDoc.split('clue-kb-retrieval')[1] ?? ''
+  check('检索调优保存真的写进 clue-kb-retrieval(而不是静默空操作)',
+    retrievalSection.includes('lexicalNormalization') && retrievalSection.includes('absolute'))
+  check('检索档位没有落进嵌入 section(不产生孤儿键)',
+    !(tuningDoc.split('clue-kb-retrieval')[0] ?? '').includes('lexicalNormalization'))
+  await page.reload({ waitUntil: 'load' })
+  await page.waitForTimeout(2500)
+  await dismissDialogs()
+  await page.getByRole('button', { name: /设置|Settings/i }).first().click({ timeout: 10_000 })
+  await page.getByText('知识检索与向量', { exact: true }).first().click()
+  await page.getByRole('heading', { name: '知识检索与向量' }).first().waitFor({ state: 'visible', timeout: 15_000 })
+  await page.waitForTimeout(800)
+  const reloaded = page.locator('.clue-sec').first()
+  await reloaded.locator('.clue-card').filter({ hasText: '检索调优' }).first().getByText('量纲与名次').first().click()
+  await page.waitForTimeout(400)
+  check('刷新后页面回显保存的档位(而不是回到默认)',
+    (await reloaded.locator('.clue-card').filter({ hasText: '检索调优' }).first().locator('select').first().inputValue()) === 'absolute')
 
   // (5) DESIGN-TOKEN CONFORMANCE: the page must be built from dsh's own
   // measurements and tokens, not from a lookalike palette. Every number below

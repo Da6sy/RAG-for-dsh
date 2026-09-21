@@ -157,7 +157,22 @@ async function diff(a: string, b: string): Promise<number> {
    * observation (no verdict either way — counts, coverage, spread).
    */
   const LOWER_IS_BETTER = new Set(['seconds'])
-  const OBSERVATION = new Set(['vectorUsed', 'goldInWindow', 'semanticSpread', 'vectorStatus'])
+  const OBSERVATION = new Set([
+    'vectorUsed',
+    'goldInWindow',
+    'semanticSpread',
+    'vectorStatus',
+    // P0 of the D-plan: the forensic columns. `goldDemotedOutOfTop10` and
+    // `bm25ishSaturatedQueries` are *diagnoses*, not quality — a run that demotes
+    // more gold may still score higher, and the report must not call that a
+    // regression on the diagnosis itself.
+    'goldDemotedOutOfTop10',
+    'goldInWindowTop10',
+    'semanticTop1Gold',
+    'semanticTop1Survived',
+    'bm25ishTopMean',
+    'bm25ishSaturatedQueries',
+  ])
   const direction = (metric: string): 'quality' | 'cost' | 'observe' =>
     OBSERVATION.has(metric) ? 'observe' : LOWER_IS_BETTER.has(metric) ? 'cost' : 'quality'
   /**

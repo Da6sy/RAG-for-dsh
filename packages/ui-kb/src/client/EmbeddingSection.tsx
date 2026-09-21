@@ -112,8 +112,24 @@ export function EmbeddingSection(): JSX.Element {
    */
   const [providerDraft, setProviderDraft] = useState({ enabled: false, baseUrl: '', model: '', apiKeyEnv: '' })
   const [budgetDraft, setBudgetDraft] = useState<Record<string, string>>({})
-  const [tuningDraft, setTuningDraft] = useState<{ rerank: boolean; ranklog: boolean; llmRerank: boolean; lexical: string; vector: string; weights: Record<string, string> }>({
+  const [tuningDraft, setTuningDraft] = useState<{
+    rerank: boolean
+    ranklog: boolean
+    llmRerank: boolean
+    lexical: string
+    vector: string
+    weights: Record<string, string>
+    /** D1: `bm25ish` 的尺度档位 —— `candidates`(旧) | `absolute`(新,A/B 通过后才翻默认)。 */
+    lexicalNormalization: string
+    /** D2: 语义尺度档位 + 标定上下界。 */
+    semanticScale: string
+    semanticFloor: string
+    semanticCeil: string
+    /** D3: 缺失值的语义档位。 */
+    missingFeatureMode: string
+  }>({
     rerank: true, ranklog: true, llmRerank: false, lexical: '1', vector: '1', weights: {},
+    lexicalNormalization: 'candidates', semanticScale: 'raw', semanticFloor: '0.3', semanticCeil: '0.8', missingFeatureMode: 'zero',
   })
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [keyInput, setKeyInput] = useState('')
@@ -122,6 +138,9 @@ export function EmbeddingSection(): JSX.Element {
   const [catalog, setCatalog] = useState<EmbeddingCatalogPayload | null>(null)
   const [selectedCandidate, setSelectedCandidate] = useState<string | null>(null)
   const [weightsOpen, setWeightsOpen] = useState(false)
+  // D1/D2/D3: the scale switches live in their own disclosure so the card's top
+  // row stays "the four things you actually flip day to day".
+  const [scalesOpen, setScalesOpen] = useState(false)
   /** V1-UI: the pending destructive act (dsh's RiskConfirmation gates it). */
   const [risk, setRisk] = useState<{ kind: 'build' | 'cache' | 'key'; title: string; description: string; acknowledge: string; action: string } | null>(null)
   const [acknowledged, setAcknowledged] = useState(false)
@@ -143,6 +162,11 @@ export function EmbeddingSection(): JSX.Element {
         lexical: String(payload.retrieval.channelWeights.lexical),
         vector: String(payload.retrieval.channelWeights.vector),
         weights: Object.fromEntries(Object.entries(payload.retrieval.featureWeights).map(([name, value]) => [name, String(value)])),
+        lexicalNormalization: payload.retrieval.lexicalNormalization,
+        semanticScale: payload.retrieval.semanticScale,
+        semanticFloor: String(payload.retrieval.semanticFloor),
+        semanticCeil: String(payload.retrieval.semanticCeil),
+        missingFeatureMode: payload.retrieval.missingFeatureMode,
       })
       setBudgetDraft({
         batchSize: String(payload.config.batchSize),
@@ -184,9 +208,14 @@ export function EmbeddingSection(): JSX.Element {
     }
   }, [load])
 
-  const save = useCallback(async (patch: Record<string, unknown>): Promise<void> => {
+  /**
+   * Save ONE card. The revision must come from the section being written: the
+   * page writes provider fields into `clue-kb-embedding` and tuning fields into
+   * `clue-kb-retrieval`, and dsh's revision fence is per section.
+   */
+  const save = useCallback(async (patch: Record<string, unknown>, section: 'embedding' | 'retrieval' = 'embedding'): Promise<void> => {
     await act('保存', async () => {
-      const result = await kbApi.embeddingSet(patch, data?.revisions['clue-kb-embedding'])
+      const result = await kbApi.embeddingSet(patch, data?.revisions[section === 'retrieval' ? 'clue-kb-retrieval' : 'clue-kb-embedding'])
       if (!result.ok) {
         // The refusal NAMES the field (§9.2). It is rendered under its own
         // input, not as a page-level "保存失败".
@@ -259,6 +288,11 @@ export function EmbeddingSection(): JSX.Element {
     || Number(tuningDraft.lexical) !== retrieval.channelWeights.lexical
     || Number(tuningDraft.vector) !== retrieval.channelWeights.vector
     || Object.entries(tuningDraft.weights).some(([name, value]) => Number(value) !== retrieval.featureWeights[name])
+    || tuningDraft.lexicalNormalization !== retrieval.lexicalNormalization
+    || tuningDraft.semanticScale !== retrieval.semanticScale
+    || Number(tuningDraft.semanticFloor) !== retrieval.semanticFloor
+    || Number(tuningDraft.semanticCeil) !== retrieval.semanticCeil
+    || tuningDraft.missingFeatureMode !== retrieval.missingFeatureMode
 
   const staleCount = vector.indexes.filter((index) => index.stale || index.unreadable).length
 
@@ -580,6 +614,73 @@ export function EmbeddingSection(): JSX.Element {
           </div>
         </DisclosureRow>
 
+        <DisclosureRow
+          icon={null}
+          title="量纲与名次"
+          open={scalesOpen}
+          expandable
+          onToggle={() => setScalesOpen((previous) => !previous)}
+          expandOnRowClick
+        >
+          <div className="clue-disclosure-body">
+            <div className="clue-grid-2">
+              <div className="clue-field">
+                <span className="clue-field-label">词法尺度</span>
+                <select
+                  className="clue-input"
+                  value={tuningDraft.lexicalNormalization}
+                  disabled={busy || !data.available}
+                  onChange={(event: { target: { value: string } }) => setTuningDraft((previous) => ({ ...previous, lexicalNormalization: event.target.value }))}
+                >
+                  <option value="candidates">candidates(按候选集最好的一条归一)</option>
+                  <option value="absolute">absolute(按池内分位饱和,旧档不受影响)</option>
+                </select>
+              </div>
+              <div className="clue-field">
+                <span className="clue-field-label">语义尺度</span>
+                <select
+                  className="clue-input"
+                  value={tuningDraft.semanticScale}
+                  disabled={busy || !data.available}
+                  onChange={(event: { target: { value: string } }) => setTuningDraft((previous) => ({ ...previous, semanticScale: event.target.value }))}
+                >
+                  <option value="raw">raw(原始余弦)</option>
+                  <option value="calibrated">calibrated(按 floor/ceil 映射到 0–1)</option>
+                </select>
+              </div>
+              <div className="clue-field">
+                <span className="clue-field-label">缺失语义</span>
+                <select
+                  className="clue-input"
+                  value={tuningDraft.missingFeatureMode}
+                  disabled={busy || !data.available}
+                  onChange={(event: { target: { value: string } }) => setTuningDraft((previous) => ({ ...previous, missingFeatureMode: event.target.value }))}
+                >
+                  <option value="zero">zero(没召回与低分同视)</option>
+                  <option value="absent">absent(未参与,--explain 会写明)</option>
+                </select>
+              </div>
+              <div className="clue-field">
+                <span className="clue-field-label">标定 floor / ceil</span>
+                <span className="clue-field-inline" style={{ gap: 8 }}>
+                  <Input
+                    className="clue-input"
+                    value={tuningDraft.semanticFloor}
+                    disabled={busy || !data.available}
+                    onChange={(event: { target: { value: string } }) => setTuningDraft((previous) => ({ ...previous, semanticFloor: event.target.value }))}
+                  />
+                  <Input
+                    className="clue-input"
+                    value={tuningDraft.semanticCeil}
+                    disabled={busy || !data.available}
+                    onChange={(event: { target: { value: string } }) => setTuningDraft((previous) => ({ ...previous, semanticCeil: event.target.value }))}
+                  />
+                </span>
+              </div>
+            </div>
+          </div>
+        </DisclosureRow>
+
         <div className="clue-dim">
           ranklog {vector.ranklog.rows} 行 / 有标注 {vector.ranklog.labeledRows}
         </div>
@@ -600,8 +701,13 @@ export function EmbeddingSection(): JSX.Element {
                 ranklog: tuningDraft.ranklog,
                 llmRerank: tuningDraft.llmRerank,
                 channelWeights: { ...retrieval.channelWeights, lexical: Number(tuningDraft.lexical), vector: Number(tuningDraft.vector) },
+                lexicalNormalization: tuningDraft.lexicalNormalization,
+                semanticScale: tuningDraft.semanticScale,
+                semanticFloor: Number(tuningDraft.semanticFloor),
+                semanticCeil: Number(tuningDraft.semanticCeil),
+                missingFeatureMode: tuningDraft.missingFeatureMode,
                 ...(Object.keys(weights).length > 0 ? { featureWeights: weights } : {}),
-              })
+              }, 'retrieval')
             }}
           >
             保存

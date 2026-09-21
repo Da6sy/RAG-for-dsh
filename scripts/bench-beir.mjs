@@ -296,6 +296,24 @@ try {
     // the window is indistinguishable from one that ranked badly.
     let goldInWindow = 0
     let goldTotal = 0
+    /**
+     * P0 of the D-plan: the headline forensic numbers.
+     *
+     * `goldDemotedOutOfTop10` is the defect in one integer — gold documents that
+     * the FUSION had inside the top 10 and the RERANKER pushed out. The plan's
+     * measured cosqa damage was exactly this (gold demoted while a lexical
+     * distractor took its place), and recall@10 alone cannot separate "never
+     * recalled" from "recalled then demoted".
+     */
+    let windowTop10Gold = 0
+    let goldDemoted = 0
+    /** Queries whose semantic-channel #1 candidate is a gold document … */
+    let semanticTop1Gold = 0
+    /** … and how many of those survived into the final top 10. */
+    let semanticTop1Survived = 0
+    /** `bm25ish`'s absolute level: max per query, and how often someone hits 1.0. */
+    const bm25Top = []
+    let bm25Saturated = 0
     const statusCounts = {}
     const spreads = []
     /**
@@ -324,19 +342,56 @@ try {
         const sorted = [...sem].sort((a, b) => b - a)
         spreads.push(sorted[0] - sorted[Math.floor(sorted.length / 2)])
       }
+      let windowHits = []
+      /** The gold ids inside the window's top 10 (the demotion denominator). */
+      const windowTop10GoldSet = new Set()
       if (windowRetriever !== null) {
         const window = await windowRetriever.retrieveDetailed(query, {
           limit: knobs.rerankCandidates ?? RETRIEVAL_DEFAULTS.rerankCandidates,
           noTouch: true,
         })
+        windowHits = window.hits
         const windowGold = new Set(window.hits.map((hit) => entryToGold.get(String(hit.entry.id)) ?? String(hit.entry.id)))
         for (const goldId of gold.keys()) {
           if (!gold.has(goldId)) continue
           goldTotal += 1
           if (windowGold.has(goldId)) goldInWindow += 1
         }
+        for (const key of windowGold) {
+          // Only the gold ids, and only those the window put in its top 10.
+          if (!gold.has(key)) continue
+          if (window.hits.slice(0, 10).some((hit) => (entryToGold.get(String(hit.entry.id)) ?? String(hit.entry.id)) === key)) {
+            windowTop10GoldSet.add(key)
+          }
+        }
       }
       const ranked = detailed.hits.map((hit) => entryToGold.get(String(hit.entry.id)) ?? String(hit.entry.id))
+      if (windowRetriever !== null) {
+        // The window's own top 10 (fusion order) vs the reranked top 10.
+        const finalTop10 = new Set(ranked.slice(0, 10))
+        for (const goldId of gold.keys()) {
+          if (!windowTop10GoldSet.has(goldId)) continue
+          windowTop10Gold += 1
+          if (!finalTop10.has(goldId)) goldDemoted += 1
+        }
+      }
+      // The semantic channel's own #1: `channels.vector === 1` is the rank the
+      // fusion assigned, so no second ranking is computed here.
+      const semanticTop1 = (windowHits.length > 0 ? windowHits : detailed.hits)
+        .find((hit) => hit.explain?.channels?.vector === 1)
+      if (semanticTop1 !== undefined) {
+        const goldId = entryToGold.get(String(semanticTop1.entry.id)) ?? String(semanticTop1.entry.id)
+        if (gold.has(goldId)) {
+          semanticTop1Gold += 1
+          if (ranked.slice(0, 10).includes(goldId)) semanticTop1Survived += 1
+        }
+      }
+      const bm25Values = detailed.hits.map((hit) => hit.explain?.features?.bm25ish).filter((value) => typeof value === 'number')
+      if (bm25Values.length > 0) {
+        const top = Math.max(...bm25Values)
+        bm25Top.push(top)
+        if (top >= 0.999) bm25Saturated += 1
+      }
       const scored = scoreQuery(ranked, gold, k)
       ndcg += scored.ndcg
       recall += scored.recall
@@ -357,6 +412,16 @@ try {
       vectorStatus: statusCounts,
       /** F0: mean spread (top − median) of the returned hits' cosine scores. */
       semanticSpread: spreads.length === 0 ? null : Math.round((spreads.reduce((a, b) => a + b, 0) / spreads.length) * 10000) / 10000,
+      /** P0: gold in the window's top 10 that the reranker demoted out of its own top 10. */
+      goldDemotedOutOfTop10: windowRetriever === null ? null : goldDemoted,
+      /** P0: the denominator behind it (gold documents the window ranked in its top 10). */
+      goldInWindowTop10: windowRetriever === null ? null : windowTop10Gold,
+      /** P0: queries whose semantic #1 was gold / of those, how many survived the rerank. */
+      semanticTop1Gold,
+      semanticTop1Survived,
+      /** P0: `bm25ish`'s absolute level (mean of the per-query maximum) + saturation count. */
+      bm25ishTopMean: bm25Top.length === 0 ? null : Math.round((bm25Top.reduce((a, b) => a + b, 0) / bm25Top.length) * 10000) / 10000,
+      bm25ishSaturatedQueries: bm25Top.length === 0 ? null : bm25Saturated,
       seconds: Math.round((Date.now() - t1) / 100) / 10,
     })
     console.log(`[beir] ${config.id.padEnd(18)} nDCG@10 ${(ndcg / n).toFixed(4)} · recall@10 ${(recall / n).toFixed(4)} · MRR@10 ${(rr / n).toFixed(4)} · ${((Date.now() - t1) / 1000).toFixed(1)}s`)
