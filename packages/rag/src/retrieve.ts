@@ -23,7 +23,7 @@
  *
  * @module @clue-harness/rag/retrieve
  */
-import { annotationsFor, queryKb, type KbEntry, type KbStore, type QueryHit, type RetrievalWeights } from '@clue-harness/kb'
+import { annotationsFor, queryKb, type KbEntry, type KbStore, type LexicalScorer, type QueryHit, type RetrievalWeights } from '@clue-harness/kb'
 
 /** One retrieval call's knobs. */
 export interface RetrieveOptions {
@@ -70,6 +70,16 @@ export interface RetrieverConfig {
   bindingBoost?: number
   /** Default hit cap. Default 5. */
   topK?: number
+  /**
+   * Which first-level formula this retriever's `queryKb` calls use.
+   *
+   * Load-bearing since R2 of `docs/修复规划-一级检索BM25化.md`: the hybrid
+   * retriever DELEGATES `--channel lexical --rerank off` to this one, so if the
+   * rollback switch (`'weights'`) were not forwarded here, the documented
+   * rollback would silently apply to every path EXCEPT the one the plan names
+   * as the rollback harness. Absent = queryKb's default ('bm25').
+   */
+  lexicalScorer?: LexicalScorer
 }
 
 const DEFAULT_BINDING_BOOST = 1.5
@@ -121,6 +131,7 @@ export function createFulltextRetriever(
         ...(options.includeExpired !== undefined ? { includeExpired: options.includeExpired } : {}),
         ...(options.includeGlobal !== undefined ? { includeGlobal: options.includeGlobal } : {}),
         ...(config.weights !== undefined ? { weights: config.weights } : {}),
+        ...(config.lexicalScorer !== undefined ? { scorer: config.lexicalScorer } : {}),
       })
       if (!bindingRecall) return hits.slice(0, limit)
 
@@ -138,7 +149,11 @@ export function createFulltextRetriever(
         }
         boundText.push({
           ...hit,
-          score: Math.round(hit.score * boost * 100) / 100,
+          // No rounding here: the score is an ORDERING value, and since R2 the
+          // first level's BM25 score is continuous — rounding it at one call
+          // site (and not another) would make the same entry score differently
+          // depending on which path produced it. Display rounds; ordering does not.
+          score: hit.score * boost,
           annotations: [...hit.annotations, `绑定文件在本次改动中(${involved.join(', ')}),按相关性加权`],
         })
       }

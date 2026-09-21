@@ -16,7 +16,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -242,4 +242,188 @@ test('A/B sharing: agent A proposes knowledge, agent B retrieves it in the same 
   assert.ok(textB.includes(proposedId), 'B 的注入必须携带 A 提案的条目 id')
   assert.match(textB, /回车提交依赖 form 包裹/)
   assert.match(textB, /candidate/, '候选状态必须如实标注(B 知道这不是可信知识)')
+})
+
+/**
+ * M9 end-to-end lab: one entry MOUNTED on a really-ingested document, plus a
+ * redline over the entry's own text. Mirrors bootLab's isolation discipline
+ * (temp cwd + temp CLUE_HOME/DSH_HOME), and — because the tool script needs
+ * the entry id — the script is built by the caller AFTER seeding.
+ */
+async function bootDocLab(
+  t: { after(fn: () => unknown): void },
+  scriptFor: (ids: { entryId: string; docId: string }) => readonly ScriptedCall[],
+  options: { mountDoc?: boolean; redline?: boolean } = {},
+): Promise<{ ctx: Context; agent: Agent; entryId: string; docId: string; store: Awaited<ReturnType<typeof openProjectStore>> }> {
+  const workdir = await mkdtemp(path.join(tmpdir(), 'clue-kbdetail-'))
+  const home = path.join(workdir, 'clue-home')
+  const project = path.join(workdir, 'proj')
+  await mkdir(project, { recursive: true })
+  const savedCwd = process.cwd()
+  const savedHome = process.env.CLUE_HOME
+  const savedDshHome = process.env.DSH_HOME
+  const savedKey = process.env.DEEPSEEK_API_KEY
+  process.chdir(project)
+  process.env.CLUE_HOME = home
+  process.env.DSH_HOME = path.join(workdir, 'dsh-home')
+  process.env.DEEPSEEK_API_KEY = 'test-key-not-used-by-mock'
+  t.after(async () => {
+    process.chdir(savedCwd)
+    if (savedHome === undefined) delete process.env.CLUE_HOME
+    else process.env.CLUE_HOME = savedHome
+    if (savedDshHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = savedDshHome
+    if (savedKey === undefined) delete process.env.DEEPSEEK_API_KEY
+    else process.env.DEEPSEEK_API_KEY = savedKey
+    await rm(workdir, { recursive: true, force: true })
+  })
+
+  // ── the M9 write channel, exercised for real ─────────────────────────────
+  const { ingestFile } = await import('@clue-harness/rag')
+  const store = await openProjectStore(project, home)
+  const spec = [
+    '# 组件规范',
+    '',
+    '## 按钮',
+    '',
+    '按钮必须可被 Tab 选中,禁用态使用 aria-disabled 而不是 disabled 属性。',
+    '',
+  ].join('\n')
+  const specFile = path.join(project, 'spec.md')
+  await writeFile(specFile, spec, 'utf8')
+  const report = await ingestFile({ store, file: specFile })
+  const docId = String(report.doc?.docId)
+
+  const entry = await store.add({
+    kind: 'pitfall',
+    title: '按钮焦点与隐藏方案',
+    text: '按钮必须可被 Tab 选中。另外,旧方案 sunset-legacy 用绝对定位隐藏按钮,已废弃不要再用。',
+    tags: ['按钮'],
+    createdBy: 'agent:lab',
+  })
+  if (options.mountDoc !== false) {
+    await store.attachDoc(entry.id, docId, { lines: [5, 5], quoteAnchor: '按钮必须可被 Tab 选中' })
+  }
+  if (options.redline === true) {
+    const tail = entry.text.indexOf('另外')
+    await store.redlineText(entry.id, { chars: [tail + 1, entry.text.length], reason: '旧方案已废弃' })
+  }
+
+  const { boot } = await import('@deepseek-ai/dsh-app-boot')
+  const ctx = await boot('clue-kbface-test', configPath)
+  t.after(() => ctx.fiber.dispose())
+  const release = ctx.llm.registerAdapter(['mock-script'], new ScriptedAdapter(scriptFor({ entryId: String(entry.id), docId })))
+  t.after(() => release())
+  const agent = ctx.agentLoop.create(
+    SessionId(`kbdetail-${Date.now().toString(36)}`),
+    { provider: 'mock-script', model: 'scripted' },
+    { cwd: project },
+  )
+  return { ctx, agent, entryId: String(entry.id), docId, store }
+}
+
+test('M9 two-level end to end: kb_search annotates the原文, kb_detail drills to anchors, and the drill is a pure read', async (t) => {
+  const { ctx, agent, entryId, docId, store } = await bootDocLab(t, ids => [
+    { toolCall: { id: 'call-search', name: 'kb_search', args: { query: '按钮 Tab 焦点 禁用态' } } },
+    { toolCall: { id: 'call-detail', name: 'kb_detail', args: { entryId: ids.entryId, query: '禁用态 aria-disabled' } } },
+    // A second search AFTER the drill: the touch counter is the observable that
+    // proves the drill itself recorded nothing.
+    { toolCall: { id: 'call-search-2', name: 'kb_search', args: { query: '按钮 Tab 焦点 禁用态' } } },
+    { text: '按条目与原文段处理。' },
+  ], { redline: true })
+
+  // Count the retrievals the turn performs (synchronously — an async probe here
+  // races the very next tool call). The final reference counter must equal this
+  // count exactly: pre-step injection + every kb_search touch, kb_detail never.
+  let retrievals = 0
+  const stop = ctx.on('tools/result', (exec) => { if (exec.name === 'kb_search') retrievals += 1 })
+  t.after(() => stop())
+
+  follow(agent, '按钮的焦点和禁用态要注意什么?')
+  await waitForIdle(ctx, agent)
+
+  const events = [...agent.session.events]
+  const names = events.filter((e) => e.type === 'tool/call').map((e) => (e.type === 'tool/call' ? e.data.name : ''))
+  assert.deepEqual(names, ['kb_search', 'kb_detail', 'kb_search'], `模型应能连调一级与二级,实际 ${JSON.stringify(names)}`)
+
+  const results = events.filter((e) => e.type === 'tool/result')
+  assert.equal(results.length, 3)
+  const first = results[0]
+  const second = results[1]
+  const third = results[2]
+  assert.ok(first.type === 'tool/result' && second.type === 'tool/result' && third.type === 'tool/result')
+  const searchPayload = JSON.stringify(first.data.message.content)
+  const detailPayload = JSON.stringify(second.data.message.content)
+
+  // 一级: the hit self-reports its原文 layer (段数 + 下钻入口) …
+  assert.ok(searchPayload.includes(entryId), '一级结果必须带回条目 id')
+  assert.match(searchPayload, /含原文 \d+ 段/, '挂了原文的命中必须自报段数')
+  assert.match(searchPayload, /kb_detail/, '命中要给出下钻入口(拍板 3: 只提示)')
+  // …and the redlined tail never reaches the model through the return path.
+  assert.doesNotMatch(searchPayload, /sunset-legacy/, '被划除的正文不得出现在一级返回里')
+
+  // 二级: anchors are the whole point — docId + 行号 + heading + 摘录.
+  assert.ok(detailPayload.includes(docId), '下钻必须带 docId(证据位置)')
+  assert.match(detailPayload, /行 \d+-\d+/, '下钻必须带行号锚点')
+  assert.match(detailPayload, /组件规范/, '下钻必须带 heading 路径')
+  assert.match(detailPayload, /aria-disabled/, '下钻必须含命中段的摘录')
+
+  // 宪法 4: the drill is a pure read. The queue here is NOT empty — the seed's
+  // 45% redline legitimately queued its advisory proposal — so the assertion is
+  // "the drill changed nothing", which is the actual invariant.
+  const { readSignals } = await import('@clue-harness/kb')
+  const queueAfter = await store.listApprovals(false)
+  assert.deepEqual(await readSignals(path.join(store.dir, 'signals.jsonl')), [], 'kb_detail 不产生信号(查了≠用到)')
+  assert.equal(queueAfter.length, 1, '队列里只有种子划除自己入队的那条提案')
+  assert.equal(queueAfter[0].action, 'redline-review')
+  const still = await store.get(entryId as never)
+  assert.equal(still?.status, 'candidate', 'kb_detail 不改状态')
+  assert.equal(still?.needsReview, false)
+  // touch accounting (M2 doctrine: retrieval touches, because reference drives
+  // the expire timer): the pre-step injection + two kb_search calls touch, the
+  // drill between them does not.
+  assert.equal(retrievals, 2, '本回合有两次 kb_search')
+  assert.equal(still?.stats.referenceCount, retrievals + 1, '计数 = 两次检索 + 一次注入;kb_detail 未计数')
+})
+
+test('M9: 未挂原文的条目在二级检索里诚实回执(不伪造原文段)', async (t) => {
+  const { ctx, agent, entryId, store } = await bootDocLab(t, ids => [
+    { toolCall: { id: 'call-search', name: 'kb_search', args: { query: '按钮 Tab 焦点' } } },
+    { toolCall: { id: 'call-detail', name: 'kb_detail', args: { entryId: ids.entryId, query: '按钮' } } },
+    { text: '该条没有原文层,按正文处理。' },
+  ], { mountDoc: false })
+
+  follow(agent, '这条知识有原文吗?')
+  await waitForIdle(ctx, agent)
+
+  const results = agent.session.events.filter((e) => e.type === 'tool/result')
+  assert.equal(results.length, 2)
+  const [first, second] = results
+  assert.ok(first.type === 'tool/result' && second.type === 'tool/result')
+  const searchPayload = JSON.stringify(first.data.message.content)
+  const detailPayload = JSON.stringify(second.data.message.content)
+  assert.doesNotMatch(searchPayload, /含原文/, '没有 doc 的条目不得出现下钻标注')
+  assert.match(detailPayload, /无原文层/, '二级检索必须诚实回执"正文即全部"')
+  assert.doesNotMatch(detailPayload, /行 \d+-\d+/, '诚实回执里不得出现编造的行号')
+  void entryId
+})
+
+test('M9-4 end to end: kb_search 尊重划除 — 被划掉的词既召回不到也看不到', async (t) => {
+  const { ctx, agent, store } = await bootDocLab(t, () => [
+    { toolCall: { id: 'call-search', name: 'kb_search', args: { query: 'sunset-legacy' } } },
+    { text: '该方案已作废,不再引用。' },
+  ], { redline: true })
+
+  follow(agent, '旧方案 sunset-legacy 还能用吗?')
+  await waitForIdle(ctx, agent)
+
+  const result = agent.session.events.find((e) => e.type === 'tool/result')
+  assert.ok(result && result.type === 'tool/result')
+  const payload = JSON.stringify(result.data.message.content)
+  assert.doesNotMatch(payload, /sunset-legacy/, '被划除的词不得出现在任何返回路径')
+  // The surviving half still answers, and says it was redlined.
+  const { queryKb } = await import('@clue-harness/kb')
+  const kept = await queryKb(store, null, { text: '按钮 Tab', noTouch: true })
+  assert.equal(kept.length, 1)
+  assert.ok(kept[0].annotations.some((note) => note.includes('人工划除')), '命中必须自报含划除段')
 })

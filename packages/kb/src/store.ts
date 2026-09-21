@@ -37,7 +37,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
-import { cp, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
+import { cp, mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { atomicWriteJson, canonicalRoot, clueHome, readJsonOrNull, sha256File, workspaceKey } from '@clue-harness/util'
 import {
   readWorkspaces,
@@ -46,15 +46,32 @@ import {
   type RenderSurfaceSettings,
 } from './workspaces.ts'
 import {
+  detectDrift,
+  docExists,
+  listDocs,
+  readChunks,
+  readDocRecord,
+  readDocText,
+  removeChunks,
+  writeChunks,
+  type DocDrift,
+} from './docs.ts'
+import {
   DEFAULT_KB_CONFIG,
   KB_FORMAT_VERSION,
   KbEntryId,
+  REDLINE_PROPOSAL_RATIO,
   type ApprovalAction,
   type ApprovalRequest,
+  type ChunkRecord,
+  type DocAnchor,
+  type DocRecord,
   type KbConfig,
+  type KbDocId,
   type KbEntry,
   type KbKind,
   type KbMeta,
+  type KbRedline,
   type KbStatus,
   type KbTier,
   type SourceBinding,
@@ -73,6 +90,9 @@ import {
   windowScore,
   type SignalInput,
 } from './signals.ts'
+// The redline ratio lives with the retrieval semantics it changes (query.ts):
+// one measurement, used by the store's threshold act and by the panel.
+import { redlinedRatio } from './query.ts'
 import type { SignalRecord } from './types.ts'
 
 export interface KbStoreOptions {
@@ -381,6 +401,327 @@ export class KbStore {
     })
   }
 
+  // ---- M9: the document layer (evidence) --------------------------------
+  //
+  // Every method below governs an ENTRY (mounting evidence, redlining it,
+  // splitting it). The Document/Chunk side never gets status or signals —
+  // 宪法 3: 证据不可治理. The snapshot bytes are read-only through docs.ts.
+
+  /** Resolve a doc source path against the project anchor (drift detection). */
+  docSourcePath(relative: string): string {
+    if (this.projectRoot === null) throw new Error('全局库条目不支持原文层(没有项目锚点)')
+    return path.resolve(this.projectRoot, relative)
+  }
+
+  /**
+   * Read one snapshot's record; refuses foreign formats like entries do.
+   * @param docId - the snapshot id.
+   * @returns the record, or null when the doc is unknown.
+   */
+  async getDoc(docId: KbDocId | string): Promise<DocRecord | null> {
+    const record = await readDocRecord(this.dir, docId)
+    if (record === null) return null
+    if (record.version !== KB_FORMAT_VERSION) {
+      throw new Error(`kb 文档版本不匹配: ${String(docId)} 是 v${String(record.version)}, 当前 v${KB_FORMAT_VERSION} — 拒绝读取(不自动迁移)`)
+    }
+    return record
+  }
+
+  /** Read one snapshot's derived chunk ledger (empty when never built). */
+  async getChunks(docId: KbDocId | string): Promise<ChunkRecord[]> {
+    return readChunks(this.dir, docId)
+  }
+
+  /** Every snapshot this tier holds, newest first. */
+  async listDocs(): Promise<DocRecord[]> {
+    return listDocs(this.dir)
+  }
+
+  /** Whether the chunk ledger is absent or carries a foreign chunker stamp. */
+  async chunksNeedRebuild(docId: KbDocId | string): Promise<boolean> {
+    const rows = await readChunks(this.dir, docId)
+    return rows.length === 0 || rows.some((row) => row.chunkerVersion !== this.config.chunkerVersion)
+  }
+
+  /**
+   * Replace one doc's derived chunk ledger (the write half of "派生可重建").
+   * Pure derivation: nothing about any Entry changes here.
+   * @param docId - the snapshot id.
+   * @param chunks - the freshly derived rows.
+   */
+  async saveChunks(docId: KbDocId | string, chunks: readonly ChunkRecord[]): Promise<void> {
+    await writeChunks(this.dir, docId, chunks)
+  }
+
+  /**
+   * Drop one doc's derived chunk ledger. Deleting it MUST change nothing but
+   * the next rebuild's timing — that is the acceptance test for 宪法 2.
+   * @param docId - the snapshot id.
+   */
+  async dropChunks(docId: KbDocId | string): Promise<void> {
+    await removeChunks(this.dir, docId)
+  }
+
+  /**
+   * Mount an existing snapshot on an entry (M9-1, `clue kb doc attach`).
+   * Governance stays on the entry: this only records WHERE the evidence is.
+   * @param id - the entry to mount evidence on.
+   * @param docId - the snapshot to mount.
+   * @param anchor - optional heading/lines anchor + quote.
+   * @param at - ISO timestamp.
+   * @returns the updated entry.
+   * @throws when the entry or the snapshot does not exist (fail loud).
+   */
+  async attachDoc(id: KbEntryId, docId: KbDocId | string, anchor?: DocAnchor, at: string = new Date().toISOString()): Promise<KbEntry> {
+    const entry = await this.get(id)
+    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (!await docExists(this.dir, docId)) throw new Error(`kb: 文档快照不存在 ${String(docId)}(先用 clue kb ingest 导入)`)
+    const anchorWithQuote = anchor === undefined
+      ? undefined
+      : { ...anchor, quoteAnchor: anchor.quoteAnchor ?? '' }
+    const doc = { docId: docId as KbDocId, ...(anchorWithQuote !== undefined ? { anchor: anchorWithQuote } : {}) }
+    return this.save({
+      ...entry,
+      doc,
+      history: [...entry.history, {
+        at,
+        change: 'rebind' as const,
+        from: entry.status,
+        to: null,
+        reason: `挂载原文证据: ${String(docId)}${anchor?.lines !== undefined ? ` 行 ${anchor.lines[0]}-${anchor.lines[1]}` : ''}`,
+      }],
+    })
+  }
+
+  /**
+   * Re-hash every mounted doc's SOURCE path and flag the entries that ride on
+   * a drifted snapshot (M9-1/§4 漂移质疑).
+   *
+   * The snapshot is never rewritten and the entry's STATUS never changes —
+   * only the orthogonal needs-review flag, exactly like binding drift. A
+   * missing source file is drift too (the现场 evidence is gone).
+   * @param id - the entry whose doc to check.
+   * @param at - ISO timestamp.
+   * @returns the (possibly flagged) entry.
+   */
+  async checkDocs(id: KbEntryId, at: string = new Date().toISOString()): Promise<KbEntry> {
+    let entry = await this.get(id)
+    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry.tier === 'global' || entry.doc === undefined) return entry
+    const record = await this.getDoc(entry.doc.docId)
+    if (record === null) {
+      return this.save(raiseNeedsReview(entry, `原文快照缺失: ${String(entry.doc.docId)}`, at))
+    }
+    const drift = await detectDrift(record, (relative) => this.docSourcePath(relative))
+    if (drift !== null) {
+      const label = drift.kind === 'missing' ? '原文文件不存在' : '原文已更新'
+      entry = raiseNeedsReview(entry, `${label}: ${drift.sourcePath} (${drift.recordedHash})`, at)
+    } else if (entry.needsReview && (entry.reviewReason ?? '').startsWith('原文')) {
+      // The source is back in sync with the snapshot: auto-clear, the same
+      // "自动重验通过" shape bindings have.
+      entry = clearNeedsReview(entry, '自动重验通过: 原文哈希与快照记录一致', at)
+    }
+    return this.save(entry)
+  }
+
+  /**
+   * Re-hash every entry's mounted docs in one pass (the sweep/report form).
+   * @param at - ISO timestamp.
+   * @returns the drift findings (also the entries that were flagged).
+   */
+  async checkAllDocs(at: string = new Date().toISOString()): Promise<DocDrift[]> {
+    const findings: DocDrift[] = []
+    if (this.projectRoot === null) return findings
+    const seen = new Set<string>()
+    for (const entry of await this.list()) {
+      if (entry.doc === undefined) continue
+      const before = entry.needsReview ? entry.reviewReason : null
+      const after = await this.checkDocs(entry.id, at)
+      if (!after.needsReview) continue
+      if (before !== null && before === after.reviewReason) continue
+      if (seen.has(String(entry.doc.docId))) continue
+      seen.add(String(entry.doc.docId))
+      const record = await this.getDoc(entry.doc.docId)
+      if (record === null) continue
+      const drift = await detectDrift(record, (relative) => this.docSourcePath(relative))
+      if (drift !== null) findings.push(drift)
+    }
+    return findings
+  }
+
+  /**
+   * Redline one character range of an entry's own text (M9-4/§5a) — the human
+   * "即刻止血": the range leaves BOTH display and scoring, while the entry
+   * keeps serving with everything else it says.
+   *
+   * The threshold act is a PROPOSAL, never an action: once redlines cover more
+   * than {@link REDLINE_PROPOSAL_RATIO} of the text, a `redline-review` request
+   * is queued for a human to decide split-or-discard (系统提议,人执行).
+   * @param id - the entry to redline.
+   * @param input - the character range, reason and actor.
+   * @param at - ISO timestamp.
+   * @returns the updated entry plus whether a review proposal was queued.
+   */
+  async redlineText(
+    id: KbEntryId,
+    input: { chars: [number, number]; reason: string; by?: string },
+    at: string = new Date().toISOString(),
+  ): Promise<{ entry: KbEntry; ratio: number; proposal: ApprovalRequest | null }> {
+    const entry = await this.get(id)
+    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    const [from, to] = input.chars
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from) {
+      throw new Error(`kb redline: 非法字符区间 ${from}-${to}(需 1 ≤ from ≤ to)`)
+    }
+    const quoteAnchor = entry.text.slice(from - 1, from - 1 + 40).replace(/\s+/g, ' ').trim()
+    const redline: KbRedline = {
+      target: 'text',
+      chars: [from, to],
+      quoteAnchor,
+      reason: input.reason,
+      at,
+      by: input.by ?? 'cli',
+    }
+    let next: KbEntry = {
+      ...entry,
+      redlines: [...(entry.redlines ?? []), redline],
+      history: [...entry.history, {
+        at,
+        change: 'redline' as const,
+        from: entry.status,
+        to: null,
+        reason: `划除 ${from}-${to}: ${input.reason}`,
+      }],
+    }
+    next = await this.save(next)
+    const ratio = redlinedRatio(next)
+    let proposal: ApprovalRequest | null = null
+    if (ratio > REDLINE_PROPOSAL_RATIO) {
+      proposal = await this.requestApproval(
+        next.id,
+        'redline-review',
+        `已划除 ${Math.round(ratio * 100)}%(> ${Math.round(REDLINE_PROPOSAL_RATIO * 100)}%),建议拆分或遗弃该条目`,
+        0,
+        at,
+      )
+    }
+    return { entry: next, ratio, proposal }
+  }
+
+  /**
+   * Redline a line range of the entry's MOUNTED DOCUMENT (M9-4/§5a). The
+   * binding is to a concrete `docId`, never to a source path (invariant 2):
+   * when the source produces a new snapshot the old redline stays on the old
+   * doc and a human must re-anchor it.
+   * @param id - the entry that owns the evidence.
+   * @param input - the line range, reason and actor.
+   * @param at - ISO timestamp.
+   * @returns the updated entry plus its doc-redline ratio and any proposal.
+   */
+  async redlineDocLines(
+    id: KbEntryId,
+    input: { lines: [number, number]; reason: string; by?: string; headingPath?: string },
+    at: string = new Date().toISOString(),
+  ): Promise<{ entry: KbEntry; ratio: number; proposal: ApprovalRequest | null }> {
+    const entry = await this.get(id)
+    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry.doc === undefined) throw new Error(`kb redline: 条目 ${id} 没有原文层,划除请用 --chars(正文区间)`)
+    const record = await this.getDoc(entry.doc.docId)
+    if (record === null) throw new Error(`kb redline: 文档快照不存在 ${String(entry.doc.docId)}`)
+    const [from, to] = input.lines
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from || to > record.lineCount) {
+      throw new Error(`kb redline: 非法行区间 ${from}-${to}(文档共 ${record.lineCount} 行)`)
+    }
+    const { readDocText } = await import('./docs.ts')
+    const text = (await readDocText(this.dir, entry.doc.docId)) ?? ''
+    const lines = text.split('\n')
+    const quoteAnchor = (lines[from - 1] ?? '').replace(/\s+/g, ' ').trim().slice(0, 40)
+    const redline: KbRedline = {
+      target: 'doc',
+      docId: entry.doc.docId,
+      lines: [from, to],
+      quoteAnchor,
+      ...(input.headingPath !== undefined ? { headingPath: input.headingPath } : {}),
+      reason: input.reason,
+      at,
+      by: input.by ?? 'cli',
+    }
+    let next: KbEntry = {
+      ...entry,
+      redlines: [...(entry.redlines ?? []), redline],
+      history: [...entry.history, {
+        at,
+        change: 'redline' as const,
+        from: entry.status,
+        to: null,
+        reason: `划除原文 ${String(entry.doc.docId)} 行 ${from}-${to}: ${input.reason}`,
+      }],
+    }
+    next = await this.save(next)
+    // The ratio is measured against the snapshot's lines (the evidence the
+    // redline actually removes), not against the entry's summary text.
+    const removed = input.lines[1] - input.lines[0] + 1
+    const ratio = record.lineCount === 0 ? 0 : removed / record.lineCount
+    let proposal: ApprovalRequest | null = null
+    if (ratio > REDLINE_PROPOSAL_RATIO) {
+      proposal = await this.requestApproval(
+        next.id,
+        'redline-review',
+        `原文已划除 ${Math.round(ratio * 100)}%(> ${Math.round(REDLINE_PROPOSAL_RATIO * 100)}%),建议拆分或遗弃该条目`,
+        0,
+        at,
+      )
+    }
+    return { entry: next, ratio, proposal }
+  }
+
+  /**
+   * Split one entry into successors (M9-4/§5b) — the 根治 for条目内对错.
+   *
+   * **Inheritance boundary (invariant 1)**: successors may reuse the SAME
+   * `docId` evidence the old entry carried, but inherit NO governance —
+   * `status` starts at candidate, `signals`/`approvals`/`redlines` are not
+   * migrated (信号零随迁: otherwise a split would launder evidence failures).
+   * @param id - the entry being split.
+   * @param drafts - the successor bodies (kind/title/text/tags/anchor).
+   * @param reason - audit trail text (lands in the old entry's history).
+   * @param at - ISO timestamp.
+   * @returns the superseded old entry plus the freshly created candidates.
+   * @throws when the entry is missing, already superseded, or no draft was given.
+   */
+  async splitEntry(
+    id: KbEntryId,
+    drafts: ReadonlyArray<{ kind?: KbKind; title: string; text: string; tags?: string[]; anchor?: DocAnchor }>,
+    reason: string,
+    at: string = new Date().toISOString(),
+  ): Promise<{ old: KbEntry; created: KbEntry[] }> {
+    const entry = await this.get(id)
+    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry.status === 'superseded') throw new Error(`kb split: 条目 ${id} 已被拆分替代(superseded 是终态)`)
+    if (drafts.length === 0) throw new Error('kb split: 至少需要一条新条目草稿')
+    const created: KbEntry[] = []
+    for (const draft of drafts) {
+      const child = await this.add({
+        kind: draft.kind ?? entry.kind,
+        title: draft.title,
+        text: draft.text,
+        tags: draft.tags ?? entry.tags,
+        createdBy: `split:${entry.id}`,
+        note: `由 ${entry.id} 拆分而来(证据可继承,治理不继承)`,
+      }, at)
+      // Evidence reuse is explicit and human-made: same docId, a NEW anchor.
+      const mounted = entry.doc !== undefined
+        ? await this.attachDoc(child.id, entry.doc.docId, draft.anchor ?? entry.doc.anchor, at)
+        : child
+      created.push(mounted)
+    }
+    const old = await this.save({
+      ...applyTransition(entry, 'superseded', 'split', `${reason} → [${created.map((c) => c.id).join(', ')}]`, at),
+      splitInto: created.map((child) => child.id),
+    })
+    return { old, created }
+  }
+
   // ---- signals & scoring ----
 
   /** Append one weighted signal to the ledger. */
@@ -413,14 +754,23 @@ export class KbStore {
    * job). Order matters: score-driven edges first, then idle expiry, then
    * the retention purge — so a purge never races a fresh transition.
    */
-  async sweep(now: Date = new Date()): Promise<{ expired: KbEntryId[]; discarded: KbEntryId[]; purged: KbEntryId[]; promotions: ApprovalRequest[] }> {
+  async sweep(now: Date = new Date()): Promise<{ expired: KbEntryId[]; discarded: KbEntryId[]; purged: KbEntryId[]; promotions: ApprovalRequest[]; docDrift: DocDrift[] }> {
     const signals = await readSignals(this.signalsFile)
     const expired: KbEntryId[] = []
     const discarded: KbEntryId[] = []
     const purged: KbEntryId[] = []
     const at = now.toISOString()
 
+    // M9-1: document drift rides the same maintenance pass as binding drift.
+    // Flagging is idempotent; the snapshots are never rewritten.
+    const docDrift = await this.checkAllDocs(at)
+
     for (const entry of await this.list()) {
+      // M9-4: `superseded` is a TERMINAL, provenance-bearing state — it is
+      // excluded from every sweep edge below (no score act, no idle expiry,
+      // no retention purge). A discarded entry's knowledge may be forgotten;
+      // a superseded entry's chain must stay readable forever.
+      if (entry.status === 'superseded') continue
       // 1) strong-negative: user rejection / attributed evidence failure
       //    crossed the bound → discard WITHOUT a queue (entering discard is
       //    machine-driven; LEAVING it needs the human — the user's rule).
@@ -451,7 +801,7 @@ export class KbStore {
       }
     }
     const promotions = await this.suggestPromotions(now, signals)
-    return { expired, discarded, purged, promotions }
+    return { expired, discarded, purged, promotions, docDrift }
   }
 
   /**
@@ -529,13 +879,220 @@ export class KbStore {
         entry = await this.transition(request.entryId, 'discarded', 'strong-negative', `人工批准遗弃(请求 ${requestId})`, at)
       } else if (request.action === 'rescue') {
         entry = await this.transition(request.entryId, 'candidate', 'rescue', `人工捞回(请求 ${requestId})`, at)
-      } else {
+      } else if (request.action === 'reactivate') {
         entry = await this.transition(request.entryId, 'candidate', 'reactivate', `人工复核重新激活(请求 ${requestId})`, at)
       }
+      // `redline-review` is ADVISORY by design (M9-4): the system proposes
+      // "this entry is >40% redlined, consider split or discard" and the human
+      // executes the act itself through `kb split` / `kb signal`+`kb sweep`.
+      // Resolving it therefore changes no entry state — the queue is where the
+      // suggestion lives, not an automation seam.
     }
     approvals[index] = { ...request, resolvedAt: at, resolution: approved ? 'approved' : 'rejected' }
     await atomicWriteJson(this.approvalsFile, approvals)
     return { request: approvals[index], entry }
+  }
+
+  /**
+   * Promote a CANDIDATE to trusted as a HUMAN act — the panel's 提升 button and
+   * `clue kb promote`.
+   *
+   * Why this exists next to the queue: `suggestPromotions` only queues a
+   * request once the window score crosses `trustThreshold`, so the queue is an
+   * EVIDENCE-driven inbox. It answers "the system thinks this might be worth
+   * trusting" — it cannot answer "I already know this is right", and before
+   * this method there was no verb anywhere that could (CLI only had
+   * `approve <requestId>`): a human's own judgment, the strongest input the
+   * layer has, was the one input with no entry point.
+   *
+   * Same discipline as redline/split (M9-4 人权入口): no tool and no route
+   * exposes this to a model — models propose (`kb_propose`), humans dispose.
+   * The act is audited twice: an `approve-promote` history event naming the
+   * surface that did it, plus the `human-confirm` signal (the strongest
+   * positive — exactly what approving a queued promote records, so the two
+   * roads leave the same ledger shape).
+   *
+   * A pending promote request for the same entry is SETTLED as approved in the
+   * same pass: otherwise the queue would keep showing a decision the human just
+   * made, and a later `kb approve` of it would try `trusted → trusted` and
+   * throw. Only `candidate` can be promoted — expired/discarded entries must
+   * re-earn trust through their own edges (reactivate/rescue), never a shortcut.
+   *
+   * @param id - the entry to promote.
+   * @param input - the human's why (`by` names the surface: web/cli).
+   * @param at - ISO timestamp (injectable for tests).
+   * @returns the trusted entry plus every request this act settled.
+   * @throws when the entry is absent or not a candidate (fail loud, no coercion).
+   */
+  async promote(
+    id: KbEntryId,
+    input: { reason?: string; by?: string } = {},
+    at: string = new Date().toISOString(),
+  ): Promise<{ entry: KbEntry; requests: ApprovalRequest[] }> {
+    const entry = await this.get(id)
+    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry.status !== 'candidate') {
+      const hint = entry.status === 'trusted'
+        ? '(它已经是可信)'
+        : entry.status === 'expired'
+          ? '(过期的先 reverify/reactivate 回到候选,再提升)'
+          : entry.status === 'discarded'
+            ? '(已遗弃的先捞回成候选,再提升)'
+            : '(已拆分条目是历史,提升它的后继条目)'
+      throw new Error(`kb promote: 只有候选能提升为可信,当前是 ${entry.status}${hint}`)
+    }
+    const by = input.by ?? 'cli'
+    const why = (input.reason ?? '').trim()
+    const trusted = await this.transition(
+      entry.id,
+      'trusted',
+      'approve-promote',
+      `人工提升为可信(${by})${why === '' ? '' : `: ${why}`}`,
+      at,
+    )
+    await this.recordSignal(entry.id, 'human-confirm', `人工提升为可信(${by})`, at)
+    const requests = await this.settleRequests(entry.id, 'promote', at)
+    return { entry: trusted, requests }
+  }
+
+  /**
+   * Retire an entry by HUMAN judgment (候选/可信 → 过期) — the panel's
+   * 「不再成立（转入过期）」.
+   *
+   * Before this verb existed the panel's button with that label only CLEARED
+   * the needs-review flag (and wrote the reason "绑定哈希一致", which was false
+   * when the file had in fact drifted): the copy promised a state change the
+   * code never performed. `expired` is the honest target — the entry stays
+   * readable with its annotation and can be reactivated, while its use as a
+   * write-basis needs approval. Discarding stays an evidence/queue decision.
+   *
+   * A reason is REQUIRED: "this no longer holds" is a governance verdict, and
+   * the history line is the only place a later reader can learn why.
+   *
+   * @param id - the entry to retire.
+   * @param input - the required why, plus the surface (`by`).
+   * @param at - ISO timestamp (injectable for tests).
+   * @returns the expired entry (with the review flag cleared).
+   */
+  async retire(
+    id: KbEntryId,
+    input: { reason?: string; by?: string } = {},
+    at: string = new Date().toISOString(),
+  ): Promise<{ entry: KbEntry; requests: ApprovalRequest[] }> {
+    const entry = await this.get(id)
+    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry.status !== 'candidate' && entry.status !== 'trusted') {
+      throw new Error(`kb retire: 只有候选/可信能人工判定不再成立,当前是 ${entry.status}`
+        + (entry.status === 'superseded' ? '(已拆分条目是历史,处理它的后继条目)' : '(它已经不在服役)'))
+    }
+    const by = input.by ?? 'cli'
+    const why = (input.reason ?? '').trim()
+    if (why === '') throw new Error('kb retire: 必须留下理由(判定"不再成立"是一次治理决定)')
+    const retired = await this.transition(entry.id, 'expired', 'human-retire', `人工判定不再成立(${by}): ${why}`, at)
+    // The verdict supersedes the drift flag: a retired entry cannot be
+    // "possibly stale" — it is out of the write-basis by decision.
+    // (clearNeedsReview returns the SAME instance when nothing was flagged,
+    // so identity is the honest "did anything change" test.)
+    const cleared = clearNeedsReview(retired, `人工判定不再成立: ${why}`, at)
+    return { entry: cleared === retired ? retired : await this.save(cleared), requests: [] }
+  }
+
+  /**
+   * Reactivate an EXPIRED entry back to candidate by HUMAN judgment — the
+   * panel's 「重新激活」. Peer of `rescue` (discarded → candidate) and
+   * `promote`: all three lifecycle verbs existed only as queue resolutions, so
+   * a human looking at an expired entry had no way to bring it back without
+   * first manufacturing an approval request.
+   *
+   * The needs-review flag is deliberately NOT cleared: it is a fact about the
+   * bound files, and reactivating does not make a drifted file match again.
+   *
+   * @param id - the expired entry.
+   * @param input - the optional why, plus the surface (`by`).
+   * @param at - ISO timestamp.
+   * @returns the candidate entry plus every request this act settled.
+   */
+  async reactivate(
+    id: KbEntryId,
+    input: { reason?: string; by?: string } = {},
+    at: string = new Date().toISOString(),
+  ): Promise<{ entry: KbEntry; requests: ApprovalRequest[] }> {
+    const entry = await this.get(id)
+    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry.status !== 'expired') {
+      throw new Error(`kb reactivate: 只有过期条目能重新激活,当前是 ${entry.status}`)
+    }
+    const by = input.by ?? 'cli'
+    const why = (input.reason ?? '').trim()
+    const revived = await this.transition(
+      entry.id,
+      'candidate',
+      'reactivate',
+      `人工重新激活(${by})${why === '' ? '' : `: ${why}`}`,
+      at,
+    )
+    // Back to candidate: trust must be re-earned (the machine has no
+    // expired → trusted edge at all).
+    const requests = await this.settleRequests(entry.id, 'reactivate', at)
+    return { entry: revived, requests }
+  }
+
+  /**
+   * Rescue a DISCARDED entry back to candidate by HUMAN judgment — the panel's
+   * 「捞回候选」. Returns to CANDIDATE, never straight to trusted: the entry
+   * must re-earn trust (state-machine doc, patch #1).
+   *
+   * @param id - the discarded entry.
+   * @param input - the optional why, plus the surface (`by`).
+   * @param at - ISO timestamp.
+   * @returns the candidate entry plus every request this act settled.
+   */
+  async rescue(
+    id: KbEntryId,
+    input: { reason?: string; by?: string } = {},
+    at: string = new Date().toISOString(),
+  ): Promise<{ entry: KbEntry; requests: ApprovalRequest[] }> {
+    const entry = await this.get(id)
+    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry.status !== 'discarded') {
+      throw new Error(`kb rescue: 只有已遗弃条目能捞回,当前是 ${entry.status}`)
+    }
+    const by = input.by ?? 'cli'
+    const why = (input.reason ?? '').trim()
+    const rescued = await this.transition(
+      entry.id,
+      'candidate',
+      'rescue',
+      `人工捞回候选(${by})${why === '' ? '' : `: ${why}`}`,
+      at,
+    )
+    const requests = await this.settleRequests(entry.id, 'rescue', at)
+    return { entry: rescued, requests }
+  }
+
+  /**
+   * Mark every PENDING request of one action on one entry as settled by the
+   * human act that just performed it: the queue must never keep displaying a
+   * decision the human already made in the panel (and a later
+   * `kb approve` of it would attempt an illegal same-state transition).
+   * Requests of other actions are untouched.
+   *
+   * @param entryId - the entry the human just acted on.
+   * @param action - which queued verb the act performed.
+   * @param at - ISO timestamp.
+   * @returns the requests this call settled.
+   */
+  private async settleRequests(entryId: KbEntryId, action: ApprovalAction, at: string): Promise<ApprovalRequest[]> {
+    const approvals = (await readJsonOrNull<ApprovalRequest[]>(this.approvalsFile)) ?? []
+    const settled: ApprovalRequest[] = []
+    const next = approvals.map((request) => {
+      if (request.entryId !== entryId || request.action !== action || request.resolvedAt !== null) return request
+      const resolved: ApprovalRequest = { ...request, resolvedAt: at, resolution: 'approved' }
+      settled.push(resolved)
+      return resolved
+    })
+    if (settled.length > 0) await atomicWriteJson(this.approvalsFile, next)
+    return settled
   }
 }
 

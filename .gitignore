@@ -25,3 +25,7 @@ dist/
 .DS_Store
 Thumbs.db
 *Zone.Identifier
+
+# 评测数据与报告(单独存放,可整体删除)
+evals/datasets/
+evals/runs/

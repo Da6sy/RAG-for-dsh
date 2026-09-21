@@ -110,6 +110,39 @@ export function windowScore(
 }
 
 /**
+ * Sliding-window scores for MANY entries in one pass.
+ *
+ * Exists because the per-entry {@link windowScore} walks the whole ledger every
+ * time it is called, and a retrieval that wants a score for each of N
+ * candidates therefore costs O(N × ledger). That was a measured cost of the
+ * current code (踩坑账本: windowScore 的 O(N×M)); the reranker is the first
+ * caller that wants every candidate's score at once, so the grouped form ships
+ * with it rather than after it. Semantics are identical to calling
+ * {@link windowScore} once per entry — the entries with no counted signal are
+ * simply absent from the map (i.e. score 0).
+ *
+ * @param signals - ledger records.
+ * @param now - reference time.
+ * @param windowDays - window length.
+ * @returns entryId → window score, for every entry with at least one signal in the window.
+ */
+export function windowScores(
+  signals: readonly SignalRecord[],
+  now: Date,
+  windowDays: number = DEFAULT_KB_CONFIG.windowDays,
+): Map<string, number> {
+  const cutoff = now.getTime() - windowDays * 24 * 60 * 60 * 1000
+  const scores = new Map<string, number>()
+  for (const record of signals) {
+    const at = Date.parse(record.at)
+    if (Number.isNaN(at) || at < cutoff) continue
+    const key = String(record.entryId)
+    scores.set(key, (scores.get(key) ?? 0) + record.weight)
+  }
+  return scores
+}
+
+/**
  * The negative bound that trips `strong-negative` discard eligibility.
  * Defaults to the symmetric -trustThreshold on both tiers (at ±20 a single
  * user rejection (-6) no longer discards; sustained negativity does — the

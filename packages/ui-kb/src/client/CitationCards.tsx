@@ -15,7 +15,7 @@
  */
 import { useState } from 'react'
 import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
-import { IconCheckOutline14, IconLoadingOutline16, IconPlusOutline16, IconSearchOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutline14, IconLoadingOutline16, IconPlusOutline16, IconSearchOutline16, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   actionCopy, parseArgs, parseKbCiteResult, parseKbProposeResult, parseKbSearchResult,
   shortId, stateBadge, type TextishBlock,
@@ -38,9 +38,15 @@ function argsOf(block: ToolCallBlock): string {
   return ('kind' in block ? block.call?.argsRaw : block.argsRaw) ?? ''
 }
 
-/** One pill from a derived badge. */
-function Pill({ label, tone }: { label: string; tone: string }) {
-  return <span className={`clue-pill clue-pill-${tone}`}>{label}</span>
+/**
+ * One label chip from a derived badge.
+ *
+ * Renders dsh's own `Pill` so the conversation-side cards and the settings
+ * pages share exactly one chip look (the `tone` argument is kept for the call
+ * sites' vocabulary; dsh's Pill has a single visual family).
+ */
+function Chip({ label }: { label: string; tone?: string }) {
+  return <Pill>{label}</Pill>
 }
 
 /**
@@ -89,7 +95,7 @@ export function KbSearchCard({ block }: KbViewProps) {
             return (
               <div className="clue-cite-hit" key={hit.id}>
                 <span className="clue-mono">{shortId(hit.id)}</span>
-                <Pill label={badge.label} tone={badge.tone} />
+                <Chip label={badge.label} tone={badge.tone} />
                 <span>{hit.title}</span>
                 <span className="clue-dim">{hit.kind}</span>
                 {hit.annotations.map(annotation => (
@@ -136,10 +142,10 @@ export function KbProposeCard({ block }: KbViewProps) {
         <strong>知识提案</strong>
         {title !== '' && <span>「{title}」</span>}
         {failed
-          ? <Pill label="提案失败" tone="bad" />
+          ? <Chip label="提案失败" tone="bad" />
           : result === null
-            ? <Pill label="无结构化结果" tone="warn" />
-            : <Pill label={stateBadge(result.status, false).label} tone={stateBadge(result.status, false).tone} />}
+            ? <Chip label="无结构化结果" tone="warn" />
+            : <Chip label={stateBadge(result.status, false).label} tone={stateBadge(result.status, false).tone} />}
       </div>
       {result !== null && (
         <div className="clue-dim">
@@ -180,12 +186,12 @@ export function KbCiteCard({ block }: KbViewProps) {
         <IconCheckOutline14 size={14} />
         <strong>知识引用</strong>
         {failed
-          ? <Pill label="调用失败" tone="bad" />
+          ? <Chip label="调用失败" tone="bad" />
           : result === null
-            ? <Pill label="无结构化结果" tone="warn" />
-            : <Pill label={`已记账 ${result.cited.length} 条`} tone="ok" />}
+            ? <Chip label="无结构化结果" tone="warn" />
+            : <Chip label={`已记账 ${result.cited.length} 条`} tone="ok" />}
         {result !== null && result.missing.length > 0 && (
-          <Pill label={`${result.missing.length} 个 id 不存在`} tone="warn" />
+          <Chip label={`${result.missing.length} 个 id 不存在`} tone="warn" />
         )}
       </div>
       {result !== null && result.cited.length > 0 && (

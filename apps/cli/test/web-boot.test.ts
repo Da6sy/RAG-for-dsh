@@ -117,6 +117,86 @@ test('M3c contract: the real web composition boots, serves the shell, our bundle
   assert.ok(found, 'the seeded decision is not listed through the web API')
   assert.equal(found.title, 'web 面组合走 bundle patch')
 
+  // (5) V1: the embedding plane's routes (规划 §9.5/§9.7 路径 B). The page's
+  // whole API is exercised here over real HTTP, including the two rules that
+  // matter most: a secret travels one way only, and a bad field is named.
+  const embedding = await fetch(`${origin}/api/clue-kb/embedding/config?workspace=`)
+  assert.equal(embedding.status, 200)
+  const embeddingPayload = await embedding.json() as {
+    available: boolean
+    config: { enabled: boolean; dim: number }
+    key: { state: string; detail: string }
+    ready: boolean
+    vector: { indexes: unknown[] }
+  }
+  assert.equal(embeddingPayload.available, true, 'web 组合里没有挂载 settings/credentials 服务')
+  assert.equal(embeddingPayload.ready, false, '默认未配置 ⇒ 未就绪(纯词法)')
+  assert.equal(embeddingPayload.key.state, 'missing')
+
+  // A field-level refusal, not a generic failure.
+  const badWrite = await fetch(`${origin}/api/clue-kb/embedding/config`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ patch: { dim: 1024 } }),
+  })
+  assert.equal(badWrite.status, 400)
+  const badPayload = await badWrite.json() as { errors: { field: string }[] }
+  assert.equal(badPayload.errors[0]?.field, 'dim', 'dim 必须被拒绝并指名')
+
+  const goodWrite = await fetch(`${origin}/api/clue-kb/embedding/config`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ patch: { enabled: true, baseUrl: 'https://api.example.cn/v1', model: 'bge-m3', apiKeyEnv: 'CLUE_WEB_TEST_KEY' } }),
+  })
+  assert.equal(goodWrite.status, 200)
+
+  const secret = 'sk-web-boot-secret-987654'
+  const keyWrite = await fetch(`${origin}/api/clue-kb/embedding/key`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ value: secret }),
+  })
+  assert.equal(keyWrite.status, 200)
+  const keyPayload = await keyWrite.json() as { stored: string; key: { state: string } }
+  assert.equal(keyPayload.key.state, 'configured')
+  assert.equal(JSON.stringify(keyPayload).includes(secret), false, '写入响应绝不能回显密钥')
+
+  const afterKey = await fetch(`${origin}/api/clue-kb/embedding/config?workspace=`)
+  const afterPayload = await afterKey.text()
+  assert.equal(afterPayload.includes(secret), false, '读取接口也绝不能回显密钥')
+  assert.ok(afterPayload.includes('CLUE_WEB_TEST_KEY'), '但必须给出引用名')
+
+  // The key lives in the credential store, NOT in our own knowledge tree.
+  const { readFile: readText } = await import('node:fs/promises')
+  const settingsDoc = await readText(join(workdir, '.dsh-home', 'settings.yaml'), 'utf8')
+  assert.equal(settingsDoc.includes(secret), false)
+  assert.ok(settingsDoc.includes('CLUE_WEB_TEST_KEY'))
+
+  // (6) V4: the「向量 N 段」badge's data source. The route must answer the
+  // field even with no vector layer built (null), so the panel can render
+  // 待建 instead of guessing — and reading it must never build anything.
+  const docs = await fetch(`${origin}/api/clue-kb/doc?scope=project`)
+  assert.equal(docs.status, 200)
+  const docsPayload = await docs.json() as { docs: Array<{ docId: string; vector?: unknown }> }
+  if (docsPayload.docs.length > 0) {
+    assert.ok('vector' in (docsPayload.docs[0] ?? {}), '/doc 列表必须带 vector 字段(徽章的数据源)')
+    assert.equal(docsPayload.docs[0]?.vector, null, '没有向量层时必须是 null,不是缺字段')
+  }
+
+  // (7) V1 follow-up: the embedder picker's catalog is served by the host, and
+  // in the REAL web composition the pi-ai namespace IS registered — so the
+  // user's configured providers appear with their own base URLs.
+  const candidates = await fetch(`${origin}/api/clue-kb/embedding/candidates`)
+  assert.equal(candidates.status, 200)
+  const candidatePayload = await candidates.json() as {
+    groups: Array<{ route: string; baseUrl: string; keyState: string; candidates: Array<{ model: string; usable: boolean }> }>
+    notices: string[]
+    selected: string | null
+  }
+  assert.ok(candidatePayload.groups.length > 0, '目录不能是空的')
+  assert.ok(candidatePayload.groups.some((group) => group.route === 'deepseek-official' && group.candidates[0]?.usable === false), 'DeepSeek 必须作为"不可用"出现')
+  assert.ok(candidatePayload.groups.some((group) => group.route === 'local' && group.keyState === 'configured'), '本地选项必须总是可用')
+
   // Bounded shutdown settles the handle (the bin's exit path).
   await web.shutdown(0)
   assert.equal(await web.done, 0)

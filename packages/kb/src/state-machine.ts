@@ -28,33 +28,51 @@ import {
 export type TransitionTrigger =
   | 'approve-promote'   // human approved a promotion (queue)
   | 'expire-idle'       // unreferenced beyond expireAfterDays
+  | 'human-retire'      // human judged "this no longer holds" (→ expired, NOT discarded)
   | 'strong-negative'   // window score crossed the negative bound
   | 'reactivate'        // human reviewed an expired entry back to candidate
   | 'rescue'            // human rescued a discarded entry back to candidate
+  | 'split'             // M9-4: a human split the entry into successors (terminal)
 
 /**
  * The complete edge table. Anything absent here is ILLEGAL and throws —
  * an illegal transition is always a bug in a caller, never a user state.
+ *
+ * M9-4: `superseded` is reached ONLY by a human split and has NO out-edges —
+ * the provenance chain it anchors must stay readable forever (that is also
+ * why it is exempt from the retention purge; see the store's sweep).
+ *
+ * `human-retire` (the panel's 「不再成立」): a human's verdict is NOT the same
+ * event as `expire-idle` — "we stopped using it" and "it is no longer true"
+ * differ in what they mean for the reader — so it gets its own trigger, while
+ * landing on the same state on purpose: expired knowledge stays READABLE with
+ * its annotation, only its use as a write-basis needs approval. Discarding it
+ * remains an evidence/queue decision (`strong-negative`).
  */
 const ALLOWED: Record<KbStatus, Partial<Record<KbStatus, TransitionTrigger[]>>> = {
   candidate: {
     trusted: ['approve-promote'],
-    expired: ['expire-idle'],
+    expired: ['expire-idle', 'human-retire'],
     discarded: ['strong-negative'],
+    superseded: ['split'],
   },
   trusted: {
     // Patch #1: trusted has exits.
-    expired: ['expire-idle'],
+    expired: ['expire-idle', 'human-retire'],
     discarded: ['strong-negative'],
+    superseded: ['split'],
   },
   expired: {
     candidate: ['reactivate'],
     discarded: ['expire-idle', 'strong-negative'],
+    superseded: ['split'],
   },
   discarded: {
     // Rescue returns to CANDIDATE (must re-earn trust), never straight to trusted.
     candidate: ['rescue'],
   },
+  // Terminal: a split successor chain is history, not a state to leave.
+  superseded: {},
 }
 
 /**

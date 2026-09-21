@@ -63,14 +63,20 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createUserMessage, type ImageBlock } from '@deepseek-ai/dsh-llm'
 import {
+  DEFAULT_INJECT_MIN_ENTRY_CHARS,
+  DEFAULT_INJECT_PER_ENTRY_CHARS as DEFAULT_INJECT_PER_ENTRY_CHARS_KB,
+  entryTextAfterRedlines,
   openGlobalStore,
   openProjectStore,
   panelWorkspaces,
   queryKb,
   readWorkspaces,
+  renderHitLine,
   syncWorkspaces,
+  type DocRecord,
   type HostWorkspaceRow,
   type KbEntry,
+  type KbEntryId,
   type KbKind,
   type KbStore,
   type QueryHit,
@@ -91,8 +97,19 @@ import {
   type LoopReport,
 } from '@clue-harness/kb-loop'
 import { captureScreenshot, type ModuleNode } from '@clue-harness/evidence-render'
-import { createFulltextRetriever, failureSignature, renderRetrievalAssist } from '@clue-harness/rag'
+import {
+  createFulltextRetriever,
+  failureSignature,
+  queryChunks as queryDocChunks,
+  renderDetailView,
+  renderRetrievalAssist,
+  resolveChunkSources,
+  type ChunkHit,
+  type ChunkVectorState,
+} from '@clue-harness/rag'
 import { gateDecision, pickInspectPage, TurnTracker, type ModuleRef } from './turn-state.ts'
+import { createRetrievalPlane } from './retrieval-plane.ts'
+import { readRetrievalConfig } from './embedding-config.ts'
 
 /** Plugin name (stable id in fibers and prompt sections). */
 export const name = 'clue-kb'
@@ -117,6 +134,19 @@ export interface Config {
   topK?: number
   /** Character budget for the injected kb-context message. */
   injectMaxChars?: number
+  /**
+   * M9-0 配额制 (proposal §4 G4): per-entry character quota inside the
+   * injected block. An entry whose body exceeds it is shown trimmed to this
+   * many characters — the tail is what kb_detail is for. This is what stops
+   * one long entry from monopolizing the budget (债#5).
+   */
+  injectPerEntryChars?: number
+  /**
+   * M9-0: an entry yields ENTIRELY (保广度弃深度) when the remainder of the
+   * block budget cannot hold at least this much of it. Default 200 — below
+   * that a line is a stub, and breadth beats a mutilated tail.
+   */
+  injectMinEntryChars?: number
   /** Include expired (annotated) entries in retrieval. Default false. */
   includeExpired?: boolean
   /** Enable the turn-stopping evidence gate. Default true. */
@@ -151,6 +181,8 @@ interface ResolvedConfig {
   projectRoot: string
   topK: number
   injectMaxChars: number
+  injectPerEntryChars: number
+  injectMinEntryChars: number
   includeExpired: boolean
   gate: boolean
   maxGateFiresPerTurn: number
@@ -169,6 +201,8 @@ function resolveConfig(config: Config): ResolvedConfig {
     projectRoot: config.cwd ?? process.cwd(),
     topK: config.topK ?? 5,
     injectMaxChars: config.injectMaxChars ?? 2400,
+    injectPerEntryChars: config.injectPerEntryChars ?? DEFAULT_INJECT_PER_ENTRY_CHARS_KB,
+    injectMinEntryChars: config.injectMinEntryChars ?? DEFAULT_INJECT_MIN_ENTRY_CHARS,
     includeExpired: config.includeExpired ?? false,
     gate: config.gate ?? true,
     maxGateFiresPerTurn: config.maxGateFiresPerTurn ?? 1,
@@ -240,6 +274,22 @@ export interface ClueKb {
   /** Retrieval with the face defaults applied (M9: pass `root` to search
    *  another workspace's tiers; absent = the launch anchor). */
   query(text: string, options?: { limit?: number; includeExpired?: boolean; root?: string }): Promise<QueryHit[]>
+  /**
+   * The SECOND level (M9-2): read the原文段 behind one entry — pure read,
+   * writes nothing and records no signal (宪法 4). `entryId` addresses one
+   * entry's mounted doc; `docIds` browses documents directly; an empty
+   * `query` walks the document in order.
+   */
+  queryChunks(options: {
+    entryId?: string
+    docIds?: readonly string[]
+    query?: string
+    limit?: number
+    maxChars?: number
+    root?: string
+  }): Promise<{ entryId: string | null; docIds: string[]; hits: ChunkHit[]; noDoc: boolean }>
+  /** Every document snapshot of one tier (the panel's list). */
+  docs(options?: { root?: string }): Promise<DocRecord[]>
   /** Model/human proposal — always lands as candidate. */
   propose(input: { kind: KbKind; title: string; text: string; tags?: string[]; bindings?: string[]; createdBy?: string }): Promise<KbEntry>
   /** Record one weighted signal. */
@@ -256,6 +306,25 @@ declare module '@deepseek-ai/cordis' {
 }
 
 const KB_KINDS: KbKind[] = ['fact', 'decision', 'snippet', 'map', 'pitfall', 'asset']
+
+/**
+ * V3 (规划 §11): the two query-writing styles the A/B compares.
+ *
+ * `keywords` is what shipped through M9 — it teaches a keyword pile, which the
+ * bigram tokenizer likes and an embedding cannot use. `intent` teaches one
+ * complete sentence (subject–predicate–object, 15–40 characters) plus
+ * identifiers only when they matter, which is exactly what the vector channel
+ * was added for. The plan is explicit that this switch is measured BEFORE it
+ * becomes the default, so both texts live here and the settings namespace picks.
+ */
+const QUERY_DOCTRINE_KEYWORDS = '检索词中英文均可,建议带上关键名词(系统同时做词法与语义匹配)。'
+const QUERY_DOCTRINE_INTENT =
+  '检索时给一句自然语言意图句(主谓宾完整,15–40 字),必要时再追加关键标识符;'
+  + '系统同时做词法与语义匹配,不必自己拆关键词。'
+  + '例如「chunker 版本号不一致时分片会怎样重建」优于「chunker 版本 重建」。'
+const QUERY_GUIDANCE =
+  '检索用的意图句(自然语言,15–40 字,主谓宾完整;必要时追加关键标识符)。'
+  + '系统同时做词法与语义匹配,不必自己拆关键词——拆成关键词堆会削弱语义匹配。'
 
 const SEARCH_OUTPUT = {
   schema: {
@@ -276,6 +345,10 @@ const SEARCH_OUTPUT = {
             needsReview: { type: 'boolean', required: true },
             score: { type: 'number', required: true },
             text: { type: 'string', required: true },
+            /** M9-1: the entry has an immutable原文 snapshot on disk. */
+            hasDoc: { type: 'boolean', required: true },
+            /** M9-1: heading-addressable段数 of that snapshot (0 when none). */
+            docHeadingCount: { type: 'number', required: true },
             annotations: { type: 'array', required: true, items: { type: 'string' } },
           },
         },
@@ -312,20 +385,64 @@ const CITE_OUTPUT = {
   render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }],
 } as const
 
-/** Render injected KB context deterministically within a character budget. */
-function renderKbContext(hits: readonly QueryHit[], budget: number): string {
+const DETAIL_OUTPUT = {
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      entryId: { type: 'string', required: true },
+      noDoc: { type: 'boolean', required: true },
+      docIds: { type: 'array', required: true, items: { type: 'string' } },
+      hits: {
+        type: 'array',
+        required: true,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            docId: { type: 'string', required: true },
+            lines: { type: 'string', required: true },
+            headingPath: { type: 'string', required: true },
+            quoteAnchor: { type: 'string', required: true },
+            score: { type: 'number', required: true },
+            partialRedline: { type: 'boolean', required: true },
+            excerpt: { type: 'string', required: true },
+          },
+        },
+      },
+      text: { type: 'string', required: true },
+    },
+  },
+  render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: (value as { text: string }).text }],
+} as const
+
+/** The M9-0 quota: each injected entry gets at most this much body text. */
+export const DEFAULT_INJECT_PER_ENTRY_CHARS = DEFAULT_INJECT_PER_ENTRY_CHARS_KB
+
+/**
+ * Render injected KB context deterministically within a character budget.
+ * @param hits - the ranked, annotated hits.
+ * @param budget - the block's character budget.
+ * @param quota - the per-entry body quota and the yield floor (M9-0).
+ * @returns the block text.
+ */
+export function renderKbContext(
+  hits: readonly QueryHit[],
+  budget: number,
+  quota: { perEntryChars?: number; minChars?: number } = {},
+): string {
+  const perEntryChars = quota.perEntryChars ?? DEFAULT_INJECT_PER_ENTRY_CHARS_KB
+  const minChars = quota.minChars ?? DEFAULT_INJECT_MIN_ENTRY_CHARS
   const lines: string[] = ['<kb_context source="clue-kb">', '以下知识来自项目知识库(按本轮输入检索)。引用某条时请在回复中提及它的 id;与当前任务无关的条目直接忽略。']
   let used = lines.join('\n').length
+  // The closing tag is reserved UP FRONT: a full block must still close.
+  const cap = budget - '</kb_context>'.length - 1
   for (const hit of hits) {
-    const flags = [hit.entry.status, hit.entry.needsReview ? '⚠待复核' : ''].filter((f) => f !== '').join('|')
-    let text = hit.entry.text.replace(/\s+/g, ' ')
-    let line = `- [${hit.entry.id}|${flags}|${hit.entry.kind}] ${hit.entry.title}: ${text}`
-    for (const annotation of hit.annotations) line += ` (${annotation})`
-    if (used + line.length > budget) {
-      const room = budget - used - 20
-      if (room < 60) break
-      line = `${line.slice(0, room)}…`
-    }
+    const line = renderHitLine(hit, perEntryChars, minChars, Math.max(0, cap - used))
+    if (line === null) continue
+    // The fit/trim decisions all live in the renderer; here the block only
+    // refuses a line it literally cannot hold.
+    if (line.length > cap - used) continue
     lines.push(line)
     used += line.length + 1
   }
@@ -429,6 +546,36 @@ export function apply(ctx: Context, config: Config = {}): void {
     return typeof cwd === 'string' && cwd !== '' ? cwd : resolved.projectRoot
   }
 
+  /**
+   * The tool channel's retriever (V0–V2, 规划 §3 决策 4).
+   *
+   * The plan wires ONLY this channel in the first three milestones: the
+   * pre-step injection and the failure-signature gate keep the shipped
+   * full-text retriever until V3 gives them their own profiles, so the first
+   * ablation has clean attribution. The plane reads its configuration per call
+   * (hot settings, per-operation credentials) and degrades to the lexical path
+   * — annotated, never disguised — when no embedder is configured.
+   */
+  const plane = createRetrievalPlane(ctx, {
+    // The store's own default is the same home; stating it here keeps the
+    // shared embed cache and the ranklog in the tier's home even when a
+    // composition passes no explicit one.
+    home: resolved.home ?? clueHome(),
+    onWarn: (message) => { console.warn(`clue-kb: ${message}`) },
+  })
+  const retrieveFor = async (
+    root: string,
+    text: string,
+    options?: { limit?: number; includeExpired?: boolean },
+  ): Promise<QueryHit[]> => {
+    const stores = await storesFor(root)
+    const result = await plane.retrieve(stores, text, {
+      ...(options?.limit !== undefined ? { limit: options.limit } : {}),
+      ...(options?.includeExpired !== undefined ? { includeExpired: options.includeExpired } : {}),
+    })
+    return result.hits
+  }
+
   const queryFor = (root: string) => async (text: string, options?: { limit?: number; includeExpired?: boolean }): Promise<QueryHit[]> => {
     const { project, global } = await storesFor(root)
     return queryKb(project, global, {
@@ -438,6 +585,61 @@ export function apply(ctx: Context, config: Config = {}): void {
     })
   }
   const query = queryFor(resolved.projectRoot)
+
+  /**
+   * M9-2: the second-level read (纯读 — 宪法 4). Resolves the addressed
+   * documents, ranks their derived chunks and returns anchors + excerpts.
+   * An entry without a doc answers honestly (`noDoc`) instead of 404ing: "该
+   * 知识无原文层,正文即全部" is a fact about the knowledge, not an error.
+   */
+  const chunksFor = async (options: {
+    entryId?: string
+    docIds?: readonly string[]
+    query?: string
+    limit?: number
+    maxChars?: number
+    root?: string
+  }): Promise<{ entryId: string | null; docIds: string[]; hits: ChunkHit[]; noDoc: boolean; vector: ChunkVectorState | null }> => {
+    const root = options.root ?? resolved.projectRoot
+    const { project, global } = await storesFor(root)
+    const entryId = options.entryId === undefined || options.entryId === '' ? null : options.entryId
+    let entry: KbEntry | null = null
+    if (entryId !== null) {
+      entry = (await project.get(entryId as KbEntryId)) ?? (await global.get(entryId as KbEntryId))
+      if (entry === null) throw new Error(`没有条目 "${entryId}"`)
+    }
+    const owner = entry !== null && entry.tier === 'global' ? global : project
+    const sources = await resolveChunkSources(owner, {
+      ...(entryId !== null ? { entryId } : {}),
+      ...(options.docIds !== undefined ? { docIds: options.docIds } : {}),
+    })
+    // V4: when an embedder is configured, the second level fuses the lexical
+    // and vector channels per document; otherwise it is exactly today's lexical
+    // path (and `vectorState` says why).
+    const vector = plane.chunkVector()
+    let vectorState: ChunkVectorState | null = null
+    const hits: ChunkHit[] = []
+    const perSource = Math.max(1, options.limit ?? 5)
+    for (const source of sources) {
+      hits.push(...await queryDocChunks(source, {
+        ...(options.query !== undefined ? { query: options.query } : {}),
+        ...(options.limit !== undefined ? { limit: options.limit } : {}),
+        ...(options.maxChars !== undefined ? { maxChars: options.maxChars } : {}),
+        ...(vector !== null && options.query !== undefined && options.query !== ''
+          ? { vector: { ...vector, onState: (state) => { vectorState = state } } }
+          : {}),
+      }))
+    }
+    void perSource
+    hits.sort((a, b) => b.score - a.score || a.docId.localeCompare(b.docId) || a.seq - b.seq)
+    return {
+      entryId,
+      docIds: sources.map((source) => source.docId),
+      hits: options.limit === undefined ? hits : hits.slice(0, options.limit),
+      noDoc: entry !== null && entry.doc === undefined && (options.docIds ?? []).length === 0,
+      vector: vectorState,
+    }
+  }
 
   // ---- M6: message-feedback intake (the doubt counters' eyes) ----
   //
@@ -617,6 +819,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     hostWorkspaceForSession,
     panelWorkspaces: () => panelWorkspaces(resolved.home),
     query: (text, options) => queryFor(options?.root ?? resolved.projectRoot)(text, options),
+    queryChunks: chunksFor,
+    docs: async (options) => (await storesFor(options?.root ?? resolved.projectRoot)).project.listDocs(),
     propose: async (input) => {
       const { project, global } = await stores()
       // Global-tier proposals are an M3c concern (human-only); the face
@@ -643,27 +847,36 @@ export function apply(ctx: Context, config: Config = {}): void {
     name: 'kb_search',
     description:
       '检索项目知识库(约定/决策/踩坑/资产)。动手写涉及项目约定或曾出过问题的代码前先检索;'
-      + '返回条目带 id、状态与标注(候选/过期/待复核)。检索本身不改变任何知识状态。',
+      + '返回条目带 id、状态与标注(候选/过期/待复核)。检索本身不改变任何知识状态。'
+      + '结果为截断摘要(每条正文可能被截断),细节用 kb_detail 按 entryId 下钻原文段(带 docId/行号锚点)。',
     parameters: {
-      query: { type: 'string', required: true, description: '检索词(中英文均可,建议带上关键名词)' },
+      query: { type: 'string', required: true, description: QUERY_GUIDANCE },
       limit: { type: 'number', description: '返回条数上限(默认取插件配置)' },
     },
     output: SEARCH_OUTPUT,
     execute: async (args, exec) => {
-      const hits = await queryFor(sessionRoot(exec.agent))(String(args.query), args.limit === undefined ? undefined : { limit: Number(args.limit) })
+      const hits = await retrieveFor(sessionRoot(exec.agent), String(args.query), args.limit === undefined ? undefined : { limit: Number(args.limit) })
       const sessionId = exec.agent?.session.id
       if (sessionId !== undefined) tracker.recordSurfaced(sessionId, hits.map((h) => h.entry.id))
       return {
-        hits: hits.map((hit) => ({
-          id: hit.entry.id,
-          title: hit.entry.title,
-          kind: hit.entry.kind,
-          status: hit.entry.status,
-          needsReview: hit.entry.needsReview,
-          score: hit.score,
-          text: hit.entry.text.length > 500 ? `${hit.entry.text.slice(0, 500)}…` : hit.entry.text,
-          annotations: hit.annotations,
-        })),
+        hits: hits.map((hit) => {
+          // M9-4: the returned body is the text AFTER redlines (划除不只是遮
+          // 显示:被作废的段不进任何一条返回路径). The raw text stays in the
+          // entry file for governance (`clue kb show` prints it verbatim).
+          const body = entryTextAfterRedlines(hit.entry)
+          return {
+            id: hit.entry.id,
+            title: hit.entry.title,
+            kind: hit.entry.kind,
+            status: hit.entry.status,
+            needsReview: hit.entry.needsReview,
+            score: hit.score,
+            text: body.length > 500 ? `${body.slice(0, 500)}…` : body,
+            hasDoc: hit.entry.doc !== undefined,
+            docHeadingCount: hit.docHeadingCount ?? 0,
+            annotations: hit.annotations,
+          }
+        }),
         total: hits.length,
       }
     },
@@ -706,6 +919,79 @@ export function apply(ctx: Context, config: Config = {}): void {
       return { id: entry.id, status: entry.status, note: '已入候选;提升为可信需要人工批准(攒批提醒)' }
     },
     presentCall: (args) => ({ card: 'generic', title: 'Propose knowledge', kind: 'other', rawInput: (args as { title?: unknown }).title }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'kb_detail',
+    description:
+      '下钻到某条知识的原文层(二级检索):给出 docId + 行号 + heading 路径 + 段落摘录。'
+      + '当 kb_search 的命中带"含原文 N 段,细节用 kb_detail 下钻"标注时,用本工具取理据原文;'
+      + '可以带 query 只取相关段,留空则按顺序浏览。纯读取:不记信号、不改状态、不产生审批——'
+      + '真正采用了某条知识才用 kb_cite 声明。没有原文层的条目会如实回报"正文即全部"。',
+    parameters: {
+      entryId: { type: 'string', description: '要下钻的条目 id(kb_search 返回的 id)' },
+      query: { type: 'string', description: '相关段检索词;留空则按文档顺序返回段落' },
+      docIds: { type: 'string', description: '逗号分隔的 docId(可选,直接浏览文档而不经过条目)' },
+      limit: { type: 'number', description: '返回段数上限(默认 5)' },
+      maxChars: { type: 'number', description: '每段摘录字符预算(默认 600)' },
+    },
+    output: DETAIL_OUTPUT,
+    execute: async (args, exec) => {
+      const entryId = args.entryId === undefined ? '' : String(args.entryId).trim()
+      const docIds = String(args.docIds ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s !== '')
+      if (entryId === '' && docIds.length === 0) {
+        return { entryId: '', noDoc: false, docIds: [], hits: [], text: '需要 entryId 或 docIds 之一(先用 kb_search 找到条目 id)。' }
+      }
+      const detail = await chunksFor({
+        ...(entryId !== '' ? { entryId } : {}),
+        ...(docIds.length > 0 ? { docIds } : {}),
+        ...(args.query !== undefined ? { query: String(args.query) } : {}),
+        ...(args.limit !== undefined ? { limit: Number(args.limit) } : {}),
+        ...(args.maxChars !== undefined ? { maxChars: Number(args.maxChars) } : {}),
+        root: sessionRoot(exec.agent),
+      })
+      let title = ''
+      if (entryId !== '') {
+        const { project, global } = await storesFor(sessionRoot(exec.agent))
+        const entry = (await project.get(entryId as KbEntryId)) ?? (await global.get(entryId as KbEntryId))
+        title = entry?.title ?? ''
+      }
+      const view = renderDetailView({
+        entryId: entryId === '' ? (detail.docIds[0] ?? '(直接浏览)') : entryId,
+        title: title === '' ? '原文段' : title,
+        docIds: detail.docIds,
+        hits: detail.hits,
+        noDoc: detail.noDoc,
+      })
+      // V4: the second level's channel state travels with the answer, so the
+      // model can tell a semantic hit from a keyword one (不变量 5). Appended to
+      // the rendered text because that is what the model actually reads.
+      const vectorNote = detail.vector === null
+        ? ''
+        : detail.vector.status === 'used'
+          ? `\n[分段检索] 语义通道已参与(${detail.vector.count ?? 0} 段向量)`
+          : `\n[分段检索] ${detail.vector.note}`
+      // Pure read: NO touch, NO signal, NO approval (宪法 4 — 查了 ≠ 用到).
+      return {
+        text: `${view.text}${vectorNote}`,
+        entryId: view.entryId,
+        noDoc: view.noDoc,
+        docIds: view.docIds,
+        hits: view.hits.map((hit) => ({
+          docId: hit.docId,
+          lines: `${hit.lines.start}-${hit.lines.end}`,
+          headingPath: hit.headingPath,
+          quoteAnchor: hit.quoteAnchor,
+          score: hit.score,
+          partialRedline: hit.partialRedline,
+          excerpt: hit.excerpt,
+        })),
+      }
+    },
+    presentCall: (args) => ({ card: 'generic', title: 'Drill into source', kind: 'read', rawInput: (args as { entryId?: unknown }).entryId }),
   }))
 
   ctx.tools.register(defineTool({
@@ -754,13 +1040,34 @@ export function apply(ctx: Context, config: Config = {}): void {
   }))
 
   // ---- 3) prompt guidance (stable section — prefix-safe) ----
+  //
+  // V3 (规划 §11): the query guidance moved from "关键词堆" to an INTENT
+  // SENTENCE. The old line ("检索词,建议带上关键名词") taught the model to
+  // emit keyword piles, which suits bigram matching and starves the embedding
+  // of the one thing it is good at: the meaning of a whole question. The
+  // variant in effect is read from the settings namespace, so the A/B harness
+  // can measure both without a code change (`clue recall --prompt-ab`).
+  const queryStyle = () => {
+    try {
+      return readRetrievalConfig(ctx).queryStyle
+    } catch {
+      return 'intent' as const
+    }
+  }
   ctx.systemPrompt.section({
     name: 'tool:kb',
     order: 115,
-    text:
+    text: () =>
       '知识库纪律:涉及项目约定、UI 修改或曾出过问题的区域,先用 kb_search 检索再动手;'
+      + (queryStyle() === 'intent' ? QUERY_DOCTRINE_INTENT : QUERY_DOCTRINE_KEYWORDS)
+      + '学到新的项目事实(约定/坑/决策)用 kb_propose 提案——你只能提案,提升为可信由人批准;'
       + '学到新的项目事实(约定/坑/决策)用 kb_propose 提案——你只能提案,提升为可信由人批准;'
       + '实际采用某条知识作为改动或结论的依据后,用 kb_cite 声明其 id——归因与信号按引用记账,检索到过但没用上的不要引用。'
+      + '分工:代码现场真值走 glob/grep/read(这个函数长什么样、被谁调用);'
+      + '历史判断与理据走 kb_search(哪条知识)→ kb_detail(原文哪一段,带 docId/行号锚点)。'
+      + '一句话:**判断/理据在库,事实在码**。'
+      + 'kb_search 返回的是截断摘要;命中标注"含原文 N 段,细节用 kb_detail 下钻"时,需要理据原文就下钻,'
+      + '下钻是纯读取(不记信号、不改状态),真正用作依据仍要 kb_cite。'
       + '系统会在轮次收尾时对可渲染改动自动做渲染验证,验证失败的报告连同相关历史知识会注入到你的下一步输入,按报告修复。',
   })
 
@@ -805,11 +1112,18 @@ export function apply(ctx: Context, config: Config = {}): void {
       .join('\n')
       .trim()
     if (text === '') return decision
-    const hits = await queryFor(sessionRoot(payload.agent))(text)
+    // V3 (§7.3): the human's whole turn is a `pre-step` query — long,
+    // multi-intent, code-heavy — so it gets its own profile (bounded length,
+    // code fences stripped, semantic weight 0.6) instead of the tool channel's.
+    const preStores = await storesFor(sessionRoot(payload.agent))
+    const hits = (await plane.retrieve(preStores, text, { profile: 'pre-step' })).hits
     if (hits.length === 0) return decision
     tracker.recordSurfaced(payload.agent.session.id, hits.map((hit) => hit.entry.id))
     const context = createUserMessage({
-      content: [{ type: 'text', text: renderKbContext(hits, resolved.injectMaxChars) }],
+      content: [{ type: 'text', text: renderKbContext(hits, resolved.injectMaxChars, {
+        perEntryChars: resolved.injectPerEntryChars,
+        minChars: resolved.injectMinEntryChars,
+      }) }],
       source: { kind: 'plugin', plugin: name },
     })
     return { kind: 'enter', messages: [...decision.messages, context] }
@@ -901,12 +1215,34 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (resolved.gateRetrieval) {
       const signature = failureSignature(report.outcome, renderable)
       if (signature !== '') {
-        const { project, global } = await storesFor(root)
-        const retriever = createFulltextRetriever(project, global, { topK: resolved.topK })
-        const hits = await retriever.retrieve(signature, { boostBindings: renderable })
+        // V3 (§7.3): the failure signature is a `gate` query — assertions,
+        // error text and FILE PATHS. Lexical is up-weighted to 1.3, the
+        // semantic channel drops to 0.3, binding recall participates, and the
+        // paths are kept out of the embedding (they are tokens, not meanings).
+        const gateStores = await storesFor(root)
+        const hits = (await plane.retrieve(gateStores, signature, {
+          profile: 'gate',
+          boostBindings: renderable,
+          limit: resolved.topK,
+        })).hits
         if (hits.length > 0) {
           tracker.recordSurfaced(agent.session.id, hits.map((hit) => hit.entry.id))
-          assist = renderRetrievalAssist(hits, resolved.injectMaxChars)
+          assist = renderRetrievalAssist(hits, resolved.injectMaxChars, {
+            perEntryChars: resolved.injectPerEntryChars,
+            minChars: resolved.injectMinEntryChars,
+          })
+          // 拍板 3: the drill-down is HINTED, never automatic. The assist block
+          // only runs一级 retrieval (budget + on-demand doctrine), so an entry
+          // with a原文层 gets one line telling the model how to open it — the
+          // model decides, and kb_detail records no signal either way.
+          const drillable = hits.filter((hit) => hit.entry.doc !== undefined)
+          if (drillable.length > 0 && assist !== '') {
+            const hint = drillable
+              .slice(0, 3)
+              .map((hit) => `可下钻: kb_detail(entryId=${hit.entry.id}, query=${signature.slice(0, 12)})`)
+              .join('\n')
+            assist = `${assist}\n${hint}`
+          }
         }
       }
     }

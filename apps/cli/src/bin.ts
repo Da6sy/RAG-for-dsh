@@ -10,6 +10,8 @@
  *   clue                     interactive chat (boots the composition)
  *   clue web                 web surface (dsh web shell + clue patch stack)
  *   clue render <page.html>  render inspection (no agent tree involved)
+ *   clue kb <命令>            knowledge base (see `clue kb help`)
+ *   clue recall               retrieval-recall harness (synthetic set, seconds)
  *   clue --help | --version
  *
  * @module @clue-harness/cli/bin
@@ -24,7 +26,11 @@ const USAGE = `clue — ClueHarness(M0/M1/M2/M3)
   clue web [--port N]       网页界面(dsh web 壳 + ClueHarness 知识库面板,默认端口 3090)
   clue render <page.html>   渲染验证(结构树/基准比对;详见 clue render --help)
   clue kb <命令>            知识库(增删查/状态机/审批队列;详见 clue kb help)
+  clue recall [--chunks n]  检索召回/消融评测(合成语料 + 六类查询 + 硬护栏;见 clue recall --help)
+  clue bench <命令>         公开基准评测的产物管理(索引/对比/清理;见 clue bench help)
   clue --help               本帮助
+
+向量与精排配置在 clue kb 面:clue kb embed-config / embed / doctor / query --explain(见 clue kb help)
   clue --version            版本号`
 
 function readVersion(): string {
@@ -49,6 +55,12 @@ if (command === '--help' || command === '-h') {
 } else if (command === 'kb') {
   const { kbMain } = await import('./kb-cli.ts')
   process.exitCode = await kbMain(rest)
+} else if (command === 'bench') {
+  const { benchMain } = await import('./bench-cli.ts')
+  process.exitCode = await benchMain(rest)
+} else if (command === 'recall') {
+  const { recallMain } = await import('./recall-cli.ts')
+  process.exitCode = await recallMain(rest)
 } else if (command === undefined) {
   const { clueHostHome, clueSessionsDir } = await import('@clue-harness/util')
   // Same host-home rule as `clue web`: DSH_HOME is ASSIGNED to the clue host

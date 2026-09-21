@@ -30,6 +30,7 @@ import {
   type KbStore,
 } from '@clue-harness/kb'
 import type { ClueKb } from '@clue-harness/kb-face'
+import { ingestFile, queryChunks, resolveChunkSources } from '@clue-harness/rag'
 import { API_PREFIX, apply } from '@clue-harness/kb-web'
 import { FAVICON_SVG, faviconDataUri, identityScript, IDENTITY_TITLE } from '../src/identity.ts'
 
@@ -120,6 +121,30 @@ function mount(
       limit: options?.limit ?? 8,
       includeExpired: options?.includeExpired ?? false,
     }),
+    // M9: the second-level read and the原文 list — real implementations, since
+    // the routes under test do address them (the store is the truth here).
+    queryChunks: async (options) => {
+      const sources = await resolveChunkSources(project, {
+        ...(options.entryId !== undefined ? { entryId: options.entryId } : {}),
+        ...(options.docIds !== undefined ? { docIds: options.docIds } : {}),
+      })
+      const hits = []
+      for (const source of sources) {
+        hits.push(...await queryChunks(source, {
+          ...(options.query !== undefined ? { query: options.query } : {}),
+          ...(options.limit !== undefined ? { limit: options.limit } : {}),
+          ...(options.maxChars !== undefined ? { maxChars: options.maxChars } : {}),
+        }))
+      }
+      hits.sort((a, b) => b.score - a.score || a.docId.localeCompare(b.docId) || a.seq - b.seq)
+      return {
+        entryId: options.entryId ?? null,
+        docIds: sources.map((source) => source.docId),
+        hits,
+        noDoc: options.entryId !== undefined && sources.length === 0,
+      }
+    },
+    docs: async () => project.listDocs(),
     propose: async () => { throw new Error('unused in route tests') },
     signal: async () => { throw new Error('unused in route tests') },
     runLoop: async () => { throw new Error('unused in route tests') },
@@ -574,4 +599,204 @@ test('routes never touch the DEFAULT home — every engine call carries the conf
   )
   // And the configured home did receive the writes — the routes are not no-oping.
   assert.ok((await readdir(join(home, 'kb'))).length >= 1, '配置 home 里应当真的落了东西')
+})
+
+test('M9: GET /doc lists snapshots with mount counts, GET /chunks ranks原文段 (both read-only)', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'clue-kbweb-doc-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const projectRoot = join(root, 'proj')
+  await mkdir(projectRoot, { recursive: true })
+  const home = join(root, 'home')
+  const project = await openProjectStore(projectRoot, home)
+  const global = await openGlobalStore(home)
+  const [route] = mount(project, global, projectRoot)
+
+  // A real ingest, through the engine (the route only reads).
+  const spec = ['# 规范', '', '## 按钮', '', '按钮必须可被 Tab 选中,禁用态用 aria-disabled。', '', '## 表单', '', '提交按钮必须在 form 内。', ''].join('\n')
+  const file = join(projectRoot, 'spec.md')
+  await writeFile(file, spec, 'utf8')
+  const report = await ingestFile({ store: project, file })
+  const docId = String(report.doc?.docId)
+
+  const entry = await project.add({ kind: 'decision', title: '按钮规范', text: '按钮可 Tab。' })
+  await project.attachDoc(entry.id, docId, { lines: [5, 5], quoteAnchor: '按钮可 Tab' })
+
+  const listed = (await call(route, 'GET', `${API_PREFIX}/doc?scope=project`)).json() as {
+    docs: Array<{ docId: string; mountedEntryIds: string[]; lineCount: number }>
+  }
+  assert.equal(listed.docs.length, 1)
+  assert.deepEqual(listed.docs[0].mountedEntryIds, [String(entry.id)], '列表带挂载条目数(面板徽章的事实来源)')
+
+  const one = (await call(route, 'GET', `${API_PREFIX}/doc?scope=project&docId=${docId}`)).json() as {
+    doc: { docId: string }; chunks: unknown[]; needsRebuild: boolean
+  }
+  assert.equal(one.doc.docId, docId)
+  assert.ok(one.chunks.length >= 3)
+  assert.equal(one.needsRebuild, false)
+
+  const hits = (await call(route, 'GET', `${API_PREFIX}/chunks?scope=project&query=表单`)).json() as {
+    docIds: string[]; hits: Array<{ headingPath: string; lines: { start: number; end: number }; excerpt: string }>
+  }
+  assert.equal(hits.hits[0].headingPath, '规范 > 表单')
+  assert.match(hits.hits[0].excerpt, /form 内/)
+
+  // 纯读取: neither route touched the entry's governance.
+  const after = await project.get(entry.id)
+  assert.equal(after?.status, 'candidate')
+  assert.equal(after?.needsReview, false)
+  assert.deepEqual(await project.listApprovals(true), [])
+  assert.equal((await call(route, 'GET', `${API_PREFIX}/doc?scope=project&docId=d-nope`)).statusCode, 404)
+  // Unaddressed: the search covers every snapshot of the tier (the panel's
+  // "在原文里找一段" box), and an empty result is an empty list, not an error.
+  const everywhere = (await call(route, 'GET', `${API_PREFIX}/chunks?scope=project&query=按钮`)).json() as { hits: unknown[] }
+  assert.ok(everywhere.hits.length >= 1)
+  assert.deepEqual((await call(route, 'GET', `${API_PREFIX}/chunks?scope=project&query=zzz-不存在`)).json(), {
+    scope: 'project', docIds: [docId], hits: [],
+  })
+})
+
+test('M9-4: POST /entry/redline and /entry/split are the panel\'s human acts (reason required, governance rules enforced)', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'clue-kbweb-redline-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const projectRoot = join(root, 'proj')
+  await mkdir(projectRoot, { recursive: true })
+  const home = join(root, 'home')
+  const project = await openProjectStore(projectRoot, home)
+  const global = await openGlobalStore(home)
+  const [route] = mount(project, global, projectRoot)
+
+  const spec = ['# 规范', '', '## 旧章', '', '旧接口 sunset-omega 已作废。', '', '## 新章', '', '新接口 stable-sigma 仍然有效。', ''].join('\n')
+  const file = join(projectRoot, 'spec.md')
+  await writeFile(file, spec, 'utf8')
+  const report = await ingestFile({ store: project, file })
+  const docId = String(report.doc?.docId)
+  const entry = await project.add({ kind: 'decision', title: '规范摘要', text: '规范要点。' })
+  await project.attachDoc(entry.id, docId)
+
+  // A missing reason is refused outright — redlines are audited acts.
+  const noReason = await call(route, 'POST', `${API_PREFIX}/entry/redline`, JSON.stringify({ id: String(entry.id), lines: [5, 5] }))
+  assert.equal(noReason.statusCode, 400)
+  // Both ranges or neither is a 400 (ambiguous address).
+  const both = await call(route, 'POST', `${API_PREFIX}/entry/redline`, JSON.stringify({ id: String(entry.id), lines: [5, 5], chars: [1, 2], reason: 'x' }))
+  assert.equal(both.statusCode, 400)
+
+  const redlined = (await call(route, 'POST', `${API_PREFIX}/entry/redline`, JSON.stringify({
+    id: String(entry.id), lines: [5, 5], reason: '旧章作废', headingPath: '规范 > 旧章',
+  }))).json() as { entry: { redlines: Array<{ by: string; reason: string }> }; ratio: number; proposal: unknown }
+  assert.equal(redlined.entry.redlines.length, 1)
+  assert.equal(redlined.entry.redlines[0].by, 'web', '账本记下人操作的入口')
+  assert.equal(redlined.entry.redlines[0].reason, '旧章作废')
+
+  // The redline is real: the段 is gone from the second level.
+  const afterRedline = (await call(route, 'GET', `${API_PREFIX}/chunks?scope=project&query=sunset-omega`)).json() as { hits: unknown[] }
+  assert.deepEqual(afterRedline.hits, [], '被划除的段从二级检索里消失')
+
+  // Split: successors start as candidates, governance does not travel.
+  const split = (await call(route, 'POST', `${API_PREFIX}/entry/split`, JSON.stringify({
+    id: String(entry.id),
+    drafts: [{ title: '规范要点(现行)', text: '只保留仍然有效的部分。' }],
+    reason: '网页人工拆分',
+  }))).json() as { old: { status: string; splitInto: string[] }; created: Array<{ id: string; status: string; redlines?: unknown }> }
+  assert.equal(split.old.status, 'superseded')
+  assert.equal(split.created[0].status, 'candidate')
+  assert.equal(split.created[0].redlines, undefined, '划除不随迁')
+  assert.deepEqual(split.old.splitInto, [String(split.created[0].id)])
+
+  // A superseded entry cannot be split again (terminal state, fail loud).
+  const again = await call(route, 'POST', `${API_PREFIX}/entry/split`, JSON.stringify({
+    id: String(entry.id), drafts: [{ title: 'x', text: 'y' }],
+  }))
+  assert.equal(again.statusCode, 500, '非法状态迁移抛错(store 的 fail-loud 语义,路由如实转达)')
+  assert.match(again.body, /superseded/)
+})
+
+test('人权入口: POST /entry/promote is the human 提升 act (audited, actor stamped server-side)', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'clue-kbweb-promote-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const projectRoot = join(root, 'proj')
+  await mkdir(projectRoot, { recursive: true })
+  const home = join(root, 'home')
+  const project = await openProjectStore(projectRoot, home)
+  const global = await openGlobalStore(home)
+  const [route] = mount(project, global, projectRoot)
+
+  const entry = await project.add({ kind: 'decision', title: '值得信任的一条', text: '人已经确认过这条判断。' })
+  // The queue is EMPTY — that is precisely the state the button must work in
+  // (the queue only holds score-eligible proposals).
+  assert.deepEqual(await project.listApprovals(true), [])
+
+  // A body-supplied `by` cannot spoof the actor: the route stamps 'web'.
+  const res = await call(route, 'POST', `${API_PREFIX}/entry/promote`, JSON.stringify({
+    scope: 'project', id: String(entry.id), reason: '我确认过', by: 'cli',
+  }))
+  assert.equal(res.statusCode, 200)
+  const body = res.json() as { entry: { status: string; history: Array<{ reason: string }> }; requests: unknown[] }
+  assert.equal(body.entry.status, 'trusted')
+  assert.match(body.entry.history.at(-1)?.reason ?? '', /^approve-promote: 人工提升为可信\(web\): 我确认过$/)
+  assert.deepEqual(body.requests, [])
+  // Store truth, not the echo: the entry file really says trusted now.
+  assert.equal((await project.get(entry.id))?.status, 'trusted')
+  assert.equal((await project.list({ status: 'candidate' })).length, 0)
+
+  // Non-candidates are an honest 409 (not a 500, not a silent no-op).
+  const again = await call(route, 'POST', `${API_PREFIX}/entry/promote`, JSON.stringify({
+    scope: 'project', id: String(entry.id),
+  }))
+  assert.equal(again.statusCode, 409)
+  assert.match(again.body, /只有候选能提升为可信/)
+
+  const missing = await call(route, 'POST', `${API_PREFIX}/entry/promote`, JSON.stringify({ scope: 'project', id: 'nope' }))
+  assert.equal(missing.statusCode, 404)
+  const noId = await call(route, 'POST', `${API_PREFIX}/entry/promote`, JSON.stringify({ scope: 'project' }))
+  assert.equal(noId.statusCode, 400)
+  // GET on the promote path is a 405 (known subpath, wrong method).
+  assert.equal((await call(route, 'GET', `${API_PREFIX}/entry/promote`)).statusCode, 405)
+})
+
+test('人权入口: /entry/retire | reactivate | rescue 三条生命周期路由(理由/状态守卫/actor 盖章)', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'clue-kbweb-verbs-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const projectRoot = join(root, 'proj')
+  await mkdir(projectRoot, { recursive: true })
+  const home = join(root, 'home')
+  const project = await openProjectStore(projectRoot, home)
+  const global = await openGlobalStore(home)
+  const [route] = mount(project, global, projectRoot)
+
+  const entry = await project.add({ kind: 'decision', title: '要判定的约定', text: '旧接口约定。' })
+
+  // retire demands its reason (a verdict without a why is not auditable), and
+  // a body-supplied actor cannot spoof the surface.
+  const noReason = await call(route, 'POST', `${API_PREFIX}/entry/retire`, JSON.stringify({ scope: 'project', id: String(entry.id) }))
+  assert.equal(noReason.statusCode, 400)
+  assert.match(noReason.body, /必须留下理由/)
+  const retired = await call(route, 'POST', `${API_PREFIX}/entry/retire`, JSON.stringify({
+    scope: 'project', id: String(entry.id), reason: '组件已改版', by: 'cli',
+  }))
+  assert.equal(retired.statusCode, 200)
+  const retiredEntry = (retired.json() as { entry: { status: string; history: Array<{ reason: string }> } }).entry
+  assert.equal(retiredEntry.status, 'expired')
+  assert.match(retiredEntry.history.at(-1)?.reason ?? '', /^human-retire: 人工判定不再成立\(web\): 组件已改版$/)
+  assert.equal((await project.get(entry.id))?.status, 'expired', 'store 真值,不是回显')
+
+  // reactivate brings it back as a CANDIDATE (trust must be re-earned).
+  const back = await call(route, 'POST', `${API_PREFIX}/entry/reactivate`, JSON.stringify({ scope: 'project', id: String(entry.id) }))
+  assert.equal(back.statusCode, 200)
+  assert.equal((back.json() as { entry: { status: string } }).entry.status, 'candidate')
+  // …and is refused (409) for a status it does not apply to.
+  const wrong = await call(route, 'POST', `${API_PREFIX}/entry/reactivate`, JSON.stringify({ scope: 'project', id: String(entry.id) }))
+  assert.equal(wrong.statusCode, 409)
+  assert.match(wrong.body, /不适用于 candidate/)
+
+  // rescue: discarded → candidate.
+  await project.transition(entry.id, 'discarded', 'strong-negative', '测试遗弃')
+  const rescued = await call(route, 'POST', `${API_PREFIX}/entry/rescue`, JSON.stringify({ scope: 'project', id: String(entry.id) }))
+  assert.equal(rescued.statusCode, 200)
+  assert.equal((rescued.json() as { entry: { status: string } }).entry.status, 'candidate')
+  assert.equal((await project.get(entry.id))?.discardedAt, null)
+
+  // Transport discipline for the three: 404 unknown id, 400 no id, 405 wrong method.
+  assert.equal((await call(route, 'POST', `${API_PREFIX}/entry/rescue`, JSON.stringify({ scope: 'project', id: 'nope' }))).statusCode, 404)
+  assert.equal((await call(route, 'POST', `${API_PREFIX}/entry/rescue`, JSON.stringify({ scope: 'project' }))).statusCode, 400)
+  assert.equal((await call(route, 'GET', `${API_PREFIX}/entry/retire`)).statusCode, 405)
 })

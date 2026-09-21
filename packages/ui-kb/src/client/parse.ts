@@ -63,6 +63,8 @@ const STATUS_LABELS: Record<string, { label: string; tone: BadgeTone }> = {
   candidate: { label: '候选', tone: 'muted' },
   expired: { label: '过期', tone: 'warn' },
   discarded: { label: '遗弃', tone: 'bad' },
+  // M9-4: the split's terminal state — historical, still readable, never purged.
+  superseded: { label: '已拆分替代', tone: 'muted' },
 }
 
 /**

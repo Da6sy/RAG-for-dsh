@@ -40,8 +40,10 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 // Type-only: pulls ctx.kb (ClueKb) into this program.
 import type { ClueKb } from '@clue-harness/kb-face'
+import { queryChunks, resolveChunkSources } from '@clue-harness/rag'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { identityScript } from './identity.ts'
+import { createEmbeddingRoutes } from './embedding-routes.ts'
 import {
   KbEntryId,
   addWorkspace,
@@ -229,6 +231,21 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
 
   /**
+   * The V1 embedding routes (规划 §9.7 路径 B): the settings page's own API,
+   * on the same prefix and the same same-origin channel as the rest of the
+   * panel. They return null for every subpath they do not own, so dispatch
+   * stays one table.
+   */
+  const embeddingRoutes = createEmbeddingRoutes({
+    ctx,
+    home: kb.home,
+    storesFor: async (workspace) => {
+      const root = await workspaceRoot(workspace)
+      return root === null ? await kb.stores() : await kb.storesFor(root)
+    },
+  })
+
+  /**
    * The whole API: one prefix handler dispatching method + subpath.
    * @param req - incoming request under the prefix.
    * @param res - response to settle in every branch.
@@ -248,10 +265,25 @@ export function apply(ctx: Context, config: Config = {}): void {
             'GET /approvals?scope=&workspace=', 'POST /approvals/resolve',
             'GET /entries?scope=&workspace=&status=&kind=&needsReview=&q=',
             'GET /entry?scope=&workspace=&id=',
+            'GET /doc?scope=&workspace=&docId=', 'GET /chunks?docId=&entryId=&query=',
+            'POST /entry/redline', 'POST /entry/split',
             'POST /entry/reverify', 'POST /sweep',
+            'GET /embedding/config', 'GET /embedding/candidates', 'POST /embedding/config', 'POST /embedding/key',
+            'POST /embedding/key/clear', 'POST /embedding/test', 'POST /embedding/auto', 'POST /embedding/build',
+            'POST /embedding/cache/clear', 'GET /embedding/ranklog',
           ],
         })
         return
+      }
+
+      // V1: the embedding/settings plane (own subpaths under /embedding/*).
+      if (sub.startsWith('/embedding')) {
+        const body = method === 'POST' ? await readJsonBody(req, maxBodyBytes) as Record<string, unknown> : {}
+        const answer = await embeddingRoutes(sub, method, url, body)
+        if (answer !== null) {
+          sendJson(res, answer.status, answer.payload)
+          return
+        }
       }
 
       // GET /status — both tiers summarized (panel header + polling), for the
@@ -523,6 +555,84 @@ export function apply(ctx: Context, config: Config = {}): void {
         return
       }
 
+      // POST /entry/promote — the human 提升 act (人权入口:候选 → 可信), peer of
+      // /entry/redline and /entry/split. The queue only carries EVIDENCE-driven
+      // proposals (window score ≥ trustThreshold), so "I already know this one
+      // is right" had no button at all. Models have NO path here: no tool
+      // exposes promote, the actor is stamped server-side ('web'), and the
+      // store settles any queued promote request for the same entry.
+      if (sub === '/entry/promote' && method === 'POST') {
+        const body = await readJsonBody(req, maxBodyBytes) as {
+          scope?: string; workspace?: string; id?: string; reason?: string
+        }
+        if (typeof body.id !== 'string' || body.id === '') {
+          throw Object.assign(new Error('需要 id(string)'), { status: 400 })
+        }
+        const store = await storeFor(body.scope ?? null, body.workspace ?? null)
+        const existing = await store.get(KbEntryId(body.id))
+        if (existing === null) {
+          throw Object.assign(new Error(`没有条目 "${body.id}"`), { status: 404 })
+        }
+        // Pre-checked so the panel gets an honest 409 instead of a bare 500;
+        // the store enforces the same rule for every other caller.
+        if (existing.status !== 'candidate') {
+          throw Object.assign(
+            new Error(`只有候选能提升为可信,条目 "${body.id}" 当前是 ${existing.status}`),
+            { status: 409 },
+          )
+        }
+        const result = await store.promote(existing.id, {
+          by: 'web',
+          ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
+        })
+        sendJson(res, 200, { entry: result.entry, requests: result.requests })
+        return
+      }
+
+      // POST /entry/retire | /entry/reactivate | /entry/rescue — the rest of
+      // the lifecycle 人权入口 (the approval workbench's row actions). All
+      // three existed ONLY as queue resolutions before, so a human looking at
+      // an expired/discarded/挂⚑ entry could not act without first
+      // manufacturing an approval request. One shape for all three: id, an
+      // optional why (REQUIRED for retire — a verdict needs its reason), actor
+      // stamped server-side, and the matching queued request settled.
+      if ((sub === '/entry/retire' || sub === '/entry/reactivate' || sub === '/entry/rescue') && method === 'POST') {
+        const body = await readJsonBody(req, maxBodyBytes) as {
+          scope?: string; workspace?: string; id?: string; reason?: string
+        }
+        if (typeof body.id !== 'string' || body.id === '') {
+          throw Object.assign(new Error('需要 id(string)'), { status: 400 })
+        }
+        if (sub === '/entry/retire' && (typeof body.reason !== 'string' || body.reason.trim() === '')) {
+          throw Object.assign(new Error('需要 reason(string):判定「不再成立」必须留下理由'), { status: 400 })
+        }
+        const store = await storeFor(body.scope ?? null, body.workspace ?? null)
+        const existing = await store.get(KbEntryId(body.id))
+        if (existing === null) {
+          throw Object.assign(new Error(`没有条目 "${body.id}"`), { status: 404 })
+        }
+        const expected = sub === '/entry/retire'
+          ? ['candidate', 'trusted']
+          : sub === '/entry/reactivate' ? ['expired'] : ['discarded']
+        if (!expected.includes(existing.status)) {
+          throw Object.assign(
+            new Error(`${sub} 不适用于 ${existing.status} 状态的条目 "${body.id}"(需要 ${expected.join('/')})`),
+            { status: 409 },
+          )
+        }
+        const input = {
+          by: 'web',
+          ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
+        }
+        const result = sub === '/entry/retire'
+          ? await store.retire(existing.id, input)
+          : sub === '/entry/reactivate'
+            ? await store.reactivate(existing.id, input)
+            : await store.rescue(existing.id, input)
+        sendJson(res, 200, { entry: result.entry, requests: result.requests })
+        return
+      }
+
       // POST /sweep — run maintenance (expire/discard/purge + promotion proposals).
       if (sub === '/sweep' && method === 'POST') {
         const body = await readJsonBody(req, maxBodyBytes) as { scope?: string; workspace?: string }
@@ -604,9 +714,169 @@ export function apply(ctx: Context, config: Config = {}): void {
         return
       }
 
+      // GET /doc — the原文层 (M9-1/M9-2): every snapshot of the addressed tier
+      // with its mount count, or ONE document with its derived chunk ledger.
+      // Read-only: the panel's chunk browser and its "原文 N 段" badge.
+      if (sub === '/doc' && method === 'GET') {
+        const store = await storeFor(url.searchParams.get('scope'), url.searchParams.get('workspace'))
+        const docId = url.searchParams.get('docId')
+        if (docId === null || docId === '') {
+          const entries = await store.list()
+          const docs = await store.listDocs()
+          // V4: the「向量 N 段」badge needs each snapshot's derived vector state
+          // — read from metadata only, so rendering the list never rebuilds
+          // anything (诊断不该花钱).
+          const { embedderVersion: versionOf, vectorIndexStatuses } = await import('@clue-harness/kb')
+          const { readEmbeddingConfig, embeddingReady } = await import('@clue-harness/kb-face/embedding')
+          const embedding = readEmbeddingConfig(ctx)
+          const version = embeddingReady(embedding) ? versionOf({ modelId: embedding.model, dim: embedding.dim }) : null
+          const rows = await vectorIndexStatuses(store.dir, version)
+          const vectorByDoc = new Map(rows.filter(row => row.stem.startsWith('chunks-')).map(row => [row.stem.slice('chunks-'.length), row]))
+          sendJson(res, 200, {
+            scope: store.tier,
+            workspace: store.projectRoot,
+            docs: docs.map(doc => ({
+              ...doc,
+              mountedEntryIds: entries
+                .filter(entry => entry.doc !== undefined && String(entry.doc.docId) === String(doc.docId))
+                .map(entry => entry.id),
+              // null = 未建;stale/unreadable/missing 各自如实标注
+              vector: vectorByDoc.get(String(doc.docId)) ?? null,
+            })),
+          })
+          return
+        }
+        const record = await store.getDoc(docId)
+        if (record === null) {
+          throw Object.assign(new Error(`没有文档 "${docId}"`), { status: 404 })
+        }
+        const chunks = await store.getChunks(docId)
+        // V4: one snapshot's derived VECTOR state (rows / version stamp), read
+        // from metadata so the browser can show「向量 ✓ / N 段 / 待建 / 失效」.
+        const { embedderVersion: versionOf, vectorIndexStatuses } = await import('@clue-harness/kb')
+        const { readEmbeddingConfig, embeddingReady } = await import('@clue-harness/kb-face/embedding')
+        const embedding = readEmbeddingConfig(ctx)
+        const version = embeddingReady(embedding) ? versionOf({ modelId: embedding.model, dim: embedding.dim }) : null
+        const vector = (await vectorIndexStatuses(store.dir, version)).find(row => row.stem === `chunks-${docId}`) ?? null
+        sendJson(res, 200, {
+          scope: store.tier,
+          workspace: store.projectRoot,
+          doc: record,
+          chunks,
+          needsRebuild: await store.chunksNeedRebuild(docId),
+          vector,
+        })
+        return
+      }
+
+      // GET /chunks — the SECOND level: ranked段 with anchors and excerpts.
+      // Addressable by docId (one document), entryId (one entry's mounted
+      // evidence) or NOTHING at all — the unaddressed form searches every
+      // snapshot of the tier, which is what the panel's "在原文里找一段"
+      // box asks for. An empty query walks the addressed document. Pure read
+      // (宪法 4): the route records nothing, not even a touch.
+      if (sub === '/chunks' && method === 'GET') {
+        const store = await storeFor(url.searchParams.get('scope'), url.searchParams.get('workspace'))
+        const docId = url.searchParams.get('docId')
+        const entryId = url.searchParams.get('entryId')
+        const hasDoc = docId !== null && docId !== ''
+        const hasEntry = entryId !== null && entryId !== ''
+        const sources = hasDoc || hasEntry
+          ? await resolveChunkSources(store, {
+            ...(hasEntry ? { entryId: entryId as string } : {}),
+            ...(hasDoc ? { docIds: [docId as string] } : {}),
+          })
+          : (await store.listDocs()).map(doc => ({ store, docId: String(doc.docId) }))
+        const limit = url.searchParams.get('limit')
+        const maxChars = url.searchParams.get('maxChars')
+        const hits = []
+        for (const source of sources) {
+          hits.push(...await queryChunks(source, {
+            query: url.searchParams.get('query') ?? '',
+            ...(limit !== null ? { limit: Number(limit) } : {}),
+            ...(maxChars !== null ? { maxChars: Number(maxChars) } : {}),
+          }))
+        }
+        hits.sort((a, b) => b.score - a.score || a.docId.localeCompare(b.docId) || a.seq - b.seq)
+        sendJson(res, 200, { scope: store.tier, docIds: sources.map(source => source.docId), hits })
+        return
+      }
+
+      // POST /entry/redline — M9-4 5a 的人权入口 (the panel's划除 button).
+      // Models have NO path here: no tool exposes redline, and every call
+      // lands an audited history event naming the human surface.
+      if (sub === '/entry/redline' && method === 'POST') {
+        const body = await readJsonBody(req, maxBodyBytes) as {
+          scope?: string; workspace?: string; id?: string; reason?: string
+          chars?: [number, number]; lines?: [number, number]; headingPath?: string
+        }
+        if (typeof body.id !== 'string' || body.id === '') {
+          throw Object.assign(new Error('需要 id(string)'), { status: 400 })
+        }
+        if (typeof body.reason !== 'string' || body.reason.trim() === '') {
+          throw Object.assign(new Error('需要 reason(string):划除必须留下原因'), { status: 400 })
+        }
+        const hasChars = Array.isArray(body.chars) && body.chars.length === 2
+        const hasLines = Array.isArray(body.lines) && body.lines.length === 2
+        if (hasChars === hasLines) {
+          throw Object.assign(new Error('需要 chars 或 lines 之一(恰好一个)'), { status: 400 })
+        }
+        const store = await storeFor(body.scope ?? null, body.workspace ?? null)
+        const existing = await store.get(KbEntryId(body.id))
+        if (existing === null) {
+          throw Object.assign(new Error(`没有条目 "${body.id}"`), { status: 404 })
+        }
+        const result = hasChars
+          ? await store.redlineText(existing.id, { chars: body.chars as [number, number], reason: body.reason, by: 'web' })
+          : await store.redlineDocLines(existing.id, {
+            lines: body.lines as [number, number],
+            reason: body.reason,
+            by: 'web',
+            ...(typeof body.headingPath === 'string' ? { headingPath: body.headingPath } : {}),
+          })
+        sendJson(res, 200, { entry: result.entry, ratio: result.ratio, proposal: result.proposal })
+        return
+      }
+
+      // POST /entry/split — M9-4 5b: the human act that turns an entry into
+      // candidates. Evidence may be re-anchored; governance never travels.
+      if (sub === '/entry/split' && method === 'POST') {
+        const body = await readJsonBody(req, maxBodyBytes) as {
+          scope?: string; workspace?: string; id?: string; reason?: string
+          drafts?: Array<{ kind?: KbKind; title?: string; text?: string; tags?: string[] }>
+        }
+        if (typeof body.id !== 'string' || body.id === '') {
+          throw Object.assign(new Error('需要 id(string)'), { status: 400 })
+        }
+        if (!Array.isArray(body.drafts) || body.drafts.length === 0) {
+          throw Object.assign(new Error('需要 drafts(至少一条{tit|text})'), { status: 400 })
+        }
+        const drafts = body.drafts.map((draft, index) => {
+          if (typeof draft.title !== 'string' || typeof draft.text !== 'string' || draft.title.trim() === '' || draft.text.trim() === '') {
+            throw Object.assign(new Error(`drafts[${index}] 需要非空的 title 与 text`), { status: 400 })
+          }
+          return {
+            ...(draft.kind !== undefined ? { kind: draft.kind } : {}),
+            title: draft.title,
+            text: draft.text,
+            ...(Array.isArray(draft.tags) ? { tags: draft.tags.map(String) } : {}),
+          }
+        })
+        const store = await storeFor(body.scope ?? null, body.workspace ?? null)
+        const existing = await store.get(KbEntryId(body.id))
+        if (existing === null) {
+          throw Object.assign(new Error(`没有条目 "${body.id}"`), { status: 404 })
+        }
+        const result = await store.splitEntry(existing.id, drafts, body.reason ?? '网页人工拆分')
+        sendJson(res, 200, result)
+        return
+      }
+
       // Known subpath, wrong method → 405; anything else → 404.
       const known = ['/status', '/workspaces', '/workspaces/add', '/workspaces/rename', '/workspaces/remove',
-        '/workspaces/purge', '/workspaces/keep', '/workspaces/purge-all', '/workspace-for-session', '/approvals', '/approvals/resolve', '/entries', '/entry', '/entry/reverify', '/sweep', '/polish', '/entry/text']
+        '/workspaces/purge', '/workspaces/keep', '/workspaces/purge-all', '/workspace-for-session', '/approvals', '/approvals/resolve', '/entries', '/entry', '/entry/reverify', '/entry/promote', '/entry/retire', '/entry/reactivate', '/entry/rescue', '/entry/redline', '/entry/split', '/doc', '/chunks', '/sweep', '/polish', '/entry/text',
+        '/embedding/config', '/embedding/candidates', '/embedding/key', '/embedding/key/clear', '/embedding/test', '/embedding/auto', '/embedding/build',
+        '/embedding/cache/clear', '/embedding/ranklog']
       sendJson(res, known.includes(sub) ? 405 : 404, { error: method === 'GET' || method === 'POST' ? '方法不匹配' : '未知端点', path: sub })
     } catch (error) {
       const status = typeof error === 'object' && error !== null && 'status' in error

@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "The ClueHarness knowledge base (M2 skeleton): entry model with source bindings, the four-state lifecycle (candidate/trusted/expired/discarded) plus the orthogonal needs-review flag, the weighted signal ledger, the batched approval queue, and scan-based retrieval with project-over-global precedence.",
+  "description": "The ClueHarness knowledge base engine: entry model with source bindings, the five-state lifecycle (candidate/trusted/expired/discarded + M9-4's terminal superseded) with the orthogonal needs-review flag, the weighted signal ledger, the batched approval queue (incl. the advisory redline-review proposal), scan-based retrieval with redline-first scoring, and M9's document layer — immutable原文 snapshots (docs/), the derived chunk ledger (chunks/) rebuilt from the chunker stamp, checkDocs drift detection, and the human redline/split governance acts. Storage is central, one tier per workspace. Zero dsh dependencies.",
   "exports": {
     ".": "./src/index.ts"
   },

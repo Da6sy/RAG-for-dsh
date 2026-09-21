@@ -5,9 +5,17 @@
   "type": "module",
   "description": "The Cordis face of the knowledge base (M3b/M4): ctx.kb service, kb_search/kb_propose/kb_cite tools (models may only PROPOSE; citations drive precise attribution), retrieval-first pre-step injection through message rewrite, tools/result file-change tracking, and the turn-stopping evidence gate — failed inspections retrieve precedents by failure signature and inject complaint + precedent as one message, with inspection and injection budgets split.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./embedding": "./src/embedding-config.ts",
+    "./embedding-host": "./src/embedding-host.ts",
+    "./http-embedder": "./src/http-embedder.ts",
+    "./retrieval-plane": "./src/retrieval-plane.ts",
+    "./chat-host": "./src/chat-host.ts",
+    "./embedding-catalog": "./src/embedding-catalog.ts",
+    "./eval-ports": "./src/eval-ports.ts"
   },
   "dependencies": {
+    "@clue-harness/eval": "*",
     "@clue-harness/evidence-render": "*",
     "@clue-harness/kb": "*",
     "@clue-harness/kb-loop": "*",
@@ -15,10 +23,17 @@
     "@clue-harness/util": "*",
     "@deepseek-ai/dsh-agent": "0.1.1-rc.2",
     "@deepseek-ai/dsh-attachment": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-credentials": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-credentials-local": "0.1.1-rc.2",
     "@deepseek-ai/dsh-llm": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-llm-deepseek": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.1.1-rc.2",
     "@deepseek-ai/dsh-session": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-settings": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-settings-file": "0.1.1-rc.2",
     "@deepseek-ai/dsh-system-prompt": "0.1.1-rc.2",
-    "@deepseek-ai/dsh-tools": "0.1.1-rc.2"
+    "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1"

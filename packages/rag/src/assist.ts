@@ -15,32 +15,44 @@
  *
  * @module @clue-harness/rag/assist
  */
-import type { QueryHit } from '@clue-harness/kb'
+import { DEFAULT_INJECT_MIN_ENTRY_CHARS, DEFAULT_INJECT_PER_ENTRY_CHARS, renderHitLine, type QueryHit } from '@clue-harness/kb'
 
 /**
  * Render the assist block for the gate's retrieved hits.
+ *
+ * M9-0/§4 G4: the block obeys the SAME配额制 as the pre-step block — each hit
+ * gets one line whose body is trimmed to `perEntryChars`, and a hit that cannot
+ * fit the remaining budget with `minChars` of prose to spare yields its place
+ * (保广度弃深度) so one long entry cannot monopolize the gate's correction
+ * message. The M9-1 drill-down hint rides the line when the hit carries a
+ * document, but it only PROMPTS: the gate never auto-drills (拍板 3, on-demand
+ * + injection budget).
  * @param hits - the signature-retrieved knowledge (ranked, annotated).
  * @param budget - maximum block length in characters.
+ * @param quota - per-entry body quota and the yield floor.
  * @returns the block text ('' when there are no hits — the gate then
  *   injects the bare correction report, same as M3b).
  */
-export function renderRetrievalAssist(hits: readonly QueryHit[], budget: number): string {
+export function renderRetrievalAssist(
+  hits: readonly QueryHit[],
+  budget: number,
+  quota: { perEntryChars?: number; minChars?: number } = {},
+): string {
   if (hits.length === 0) return ''
+  const perEntryChars = quota.perEntryChars ?? DEFAULT_INJECT_PER_ENTRY_CHARS
+  const minChars = quota.minChars ?? DEFAULT_INJECT_MIN_ENTRY_CHARS
   const lines: string[] = [
     '<kb_assist source="clue-rag">',
     '以下为知识库中与本次验证失败自动匹配的条目(按失败签名检索)。修复时若实际采用了某条知识,调用 kb_cite 声明其 id;与本次失败无关的条目直接忽略。',
   ]
   let used = lines.join('\n').length
+  const cap = budget - '</kb_assist>'.length - 1
   for (const hit of hits) {
-    const flags = [hit.entry.status, hit.entry.needsReview ? '⚠待复核' : ''].filter((f) => f !== '').join('|')
-    const text = hit.entry.text.replace(/\s+/g, ' ')
-    let line = `- [${hit.entry.id}|${flags}|${hit.entry.kind}] ${hit.entry.title}: ${text}`
-    for (const annotation of hit.annotations) line += ` (${annotation})`
-    if (used + line.length > budget) {
-      const room = budget - used - 20
-      if (room < 60) break
-      line = `${line.slice(0, room)}…`
-    }
+    const line = renderHitLine(hit, perEntryChars, minChars, Math.max(0, cap - used))
+    if (line === null) continue
+    // The fit/trim decisions all live in the renderer; here the block only
+    // refuses a line it literally cannot hold.
+    if (line.length > cap - used) continue
     lines.push(line)
     used += line.length + 1
   }

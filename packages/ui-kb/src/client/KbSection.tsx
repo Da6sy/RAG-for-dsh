@@ -12,14 +12,15 @@
  * @module @clue-harness/ui-kb/client/KbSection
  */
 import { useCallback, useEffect, useState } from 'react'
-import { Button, IconSearchOutline16, Input } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconSearchOutline16, Input, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
-  kbApi, KbApiError,
+  describeKbError, kbApi,
   type EntryPayload, type KbScope, type KbTarget, type ScorePayload, type SignalPayload,
 } from './api.ts'
 import { shortId, stateBadge } from './parse.ts'
 import { GLOBAL_VALUE, targetOf, WorkspacePicker } from './WorkspacePicker.tsx'
 import { MenuSelect } from './MenuSelect.tsx'
+import { ChunkBrowser } from './ChunkBrowser.tsx'
 
 /** The lifecycle filter vocabulary (plus 'all' and the orthogonal flag). */
 const STATUS_FILTERS = [
@@ -28,6 +29,7 @@ const STATUS_FILTERS = [
   { value: 'trusted', label: '可信' },
   { value: 'expired', label: '过期' },
   { value: 'discarded', label: '遗弃' },
+  { value: 'superseded', label: '已拆分' },
 ] as const
 
 /** The entry-detail dossier payload. */
@@ -52,27 +54,49 @@ function when(iso: string): string {
  * Render one entry's dossier pane.
  * @param dossier - entry + score + signals.
  * @param busy - whether an action is in flight.
- * @param onReverify - resolve the needs-review flag (accept/reject).
+ * @param onReverify - accept the drifted content and rebind the hashes.
+ * @param onPromote - 人权入口(候选 → 可信): promote a candidate to trusted.
+ * @param onRetire - 人权入口: the verdict "this no longer holds" (→ 过期).
  * @returns the detail pane.
  */
-function EntryDossier({ dossier, busy, onReverify }: {
+function EntryDossier({ dossier, target, busy, onReverify, onPromote, onRetire, onChanged, onError }: {
   dossier: Dossier
+  target: KbTarget
   busy: boolean
-  onReverify: (accept: boolean) => void
+  onReverify: () => void
+  onPromote: (reason: string) => void
+  onRetire: (reason: string) => void
+  onChanged: () => void | Promise<void>
+  onError: (message: string | null) => void
 }) {
   const { entry, score, signals } = dossier
   const badge = stateBadge(entry.status, entry.needsReview)
+  const redlines = entry.redlines ?? []
+  const supersededBy = entry.splitInto ?? []
+  // The human's why for a promotion / a retirement — component-local like every
+  // other transient input here (it is written into the entry's history, not kept).
+  const [promoteReason, setPromoteReason] = useState('')
+  const [retireReason, setRetireReason] = useState('')
+  const [retireOpen, setRetireOpen] = useState(false)
   return (
     <div className="clue-card">
       <div className="clue-card-head">
-        <span className={`clue-pill clue-pill-${badge.tone}`}>{badge.label}</span>
+        <Pill>{badge.label}</Pill>
         <span className="clue-card-title">{entry.title}</span>
         <span className="clue-mono clue-dim">{shortId(entry.id)}</span>
+        {entry.doc !== undefined && <Pill>原文层</Pill>}
+        {redlines.length > 0 && <Pill>划除 {redlines.length}</Pill>}
       </div>
       <div className="clue-card-text">{entry.text}</div>
       {entry.tags.length > 0 && (
         <div className="clue-tags">
-          {entry.tags.map(tag => <span className="clue-pill clue-pill-muted" key={tag}>#{tag}</span>)}
+          {entry.tags.map(tag => <Pill key={tag}>#{tag}</Pill>)}
+        </div>
+      )}
+      {supersededBy.length > 0 && (
+        <div className="clue-dim">
+          该条目已被拆分替代(superseded 终态,永不清退),知识去向:
+          {supersededBy.map(id => <div key={id} className="clue-mono">→ {id}</div>)}
         </div>
       )}
       <div className="clue-dim">
@@ -89,13 +113,53 @@ function EntryDossier({ dossier, busy, onReverify }: {
         <div className="clue-err">
           绑定文件已改动,该条知识可能不再成立: {entry.reviewReason ?? '(未说明)'}
           <div className="clue-actions" style={{ marginTop: 8 }}>
-            <Button size="sm" variant="primary" disabled={busy} onClick={() => { onReverify(true) }}>
+            <Button size="sm" variant="primary" disabled={busy} onClick={() => { onReverify() }}>
               复核通过(重绑当前内容)
             </Button>
-            <Button size="sm" variant="outline" disabled={busy} onClick={() => { onReverify(false) }}>
-              不再成立(转入过期)
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => { setRetireOpen(open => !open) }}>
+              不再成立(转入过期)…
             </Button>
           </div>
+          {/* The verdict is a governance decision, so it names its reason and
+              commits on a second click — the old one-click button with this
+              label only cleared the flag while promising a state change. */}
+          {retireOpen && (
+            <div className="clue-inline-form" style={{ marginTop: 8 }}>
+              <Input
+                className="clue-search"
+                placeholder="为什么判定不再成立(必填,记入履历)…"
+                value={retireReason}
+                onChange={event => { setRetireReason(event.target.value) }}
+              />
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={busy || retireReason.trim() === ''}
+                onClick={() => { onRetire(retireReason) }}
+              >
+                确认转入过期
+              </Button>
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => { setRetireOpen(false) }}>
+                取消
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+      {/* 人权入口(候选 → 可信):审批队列只收"证据攒够窗口分"的提案,人自己
+          已经确信的判断不该有入队门槛,所以这里是一个直落履历的按钮:理由随记录,
+          服务端把 actor 记为 web,模型侧没有任何工具或路由能到达这条路。 */}
+      {entry.status === 'candidate' && (
+        <div className="clue-actions" style={{ marginTop: 8, alignItems: 'center' }}>
+          <Input
+            className="clue-search"
+            placeholder="为什么提升为可信(记入履历,可留空)…"
+            value={promoteReason}
+            onChange={event => { setPromoteReason(event.target.value) }}
+          />
+          <Button size="sm" variant="primary" disabled={busy} onClick={() => { onPromote(promoteReason) }}>
+            提升为可信
+          </Button>
         </div>
       )}
       {entry.bindings.length > 0 && (
@@ -108,6 +172,15 @@ function EntryDossier({ dossier, busy, onReverify }: {
           </ul>
         </div>
       )}
+      {/* M9-5: 原文/分片浏览 + 人权按钮(划除/拆分)。这两件事只有人能做——
+          没有任何工具或路由把它们暴露给模型。 */}
+      <ChunkBrowser
+        target={target}
+        entry={entry}
+        busy={busy}
+        onChanged={onChanged}
+        onError={onError}
+      />
       {signals.length > 0 && (
         <details>
           <summary className="clue-dim">信号账本({signals.length} 条)</summary>
@@ -180,7 +253,7 @@ export function KbSection() {
       }
     } catch (cause) {
       setEntries(null)
-      setError(cause instanceof KbApiError ? cause.message : String(cause))
+      setError(describeKbError(cause))
     } finally {
       setLoading(false)
     }
@@ -203,23 +276,66 @@ export function KbSection() {
     try {
       setDossier(await kbApi.entry(targetOf(address), id))
     } catch (cause) {
-      setError(cause instanceof KbApiError ? cause.message : String(cause))
+      setError(describeKbError(cause))
     }
   }
 
   /**
-   * Resolve the needs-review flag on the open entry, then reload both panes.
-   * @param accept - whether the new binding content is accepted.
+   * Accept the drifted content of the open entry and rebind its hashes, then
+   * reload both panes. (The "not valid any more" verdict is a different act —
+   * see `retire` below; it used to be smuggled into this call as accept=false,
+   * which only cleared the flag while the button promised a state change.)
    */
-  const reverify = async (accept: boolean): Promise<void> => {
+  const reverify = async (): Promise<void> => {
     if (selected === null) return
     setBusy(true)
+    setError(null)
     try {
-      await kbApi.reverify(targetOf(address), selected, accept)
+      await kbApi.reverify(targetOf(address), selected, true)
       setDossier(await kbApi.entry(targetOf(address), selected))
       await load(targetOf(address), status, needsReviewOnly, q)
     } catch (cause) {
-      setError(cause instanceof KbApiError ? cause.message : String(cause))
+      setError(describeKbError(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * Promote the open entry to trusted (人权入口:候选 → 可信), then reload both:
+   * the list follows the status filter, so a promoted entry leaves a
+   * `候选`-filtered list and appears under `可信`.
+   * @param reason - the human's why (lands in the entry's history).
+   */
+  const promote = async (reason: string): Promise<void> => {
+    if (selected === null) return
+    setBusy(true)
+    setError(null)
+    try {
+      await kbApi.promote(targetOf(address), selected, reason)
+      setDossier(await kbApi.entry(targetOf(address), selected))
+      await load(targetOf(address), status, needsReviewOnly, q)
+    } catch (cause) {
+      setError(describeKbError(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * The verdict "this no longer holds" on the open entry (人权入口:→ 过期).
+   * @param reason - the required why (lands in the entry's history).
+   */
+  const retire = async (reason: string): Promise<void> => {
+    if (selected === null) return
+    setBusy(true)
+    setError(null)
+    try {
+      await kbApi.retire(targetOf(address), selected, reason)
+      setDossier(await kbApi.entry(targetOf(address), selected))
+      await load(targetOf(address), status, needsReviewOnly, q)
+    } catch (cause) {
+      setError(describeKbError(cause))
     } finally {
       setBusy(false)
     }
@@ -238,7 +354,7 @@ export function KbSection() {
       window.alert(`清扫完成 — ${summary}`)
       await load(targetOf(address), status, needsReviewOnly, q)
     } catch (cause) {
-      setError(cause instanceof KbApiError ? cause.message : String(cause))
+      setError(describeKbError(cause))
     } finally {
       setBusy(false)
     }
@@ -248,8 +364,11 @@ export function KbSection() {
   return (
     <div className="clue-sec">
       <div className="clue-heading">
-        <div><div className="clue-eyebrow">CLUE / KNOWLEDGE GRAPH</div><h2>知识库</h2><p>浏览项目经验、全局规则和它们被验证过的完整轨迹。</p></div>
-        <div className="clue-counter">{loading ? '—' : list.length}<small>条知识</small></div>
+        <h2 className="clue-sec-title">知识库</h2>
+        <p className="clue-sec-intro">
+          浏览项目经验、全局规则和它们被验证过的完整轨迹。
+          <span className="clue-dim"> · {loading ? '载入中' : `${list.length} 条`}</span>
+        </p>
       </div>
       <WorkspacePicker value={address} onChange={setAddress} />
       <div className="clue-toolbar">
@@ -295,7 +414,7 @@ export function KbSection() {
                 onClick={() => { void open(entry.id) }}
                 onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') void open(entry.id) }}
               >
-                <span className={`clue-pill clue-pill-${badge.tone}`}>{badge.label}</span>
+                <Pill>{badge.label}</Pill>
                 <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.title}</span>
                 <span className="clue-dim">{entry.kind}</span>
               </div>
@@ -305,7 +424,22 @@ export function KbSection() {
         <div>
           {selected === null && <div className="clue-empty">点开左侧条目查看完整履历。</div>}
           {selected !== null && dossier === null && error === null && <div className="clue-empty">加载中…</div>}
-          {dossier !== null && <EntryDossier dossier={dossier} busy={busy} onReverify={accept => { void reverify(accept) }} />}
+          {dossier !== null && (
+            <EntryDossier
+              dossier={dossier}
+              target={targetOf(address)}
+              busy={busy}
+              onReverify={() => { void reverify() }}
+              onPromote={reason => { void promote(reason) }}
+              onRetire={reason => { void retire(reason) }}
+              onChanged={async () => {
+                if (selected === null) return
+                setDossier(await kbApi.entry(targetOf(address), selected))
+                await load(targetOf(address), status, needsReviewOnly, q)
+              }}
+              onError={setError}
+            />
+          )}
         </div>
       </div>
     </div>

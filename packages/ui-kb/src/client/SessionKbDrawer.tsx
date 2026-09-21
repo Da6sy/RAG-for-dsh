@@ -25,7 +25,7 @@
  * @module @clue-harness/ui-kb/client/SessionKbDrawer
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import { kbApi, KbApiError, type ApprovalCard, type EntryPayload, type WorkspacePayload } from './api.ts'
 import { actionCopy, shortId, stateBadge } from './parse.ts'
 
@@ -178,7 +178,7 @@ export function KbDrawer(props: {
       >
         <header className="clue-drawer-head">
           <div className="clue-drawer-title">
-            <span className="clue-eyebrow">CLUE / SESSION WORKSPACE</span>
+            <span className="clue-dim">本会话的工作区</span>
             <h3>{workspace !== null ? workspace.hostTitle ?? workspace.label : '正在定位本会话的工作区…'}</h3>
             <code>{workspace !== null ? `~/.clue/kb/${workspace.key}` : '尚未确定'}</code>
           </div>
@@ -212,7 +212,7 @@ export function KbDrawer(props: {
                   return (
                     <article className="clue-drow" key={entry.id}>
                       <div className="clue-drow-head">
-                        <span className={`clue-pill clue-pill-${badge.tone}`}>{badge.label}</span>
+                        <Pill>{badge.label}</Pill>
                         <span className="clue-card-title">{entry.title}</span>
                         <span className="clue-mono clue-dim">{shortId(entry.id)}</span>
                       </div>
@@ -240,8 +240,8 @@ export function KbDrawer(props: {
                   return (
                     <article className="clue-drow" key={card.request.id}>
                       <div className="clue-drow-head">
-                        {badge !== null && <span className={`clue-pill clue-pill-${badge.tone}`}>{badge.label}</span>}
-                        <span className="clue-pill clue-pill-muted">{copy.summary}</span>
+                        {badge !== null && <Pill>{badge.label}</Pill>}
+                        <Pill>{copy.summary}</Pill>
                         <span className="clue-card-title">{card.entry?.title ?? '(条目已清退)'}</span>
                       </div>
                       {card.entry !== null && <div className="clue-drow-text">{card.entry.text}</div>}

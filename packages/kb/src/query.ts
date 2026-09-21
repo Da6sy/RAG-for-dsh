@@ -24,8 +24,11 @@
  *
  * @module @clue-harness/kb/query
  */
+import { tokenize } from './tokenize.ts'
+import { bm25Fields, bm25fScore, buildLexicalStats, type LexicalStats } from './bm25.ts'
 import type { KbStore } from './store.ts'
-import type { KbEntry, KbKind } from './types.ts'
+import { readChunks } from './docs.ts'
+import type { KbEntry, KbKind, KbRedline } from './types.ts'
 
 export interface QueryOptions {
   /** Query text. */
@@ -44,8 +47,19 @@ export interface QueryOptions {
    * title 3 / tag 2 / text 1 — behavior is unchanged unless a caller tunes.
    */
   weights?: Partial<RetrievalWeights>
+  /** Which first-level formula to score with. Default 'bm25' (see {@link LexicalScorer}). */
+  scorer?: LexicalScorer
   now?: Date
 }
+
+/**
+ * Which first-level ranking formula to use (R2 of the BM25 plan).
+ *
+ * `weights` is the pre-R2 behavior (bare sum of field weights) and exists so
+ * that `lexicalScorer: 'weights'` reproduces it EXACTLY — the rollback switch
+ * the plan requires, pinned by a test. `bm25` is the shipping default.
+ */
+export type LexicalScorer = 'weights' | 'bm25'
 
 /** The tunable scoring weights (rag-package config surface). */
 export interface RetrievalWeights {
@@ -60,6 +74,34 @@ export interface RetrievalWeights {
 /** The shipped defaults (M2 decision: 标题×3 / 标签×2 / 正文×1). */
 export const DEFAULT_WEIGHTS: RetrievalWeights = { title: 3, tag: 2, text: 1 }
 
+/**
+ * The score decomposition of one hit (V2, 规划 §8.1 原则 3).
+ *
+ * Every surface that shows a rank can show WHY: the features that fed the
+ * linear score, what each contributed, the multiplicative governance factors,
+ * and the channel ranks the fusion assigned. It is optional because the plain
+ * lexical path (`--rerank off`) has nothing to explain beyond its own score —
+ * and inventing a breakdown there would be a lie about what ran.
+ */
+export interface HitExplanation {
+  /** The score this hit was ORDERED by. */
+  score: number
+  /** The first level's score, kept visible so the two stages stay separable. */
+  lexicalScore: number
+  /** Cosine similarity, or null when the vector channel did not recall it. */
+  semantic: number | null
+  /** channel → 1-based rank from the fusion stage. */
+  channels: Record<string, number>
+  /** Raw feature values (§8.2). */
+  features: Record<string, number>
+  /** `weight × feature` per additive term. */
+  contributions: Record<string, number>
+  /** The multiplicative status/tier/review factors. */
+  factors: Record<string, number>
+  /** Human-readable lines, one per term that moved the score. */
+  lines: string[]
+}
+
 export interface QueryHit {
   entry: KbEntry
   score: number
@@ -67,45 +109,161 @@ export interface QueryHit {
   matched: string[]
   /** Status/review annotations the consumer MUST show alongside the hit. */
   annotations: string[]
+  /**
+   * M9-1: how many derived chunks the entry's document has (0 / absent when
+   * the entry carries no doc). Purely informational — it powers the "含原文
+   * N 段" annotation and the panel badge; the chunks themselves are never
+   * loaded by retrieval (一级 is cheap by construction).
+   */
+  docHeadingCount?: number
+  /** V2: the rerank/channel breakdown, when the hybrid path produced this hit. */
+  explain?: HitExplanation
 }
 
-/** Split text into deterministic match tokens (ASCII words + CJK bigrams). */
-export function tokenize(text: string): string[] {
-  const tokens = new Set<string>()
-  const lower = text.toLowerCase()
-  for (const match of lower.matchAll(/[a-z0-9_]{2,}/g)) tokens.add(match[0])
-  for (const run of lower.match(/[\u3400-\u4dbf\u4e00-\u9fff]+/g) ?? []) {
-    if (run.length === 1) tokens.add(run)
-    for (let i = 0; i + 2 <= run.length; i += 1) tokens.add(run.slice(i, i + 2))
+/**
+ * Whether one character index falls inside any of the entry's `text`-target
+ * redlines (M9-4). A redline is a HALF-OPEN [from, to) 1-based character
+ * range, so `12-30` removes exactly characters 12…30.
+ * @param index - 0-based character index in the entry text.
+ * @param redlines - the entry's redlines.
+ * @returns true when the character is redlined away.
+ */
+export function isRedlinedChar(index: number, redlines: readonly KbRedline[]): boolean {
+  for (const line of redlines) {
+    if (line.target !== 'text' || line.chars === undefined) continue
+    const [from, to] = line.chars
+    if (index + 1 >= from && index + 1 <= to) return true
   }
-  return [...tokens].sort()
+  return false
 }
+
+/**
+ * The entry text as retrieval and display must see it: redlined characters
+ * removed, with an honest gap so the remainder still reads (proposal §4/§5a —
+ * 划除先把错的段拿掉,再评分;invariant 3: filter first, score second).
+ * @param entry - the entry whose text to filter.
+ * @returns the text with every redlined range replaced by `[…]`.
+ */
+export function entryTextAfterRedlines(entry: KbEntry): string {
+  const redlines = (entry.redlines ?? []).filter((line) => line.target === 'text' && line.chars !== undefined)
+  if (redlines.length === 0) return entry.text
+  const ranges = redlines
+    .map((line) => line.chars as [number, number])
+    .sort((a, b) => a[0] - b[0])
+  let out = ''
+  let cursor = 0 // 0-based exclusive end of what has been kept
+  for (const [from, to] of ranges) {
+    const start = Math.max(0, from - 1)
+    const end = Math.min(entry.text.length, to)
+    if (end <= cursor || start >= entry.text.length) continue
+    if (start > cursor) out += entry.text.slice(cursor, start)
+    out += '[…]'
+    cursor = Math.max(cursor, end)
+  }
+  return out + entry.text.slice(cursor)
+}
+
+/**
+ * The share of the entry text removed by redlines (0…1). The M9-4 threshold
+ * act hangs off this: > {@link REDLINE_PROPOSAL_RATIO} queues a split/discard
+ * PROPOSAL (系统提议,人执行 — never an automatic act).
+ * @param entry - the entry to measure.
+ * @returns the removed fraction of the original text.
+ */
+export function redlinedRatio(entry: KbEntry): number {
+  if (entry.text.length === 0) return 0
+  let chars = 0
+  for (const line of entry.redlines ?? []) {
+    if (line.target !== 'text' || line.chars === undefined) continue
+    const [from, to] = line.chars
+    chars += Math.max(0, Math.min(entry.text.length, to) - Math.max(0, from - 1))
+  }
+  return chars / entry.text.length
+}
+
+/**
+ * The tokenizer moved to `tokenize.ts` in R1 so `bm25.ts` can share it without
+ * a module cycle; re-exported here because it is part of this module's public
+ * surface (chunker, chunks, the CLI and tests all import it).
+ */
+export { tokenize } from './tokenize.ts'
 
 const STATUS_FACTOR: Record<string, number> = { trusted: 1, candidate: 0.85, expired: 0.5 }
 const TIER_FACTOR: Record<string, number> = { project: 1, global: 0.8 }
 
-function scoreEntry(entry: KbEntry, queryTokens: readonly string[], weights: RetrievalWeights): { score: number; matched: string[] } {
-  const titleTokens = new Set(tokenize(entry.title))
-  const tagTokens = new Set(tokenize(entry.tags.join(' ')))
-  const textTokens = new Set(tokenize(entry.text))
-  let score = 0
-  const matched: string[] = []
-  for (const token of queryTokens) {
-    let hit = 0
-    if (titleTokens.has(token)) hit += weights.title
-    if (tagTokens.has(token)) hit += weights.tag
-    if (textTokens.has(token)) hit += weights.text
-    if (hit > 0) {
-      score += hit
-      matched.push(token)
+/**
+ * Score one entry's FIELD tokens against the query.
+ *
+ * M9-4 invariant 3 (redline 先过滤、后评分): the body tokens are taken from the
+ * text AFTER redlines are removed, so a redlined (wrong) paragraph contributes
+ * NOTHING to recall — deleting its tokens is the point, not a side effect.
+ *
+ * EXPORTED since V0: this is the first level's ranking law, and the hybrid
+ * retriever (rag) needs the same score and the same `matched` tokens to build
+ * its lexical channel. A second copy would make every fused rank a statement
+ * about the copy rather than about the product — the same reason
+ * `scoreChunkText` is exported.
+ * @param entry - the entry to score.
+ * @param queryTokens - the query's tokens.
+ * @param weights - field weights.
+ * @returns the score plus the matched tokens.
+ */
+export function scoreEntry(
+  entry: KbEntry,
+  queryTokens: readonly string[],
+  weights: RetrievalWeights,
+  options: { scorer?: LexicalScorer; stats?: LexicalStats } = {},
+): { score: number; matched: string[] } {
+  const scorer: LexicalScorer = options.scorer ?? 'weights'
+  let raw: number
+  let matched: string[]
+
+  if (scorer === 'bm25') {
+    // BM25F: the formula lives in bm25.ts, one implementation for both levels
+    // (this one and the reranker's `bm25ish` feature). Stats are required; a
+    // caller that forgot them gets the old behavior rather than a wrong score.
+    if (options.stats === undefined) {
+      const fields = bm25Fields({ title: entry.title, tags: entry.tags, text: entryTextAfterRedlines(entry) })
+      const stats = buildLexicalStats([{ title: entry.title, tags: entry.tags, text: entryTextAfterRedlines(entry) }])
+      const scored = bm25fScore(fields, queryTokens, stats, weights)
+      raw = scored.score
+      matched = scored.matched
+    } else {
+      const fields = bm25Fields({ title: entry.title, tags: entry.tags, text: entryTextAfterRedlines(entry) })
+      const scored = bm25fScore(fields, queryTokens, options.stats, weights)
+      raw = scored.score
+      matched = scored.matched
     }
+  } else {
+    const titleTokens = new Set(tokenize(entry.title))
+    const tagTokens = new Set(tokenize(entry.tags.join(' ')))
+    const textTokens = new Set(tokenize(entryTextAfterRedlines(entry)))
+    let sum = 0
+    const hits: string[] = []
+    for (const token of queryTokens) {
+      let hit = 0
+      if (titleTokens.has(token)) hit += weights.title
+      if (tagTokens.has(token)) hit += weights.tag
+      if (textTokens.has(token)) hit += weights.text
+      if (hit > 0) {
+        sum += hit
+        hits.push(token)
+      }
+    }
+    raw = sum
+    matched = hits
   }
-  if (score === 0) return { score: 0, matched: [] }
-  const adjusted = score
+
+  if (raw === 0 || matched.length === 0) return { score: 0, matched: [] }
+  const adjusted = raw
     * (STATUS_FACTOR[entry.status] ?? 0)
     * (TIER_FACTOR[entry.tier] ?? 1)
     * (entry.needsReview ? 0.7 : 1)
-  return { score: Math.round(adjusted * 100) / 100, matched }
+  // `weights` keeps the historical two-decimal rounding (its raw score is a
+  // small integer, so nothing is lost). BM25's score is continuous: rounding it
+  // would manufacture ties and degrade the order into "by entryId", so the
+  // ordering value stays exact.
+  return { score: scorer === 'bm25' ? adjusted : Math.round(adjusted * 100) / 100, matched }
 }
 
 /**
@@ -113,16 +271,66 @@ function scoreEntry(entry: KbEntry, queryTokens: readonly string[], weights: Ret
  * (decision #10/#21's presentation law). Exported for retrieval providers
  * that synthesize hits outside queryKb (the rag package's binding-recall
  * channel) — the discipline travels with the data, one implementation.
+ *
+ * M9-1 adds the document facts: an entry with a原文层 says so, plus how many
+ * 段 are behind it, so EVERY surface (CLI, panel, tool output) tells the reader
+ * the same thing without each counting for itself.
  * @param entry - the entry to annotate.
+ * @param docFacts - the derived chunk count (absent = "haz un doc, count unknown").
  * @returns the annotation lines (empty for a clean trusted project entry).
  */
-export function annotationsFor(entry: KbEntry): string[] {
+export function annotationsFor(entry: KbEntry, docFacts?: { chunkCount?: number }): string[] {
   const notes: string[] = []
   if (entry.status === 'expired') notes.push('已过期、未复核 — 可读不可直接作为写操作依据(引用需审批)')
   if (entry.status === 'candidate') notes.push('候选知识(尚未人工批准为可信)')
+  if (entry.status === 'superseded') notes.push('已被拆分替代(历史条目,仅供溯源)')
   if (entry.needsReview) notes.push(`待复核: ${entry.reviewReason ?? '原因未记录'}`)
   if (entry.tier === 'global') notes.push('来自全局库(项目库同题知识优先)')
+  if (entry.doc !== undefined) {
+    const count = docFacts?.chunkCount ?? 0
+    notes.push(count > 0 ? `含原文 ${count} 段,细节用 kb_detail 下钻` : '含原文快照,细节用 kb_detail 下钻')
+  }
+  const redlines = entry.redlines ?? []
+  if (redlines.length > 0) {
+    notes.push(`含 ${redlines.length} 处人工划除段(已从显示与评分中移除${redlines.every((l) => l.target === 'text') ? '' : ',原文层细节见 kb_detail'})`)
+  }
   return notes
+}
+
+/**
+ * The "on the way out" half of a retrieval: freshness checks, the reference
+ * touch, and the document facts — applied to the hits a caller is about to
+ * RETURN, never to the candidates it merely considered.
+ *
+ * Split out of {@link queryKb} in V0 because the hybrid retriever fuses two
+ * channels and can therefore not reuse queryKb's loop. Calling this from both
+ * is what keeps the side-effect surface exactly what it has been since M2: a
+ * returned hit re-hashes its bindings and its mounted doc's source, gets its
+ * `含原文 N 段` fact, and is touched (which drives the expire timer, and
+ * records NO signal — see the module doc).
+ * @param store - the tier that owns the entry (null for a synthetic hit).
+ * @param entry - the entry to finalize.
+ * @param hit - the scored hit it came from.
+ * @param options - the timestamp and the no-touch switch.
+ * @returns the enriched hit, annotations re-derived from the (possibly flagged) entry.
+ */
+export async function enrichHit(
+  store: KbStore | null,
+  entry: KbEntry,
+  hit: QueryHit,
+  options: { at: string; noTouch?: boolean },
+): Promise<QueryHit> {
+  let current = entry
+  if (store !== null && current.bindings.length > 0) {
+    current = await store.checkBindings(current.id, options.at)
+  }
+  if (store !== null && current.doc !== undefined) {
+    current = await store.checkDocs(current.id, options.at)
+  }
+  if (!options.noTouch && store !== null) {
+    current = await store.touch(current.id, options.at)
+  }
+  return withDocFacts(store, current, hit)
 }
 
 /**
@@ -148,31 +356,44 @@ export async function queryKb(
   if (project !== null) tiers.push(project)
   if (global !== null && options.includeGlobal !== false) tiers.push(global)
 
-  const hits: QueryHit[] = []
+  // The corpus is MATERIALIZED first so BM25 can see the corpus statistics
+  // (df + per-field average lengths) before it scores anything. The filters and
+  // their order are unchanged — this is the same loop, split in two.
+  const corpus: KbEntry[] = []
   for (const store of tiers) {
     for (const entry of await store.list()) {
       if (entry.status === 'discarded') continue
       if (entry.status === 'expired' && options.includeExpired !== true) continue
       if (options.kinds !== undefined && !options.kinds.includes(entry.kind)) continue
-      const { score, matched } = scoreEntry(entry, queryTokens, weights)
-      if (score === 0 || matched.length === 0) continue
-      hits.push({ entry, score, matched, annotations: annotationsFor(entry) })
+      corpus.push(entry)
     }
+  }
+  const scorer: LexicalScorer = options.scorer ?? 'bm25'
+  const stats = scorer === 'bm25'
+    ? buildLexicalStats(corpus.map((entry) => ({
+      title: entry.title,
+      tags: entry.tags,
+      text: entryTextAfterRedlines(entry),
+    })))
+    : undefined
+
+  const hits: QueryHit[] = []
+  for (const entry of corpus) {
+    const { score, matched } = scoreEntry(entry, queryTokens, weights, { scorer, ...(stats !== undefined ? { stats } : {}) })
+    if (score === 0 || matched.length === 0) continue
+    hits.push({ entry, score, matched, annotations: annotationsFor(entry) })
   }
 
   // Binding freshness is checked on the way out: a hit on a stale-bound entry
   // must arrive annotated (this is the M2 acceptance "改绑定文件→自动待复核").
+  // M9-1: doc drift is the same act one layer down — checkDocs re-hashes the
+  // snapshot's SOURCE path and flags every entry mounted on that doc, so a
+  // changed upstream document questions its knowledge exactly like a changed
+  // bound file does. The snapshot itself is never rewritten (invariant 7).
   const freshened: QueryHit[] = []
   for (const hit of hits) {
     const store = hit.entry.tier === 'global' ? global : project
-    let entry = hit.entry
-    if (store !== null && entry.bindings.length > 0) {
-      entry = await store.checkBindings(entry.id, at)
-    }
-    if (!options.noTouch && store !== null) {
-      entry = await store.touch(entry.id, at)
-    }
-    freshened.push({ ...hit, entry, annotations: annotationsFor(entry) })
+    freshened.push(await enrichHit(store, hit.entry, hit, { at, ...(options.noTouch !== undefined ? { noTouch: options.noTouch } : {}) }))
   }
 
   freshened.sort((a, b) =>
@@ -180,4 +401,24 @@ export async function queryKb(
     || (a.entry.tier === b.entry.tier ? 0 : a.entry.tier === 'project' ? -1 : 1)
     || a.entry.id.localeCompare(b.entry.id))
   return freshened.slice(0, limit)
+}
+
+/**
+ * Attach the "含原文 N 段" fact to one hit (M9-1/§4 一级). Cheap by design:
+ * only the CHUNK LEDGER is read (one small file), never the snapshot text.
+ * A missing/foreign ledger leaves the count at the record's honest 0.
+ * @param store - the tier that owns the entry (null for synthetic hits).
+ * @param entry - the (freshness-checked) entry.
+ * @param hit - the scored hit it came from.
+ * @returns the hit with its document facts and re-derived annotations.
+ */
+async function withDocFacts(store: KbStore | null, entry: KbEntry, hit: QueryHit): Promise<QueryHit> {
+  if (store === null || entry.doc === undefined) return { ...hit, entry, annotations: annotationsFor(entry) }
+  const chunks = await readChunks(store.dir, entry.doc.docId)
+  return {
+    ...hit,
+    entry,
+    annotations: annotationsFor(entry, { chunkCount: chunks.length }),
+    docHeadingCount: chunks.length,
+  }
 }

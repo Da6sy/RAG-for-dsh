@@ -42,6 +42,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
 import { installClueStyles } from './styles.ts'
 import { ApprovalsSection } from './ApprovalsSection.tsx'
 import { KbSection } from './KbSection.tsx'
+import { EmbeddingSection } from './EmbeddingSection.tsx'
 import { KbCiteCard, KbProposeCard, KbSearchCard } from './CitationCards.tsx'
 import { ClueBrandMark, ClueBrandName } from './Brand.tsx'
 import { SessionKbAction } from './SessionKbDrawer.tsx'
@@ -72,6 +73,16 @@ export function apply(ctx: ClientContext): void {
       order: 91,
       label: () => '知识库',
     }, KbSection)
+    // V1 (规划 §9.5): the third page, order 92 — where the embedding provider,
+    // its key, the index's cost and the rerank knobs live. Separate from the KB
+    // panel on purpose: it holds a SECRET, and a page that can write a secret
+    // must be a page nobody opens by accident.
+    yield ctx.slots.register({
+      name: 'settings.section',
+      id: 'clue-kb-embedding',
+      order: 92,
+      label: () => '知识检索与向量',
+    }, EmbeddingSection)
   })
 
   // Citation cards: keyed toolviews replacing the generic rows for the three

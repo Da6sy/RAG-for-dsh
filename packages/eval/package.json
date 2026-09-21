@@ -1,0 +1,14 @@
+{
+  "name": "@clue-harness/eval",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "The evaluation engine: golden-set readers (BEIR three-file / CoIR / jsonl), deterministic metrics (nDCG/recall/MRR + the four RAG metrics' aggregation), the JudgePort/AnswerPort seams, and negative controls. Zero dsh dependencies — judging and answering happen through ports injected by the face layer.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./judge": "./src/judge.ts"
+  },
+  "dependencies": {
+    "@clue-harness/util": "*"
+  }
+}

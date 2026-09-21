@@ -27,7 +27,7 @@
  * @module @clue-harness/ui-kb/client/WorkspacePicker
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, RiskConfirmation } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Pill, RiskConfirmation } from '@deepseek-ai/dsh-client-ui-primitives'
 import { kbApi, KbApiError, pickInitialWorkspace, type KbScope, type KbTarget, type WorkspacePayload } from './api.ts'
 import { MenuSelect } from './MenuSelect.tsx'
 
@@ -141,7 +141,7 @@ export function WorkspacePicker(props: {
 
   return (
     <div className="clue-workspace-bar">
-      <span className="clue-field-label">工作区</span>
+      <span className="clue-field-label" style={{ flex: 'none' }}>工作区</span>
       <MenuSelect
         value={value}
         options={options}
@@ -165,7 +165,7 @@ export function WorkspacePicker(props: {
 
       {orphans.map((orphan) => (
         <div className="clue-orphan" key={orphan.key}>
-          <span className="clue-pill clue-pill-warn">工作区已移除</span>
+          <Pill>工作区已移除</Pill>
           <span>
             侧边栏里已没有「{orphan.hostTitle ?? orphan.label}」。它的知识库仍在
             {' '}<code>~/.clue/kb/{orphan.key}</code>，要一并删除吗？

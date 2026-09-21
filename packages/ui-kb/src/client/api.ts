@@ -30,6 +30,78 @@ export interface EntryPayload {
   stats: { lastReferencedAt: string | null; referenceCount: number }
   history: { at: string; change: string; from: string | null; to: string | boolean | null; reason: string }[]
   discardedAt: string | null
+  /** M9: the immutable原文 snapshot this entry's evidence lives in. */
+  doc?: { docId: string; anchor?: { headingPath?: string; lines?: [number, number]; quoteAnchor: string } }
+  /** M9-4: human redlines (段-level retractions; display + scoring filter). */
+  redlines?: {
+    target: 'doc' | 'text'
+    docId?: string
+    lines?: [number, number]
+    chars?: [number, number]
+    quoteAnchor: string
+    headingPath?: string
+    reason: string
+    at: string
+    by: string
+  }[]
+  /** M9-4: where a split sent this (superseded) entry's knowledge. */
+  splitInto?: string[]
+}
+
+/** V4: one snapshot's derived vector state (`/doc`), null when never built. */
+export interface DocVectorPayload {
+  stem: string
+  embedderVersion: string
+  dim: number
+  count: number
+  builtAt: string
+  missing: number
+  stale: boolean
+  unreadable: boolean
+}
+
+/** M9-1: one immutable document snapshot as `/doc` serializes it. */
+export interface DocPayload {
+  version: number
+  docId: string
+  sourcePath: string
+  contentHash: string
+  sourceHash: string
+  sizeChars: number
+  lineCount: number
+  ingestedAt: string
+  supersedes?: string
+  /** Present only in the list form: which entries mount this evidence. */
+  mountedEntryIds?: string[]
+  /** V4: present in the list and single-doc forms; null when no vector index. */
+  vector?: DocVectorPayload | null
+}
+
+/** M9-2: one derived chunk row (`/doc?docId=`). */
+export interface ChunkRecordPayload {
+  seq: number
+  headingPath: string
+  startLine: number
+  endLine: number
+  chars: number
+  quoteAnchor: string
+  overlapWith?: number
+  chunkerVersion: string
+}
+
+/** M9-2: one ranked chunk hit (`/chunks`). */
+export interface ChunkHitPayload {
+  docId: string
+  seq: number
+  headingPath: string
+  lines: { start: number; end: number }
+  quoteAnchor: string
+  chars: number
+  score: number
+  matched: string[]
+  excerpt: string
+  partialRedline: boolean
+  redlines: { lines?: [number, number]; reason: string; by: string; at: string }[]
 }
 
 /** One queued approval with its entry merged (the card's whole payload). */
@@ -197,6 +269,28 @@ export class KbApiError extends Error {
 }
 
 /**
+ * Turn a thrown failure into copy a human can act on.
+ *
+ * The one case worth special-casing: the browser bundle refreshes by itself
+ * (the host hashes it per request), while HOST routes load once at boot — so
+ * an unknown-endpoint answer means the running web process predates this
+ * button, and "方法不匹配" would be a riddle. A route's own "没有条目" 404
+ * keeps its message.
+ *
+ * @param cause - whatever was thrown.
+ * @returns the message to show in the panel.
+ */
+export function describeKbError(cause: unknown): string {
+  if (cause instanceof KbApiError) {
+    if (cause.status === 404 && /方法不匹配|未知端点/.test(cause.message)) {
+      return '宿主侧还没有这条路由:重启 clue web / dsh web 后刷新页面再试一次。'
+    }
+    return cause.message
+  }
+  return String(cause)
+}
+
+/**
  * One JSON round-trip against the KB API.
  * @param path - the route path under the prefix (leading slash).
  * @param init - fetch options (POST calls set method/body).
@@ -227,6 +321,40 @@ export async function fetchKb<T>(path: string, init?: RequestInit): Promise<T> {
     throw new KbApiError(message, response.status)
   }
   return payload as T
+}
+
+/**
+ * Post one JSON body and return the ANSWER even when it is an error status.
+ *
+ * Needed for routes whose refusals carry structure the form must render: a
+ * field-level validation failure answers 400 with `{ ok: false, errors: [...] }`,
+ * and throwing that away in favour of "HTTP 400" would turn the plan's
+ * "就地指名哪个字段" back into the generic failure it exists to replace (§9.2).
+ * @param path - the route path under the prefix.
+ * @param body - the JSON-serializable payload.
+ * @returns the status and the parsed payload (never throws on 4xx).
+ */
+export async function postKbRaw<T>(path: string, body: unknown): Promise<{ status: number; payload: T }> {
+  let response: Response
+  try {
+    response = await fetch(`${KB_API}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  } catch (error) {
+    throw new KbApiError(`无法连接知识库服务: ${error instanceof Error ? error.message : String(error)}`, 0)
+  }
+  const text = await response.text()
+  let payload: unknown = null
+  if (text !== '') {
+    try {
+      payload = JSON.parse(text)
+    } catch {
+      payload = { error: text.slice(0, 200) }
+    }
+  }
+  return { status: response.status, payload: payload as T }
 }
 
 /**
@@ -316,6 +444,36 @@ export const kbApi = {
   /** Resolve the needs-review flag. */
   reverify: (target: KbTarget, id: string, accept: boolean): Promise<{ entry: EntryPayload }> =>
     postJson<{ entry: EntryPayload }>('/entry/reverify', targetBody(target, { id, accept })),
+  /**
+   * The human promote act (人权入口,candidate → trusted). The queue only holds
+   * evidence-driven proposals, so this is the human's own judgment put on the
+   * record — reason lands in the entry's history, and any queued promote
+   * request for the same entry is settled by the same call.
+   */
+  promote: (target: KbTarget, id: string, reason?: string): Promise<{ entry: EntryPayload }> =>
+    postJson<{ entry: EntryPayload }>(
+      '/entry/promote',
+      targetBody(target, { id, ...(reason !== undefined && reason.trim() !== '' ? { reason } : {}) }),
+    ),
+  /**
+   * The human verdict "this no longer holds" (候选/可信 → 过期). The reason is
+   * REQUIRED by the route: a verdict without its why is not auditable, and
+   * expired keeps the entry readable while pulling it out of the write-basis.
+   */
+  retire: (target: KbTarget, id: string, reason: string): Promise<{ entry: EntryPayload }> =>
+    postJson<{ entry: EntryPayload }>('/entry/retire', targetBody(target, { id, reason })),
+  /** Bring an EXPIRED entry back to candidate (trust must be re-earned). */
+  reactivate: (target: KbTarget, id: string, reason?: string): Promise<{ entry: EntryPayload }> =>
+    postJson<{ entry: EntryPayload }>(
+      '/entry/reactivate',
+      targetBody(target, { id, ...(reason !== undefined && reason.trim() !== '' ? { reason } : {}) }),
+    ),
+  /** Bring a DISCARDED entry back to candidate (never straight to trusted). */
+  rescue: (target: KbTarget, id: string, reason?: string): Promise<{ entry: EntryPayload }> =>
+    postJson<{ entry: EntryPayload }>(
+      '/entry/rescue',
+      targetBody(target, { id, ...(reason !== undefined && reason.trim() !== '' ? { reason } : {}) }),
+    ),
   /** Run tier maintenance. */
   sweep: (target: KbTarget): Promise<{ scope: string; result: Record<string, unknown[]> }> =>
     postJson<{ scope: string; result: Record<string, unknown[]> }>('/sweep', targetBody(target)),
@@ -325,4 +483,243 @@ export const kbApi = {
   /** Adopt an edited/polished body (audited history event). */
   updateText: (target: KbTarget, id: string, text: string, reason?: string): Promise<{ entry: EntryPayload }> =>
     postJson<{ entry: EntryPayload }>('/entry/text', targetBody(target, { id, text, ...(reason !== undefined ? { reason } : {}) })),
+  /** M9-1: the addressed tier's原文快照 list (with mount counts). */
+  docs: (target: KbTarget): Promise<{ scope: string; workspace: string | null; docs: DocPayload[] }> =>
+    fetchKb<{ scope: string; workspace: string | null; docs: DocPayload[] }>(`/doc${targetParams(target)}`),
+  /** M9-1: one snapshot's record + its derived chunk ledger. */
+  doc: (target: KbTarget, docId: string): Promise<{
+    scope: string
+    doc: DocPayload
+    chunks: ChunkRecordPayload[]
+    needsRebuild: boolean
+    vector: DocVectorPayload | null
+  }> => fetchKb<{ scope: string; doc: DocPayload; chunks: ChunkRecordPayload[]; needsRebuild: boolean; vector: DocVectorPayload | null }>(
+    `/doc${targetParams(target, { docId })}`,
+  ),
+  /** M9-2: the second level — ranked原文段 with anchors (pure read). */
+  chunks: (
+    target: KbTarget,
+    address: { docId?: string; entryId?: string; query?: string; limit?: number },
+  ): Promise<{ scope: string; docIds: string[]; hits: ChunkHitPayload[] }> => {
+    const extra: Record<string, string> = {}
+    if (address.docId !== undefined && address.docId !== '') extra.docId = address.docId
+    if (address.entryId !== undefined && address.entryId !== '') extra.entryId = address.entryId
+    if (address.query !== undefined && address.query !== '') extra.query = address.query
+    if (address.limit !== undefined) extra.limit = String(address.limit)
+    return fetchKb<{ scope: string; docIds: string[]; hits: ChunkHitPayload[] }>(`/chunks${targetParams(target, extra)}`)
+  },
+  /** M9-4: the human redline act (text range or原文 line range). */
+  redline: (
+    target: KbTarget,
+    id: string,
+    range: { chars?: [number, number]; lines?: [number, number] },
+    reason: string,
+  ): Promise<{ entry: EntryPayload; ratio: number; proposal: { id: string; reason: string } | null }> =>
+    postJson<{ entry: EntryPayload; ratio: number; proposal: { id: string; reason: string } | null }>(
+      '/entry/redline',
+      targetBody(target, { id, reason, ...range }),
+    ),
+  /** M9-4: the human split act (old entry → superseded, successors → candidate). */
+  split: (
+    target: KbTarget,
+    id: string,
+    drafts: { kind?: string; title: string; text: string }[],
+    reason?: string,
+  ): Promise<{ old: EntryPayload; created: EntryPayload[] }> =>
+    postJson<{ old: EntryPayload; created: EntryPayload[] }>(
+      '/entry/split',
+      targetBody(target, { id, drafts, ...(reason !== undefined ? { reason } : {}) }),
+    ),
+
+  // ── V1: the embedding plane (规划 §9.5) ─────────────────────────────────
+  /**
+   * V1 follow-up: probe the providers this composition already names and enable
+   * the first one that answers an embeddings call. The user re-types nothing.
+   */
+  embeddingAuto: (dryRun = false): Promise<{
+    probes: Array<{ route: string; model: string; ok: boolean; dim?: number; ms?: number; error?: string; skipped?: string }>
+    applied: { id: string; baseUrl: string; model: string; apiKeyEnv: string; dim: number } | null
+    written: boolean
+    summary: string
+  }> => postKbRaw('/embedding/auto', { dryRun }).then(({ payload }) => payload as never),
+  /** V1 follow-up: the embedder picker's options (configured providers + built-ins). */
+  embeddingCandidates: (): Promise<EmbeddingCatalogPayload> =>
+    fetchKb<EmbeddingCatalogPayload>('/embedding/candidates'),
+  /** Everything the「知识检索与向量」page renders, in one read. */
+  embedding: (workspace?: string | null): Promise<EmbeddingConfigPayload> =>
+    fetchKb<EmbeddingConfigPayload>(`/embedding/config${workspace !== undefined && workspace !== null && workspace !== '' ? `?workspace=${encodeURIComponent(workspace)}` : ''}`),
+  /** Write non-secret provider fields (one revision-fenced patch). */
+  embeddingSet: async (
+    patch: Record<string, unknown>,
+    revision?: number,
+  ): Promise<{ ok: boolean; errors: { field: string; message: string }[]; config: EmbeddingProviderPayload; retrieval?: RetrievalTuningPayload; status: number }> => {
+    // The answer is read even on a refusal: a 400 here is a FIELD verdict.
+    const { status, payload } = await postKbRaw<{
+      ok: boolean
+      errors: { field: string; message: string }[]
+      config: EmbeddingProviderPayload
+      retrieval?: RetrievalTuningPayload
+    }>('/embedding/config', { patch, ...(revision !== undefined ? { revision } : {}) })
+    return { ...payload, status }
+  },
+  /** Store the key: browser → host → credentials. The answer never echoes it. */
+  embeddingKey: (value: string): Promise<{ ok: boolean; stored: string; key: KeyStatusPayload }> =>
+    postJson('/embedding/key', { value }),
+  /** Forget the stored key (the vector layer itself is untouched). */
+  embeddingKeyClear: (): Promise<{ ok: boolean; cleared: string; key: KeyStatusPayload }> =>
+    postJson('/embedding/key/clear', {}),
+  /** One probe call: dim / latency / normalized norm, or a classified failure. */
+  embeddingTest: (record: boolean, workspace?: string | null): Promise<ConnectionTestPayload> =>
+    postJson('/embedding/test', { record, ...(workspace !== undefined && workspace !== null && workspace !== '' ? { workspace } : {}) }),
+  /** Build (or dry-run) the vector layer for the addressed workspace. */
+  embeddingBuild: (options: { dryRun?: boolean; only?: 'entries' | 'chunks' | 'all'; rebuild?: boolean; workspace?: string | null }): Promise<{
+    ok: boolean
+    dryRun: boolean
+    reports: unknown[]
+    vector?: VectorFactsPayload
+    error?: string
+  }> => postJson('/embedding/build', {
+    ...(options.dryRun !== undefined ? { dryRun: options.dryRun } : {}),
+    ...(options.only !== undefined ? { only: options.only } : {}),
+    ...(options.rebuild !== undefined ? { rebuild: options.rebuild } : {}),
+    ...(options.workspace !== undefined && options.workspace !== null && options.workspace !== '' ? { workspace: options.workspace } : {}),
+  }),
+  /** Clear the shared text cache (a diagnostic that costs real money later). */
+  embeddingClearCache: (all = false): Promise<{ ok: boolean; cleared: string[] }> =>
+    postJson('/embedding/cache/clear', { all }),
+  /** The ranklog summary (how much LTR annotation has accumulated). */
+  embeddingRanklog: (workspace?: string | null): Promise<RankLogSummaryPayload> =>
+    fetchKb<RankLogSummaryPayload>(`/embedding/ranklog${workspace !== undefined && workspace !== null && workspace !== '' ? `?workspace=${encodeURIComponent(workspace)}` : ''}`),
+}
+
+/** V1 follow-up: one selectable embedder in the settings page's picker. */
+export interface EmbeddingCandidatePayload {
+  id: string
+  route: string
+  label: string
+  baseUrl: string
+  model: string
+  apiKeyEnv: string
+  dimHint: number | null
+  usable: boolean
+  note?: string
+}
+
+/** V1 follow-up: candidates grouped by provider, with that provider's key state. */
+export interface EmbeddingCandidateGroupPayload {
+  route: string
+  label: string
+  baseUrl: string
+  apiKeyEnv: string
+  keyState: 'configured' | 'missing' | 'unresolved' | 'unknown'
+  keyDetail: string
+  keyReady: boolean
+  candidates: EmbeddingCandidatePayload[]
+}
+
+/** V1 follow-up: the whole picker payload. */
+export interface EmbeddingCatalogPayload {
+  groups: EmbeddingCandidateGroupPayload[]
+  chat: { provider: string; model: string } | null
+  notices: string[]
+  /** The candidate the stored configuration currently matches (or null). */
+  selected: string | null
+}
+
+/** V1: the provider configuration as the routes serialize it (never a secret). */
+export interface EmbeddingProviderPayload {
+  enabled: boolean
+  baseUrl: string
+  /** The reference NAME (an env-var name), never a value. */
+  apiKeyEnv: string
+  model: string
+  /** 0 = not measured yet; only the connection test writes it. */
+  dim: number
+  headers: Record<string, string>
+  timeoutMs: number
+  batchSize: number
+  concurrency: number
+  maxUnitsPerBuild: number
+  quant: string
+}
+
+/** V1: the key's state, as a surface may show it (规划 §9.4-3). */
+export interface KeyStatusPayload {
+  state: 'configured' | 'missing' | 'unresolved' | 'unreachable'
+  detail: string
+  writable: boolean
+}
+
+/** V1: the retrieval-tuning section (§9.3 B). */
+export interface RetrievalTuningPayload {
+  fusion: string
+  rrfK: number
+  channelWeights: { lexical: number; vector: number }
+  recallDepth: number
+  rerankCandidates: number
+  rerank: boolean
+  llmRerank: boolean
+  ranklog: boolean
+  featureWeights: Record<string, number>
+}
+
+/** V1: one derived index's health. */
+export interface VectorIndexPayload {
+  tier: string
+  stem: string
+  embedderVersion: string
+  dim: number
+  count: number
+  builtAt: string
+  missing: number
+  stale: boolean
+  unreadable: boolean
+}
+
+/** V1: the vector layer's facts for one workspace. */
+export interface VectorFactsPayload {
+  embedderVersion: string | null
+  indexes: VectorIndexPayload[]
+  cachedVectors: number
+  ranklog: RankLogSummaryPayload
+}
+
+/** V1: how much LTR annotation the ranklog holds (§8.4). */
+export interface RankLogSummaryPayload {
+  rows: number
+  queries: number
+  perProfile: Record<string, number>
+  labeledRows: number
+  positiveLabels: number
+  negativeLabels: number
+  lastAt: string | null
+}
+
+/** V1: one connection test's outcome (§9.6). */
+export interface ConnectionTestPayload {
+  ok: boolean
+  status: string
+  message: string
+  dim?: number
+  model?: string
+  latencyMs?: number
+  norm?: number
+  rebuildNotice?: string
+  recorded?: { previousDim: number; dim: number; rebuildImplied: boolean } | null
+  endpoint?: string
+  host?: string
+}
+
+/** V1: the whole page payload. */
+export interface EmbeddingConfigPayload {
+  config: EmbeddingProviderPayload
+  retrieval: RetrievalTuningPayload
+  ready: boolean
+  note: string
+  key: KeyStatusPayload
+  /** False when the host mounted no settings/credentials service. */
+  available: boolean
+  documentPath: string | null
+  revisions: Record<string, number>
+  vector: VectorFactsPayload
 }
