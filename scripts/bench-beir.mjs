@@ -452,6 +452,16 @@ try {
       '判分:数据集自带 qrels(分级相关度),nDCG@10 用 2^rel-1 增益,不需要判分器',
       `一级评分 = ${scorer === 'bm25' ? 'BM25F(R2 新默认)' : '旧字段权重裸和(lexicalScorer=weights 回滚档)'}`,
       'weights 档对四条配置行都生效:lexical-only 行经 fulltext 委派,该路径已在 R2 重测时补上 lexicalScorer 转发(packages/rag/src/retrieve.ts)',
+      // The D-plan's 待拍板 §9-1: until R1's inverted index exists, D1's scale is
+      // a POOL quantile, i.e. an approximation of the corpus-level one the plan
+      // really wants. A report that enables `absolute` must say so, or the number
+      // will be read as if it were corpus-calibrated.
+      ...(knobs.lexicalNormalization === 'absolute'
+        ? ['D1 的 scale_q 目前取**召回池**内正分的 p90(池 <3 条时退化为最大值):这是语料级分位数的近似,报告里的 absolute 数字按"近似"读']
+        : []),
+      ...(knobs.semanticScale === 'calibrated'
+        ? [`D2 的 floor/ceil = ${knobs.semanticFloor ?? RETRIEVAL_DEFAULTS.semanticFloor}/${knobs.semanticCeil ?? RETRIEVAL_DEFAULTS.semanticCeil},是**嵌入器家族的两点标定**,不是按本语料调的`]
+        : []),
       ...(extraCaveat === null ? [] : [extraCaveat]),
     ],
     /**

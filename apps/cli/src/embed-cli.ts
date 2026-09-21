@@ -507,6 +507,15 @@ export async function queryExplainRun(host: EmbeddingHost, context: EmbedContext
     rrfK: tuning.rrfK,
     channelWeights: tuning.channelWeights,
     featureWeights: tuning.featureWeights,
+    // 不变量 2 (D 规划 §6): `--explain` 必须解释**线上那一份配置**的每一分。
+    // 这些旋钮此前没转发,于是把设置页里的档位改掉之后,explain 打印的仍是默认档位的算式
+    // —— 解释与产物不一致,比没有解释更糟。
+    lexicalScorer: tuning.lexicalScorer,
+    lexicalNormalization: tuning.lexicalNormalization,
+    semanticScale: tuning.semanticScale,
+    semanticFloor: tuning.semanticFloor,
+    semanticCeil: tuning.semanticCeil,
+    missingFeatureMode: tuning.missingFeatureMode,
     trustThreshold: context.project.config.trustThreshold,
     home: context.home,
     ...(embedder !== null ? { embedder } : {}),

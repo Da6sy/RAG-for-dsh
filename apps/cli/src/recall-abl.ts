@@ -222,6 +222,17 @@ export async function runAblation(
         profile: config.profile,
         topK: maxK,
         recallDepth: Number(args.depth ?? 50),
+        // P4 of the D-plan: the internal guardrail has to be able to run at the
+        // NEW档位, one variable at a time (A/B 协议第 2 条). Values come from
+        // flags, not from settings: this harness builds its own corpus, so an
+        // ambient setting would silently change what the report measures.
+        ...(args['lexical-normalization'] === 'absolute' ? { lexicalNormalization: 'absolute' as const } : {}),
+        ...(args['semantic-scale'] === 'calibrated' ? { semanticScale: 'calibrated' as const } : {}),
+        ...(typeof args['semantic-floor'] === 'string' ? { semanticFloor: Number(args['semantic-floor']) } : {}),
+        ...(typeof args['semantic-ceil'] === 'string' ? { semanticCeil: Number(args['semantic-ceil']) } : {}),
+        ...(args['missing-mode'] === 'absent' ? { missingFeatureMode: 'absent' as const } : {}),
+        ...(args['lexical-scorer'] === 'weights' ? { lexicalScorer: 'weights' as const } : {}),
+        ...(typeof args['rerank-candidates'] === 'string' ? { rerankCandidates: Number(args['rerank-candidates']) } : {}),
         embedder,
         home,
         rebuildOnRead: false,
