@@ -143,6 +143,11 @@ export interface HybridConfig {
   /** D2's calibration bounds (from the embedder family, not per corpus). */
   semanticFloor?: number
   semanticCeil?: number
+  /**
+   * D3 (`docs/修复方案-精排量纲与语义名次.md` §3): how a feature whose channel did
+   * not recall the candidate is treated. `zero` (default) is today.
+   */
+  missingFeatureMode?: 'zero' | 'absent'
   /** The embedder in effect (absent = lexical only, honestly annotated). */
   embedder?: Embedder
   /** ClueHarness home — where the shared embed cache and rebuild writes live. */
@@ -604,17 +609,24 @@ export function createHybridRetriever(
 
     let ordered: QueryHit[] = []
     if (rerankEnabled) {
+      // D4: the semantic channel's own order, as a rank. Built from the same
+      // sorted list the fusion used, so the feature and the fusion can never
+      // disagree about who the semantic channel preferred.
+      const semanticRankById = new Map<string, number>()
+      vectorRanked.forEach((key, index) => semanticRankById.set(key, index + 1))
       const candidates: RerankCandidate[] = []
       for (const row of fused) {
         const member = byId.get(row.key)
         if (member === undefined) continue
         const lexicalRow = lexicalById.get(row.key)
         const semantic = semanticById.get(row.key)
+        const semanticRank = semanticRankById.get(row.key)
         candidates.push({
           entry: member.entry,
           lexicalScore: lexicalRow?.score ?? 0,
           matched: lexicalRow?.matched ?? [],
           ...(semantic !== undefined ? { semantic } : {}),
+          ...(semanticRank !== undefined ? { semanticRank } : {}),
           annotations: annotationsFor(member.entry),
         })
       }
@@ -639,6 +651,7 @@ export function createHybridRetriever(
         ...(config.semanticScale !== undefined ? { semanticScale: config.semanticScale } : {}),
         ...(config.semanticFloor !== undefined ? { semanticFloor: config.semanticFloor } : {}),
         ...(config.semanticCeil !== undefined ? { semanticCeil: config.semanticCeil } : {}),
+        ...(config.missingFeatureMode !== undefined ? { missingFeatureMode: config.missingFeatureMode } : {}),
         profile,
       })
       for (const result of results) {

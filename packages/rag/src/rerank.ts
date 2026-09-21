@@ -65,6 +65,20 @@ export interface RerankFeatureWeights {
   freshness: number
   signalScore: number
   docMountBonus: number
+  /**
+   * D4 (`docs/修复方案-精排量纲与语义名次.md` §3): the SEMANTIC channel's rank as
+   * a feature. Default weight 0 — the plan's 待拍板 §9-3: add the feature, keep
+   * the behavior, decide the weight only after an A/B.
+   */
+  semanticRank: number
+  /** D4: the FUSION order's normalized rank as a feature (also default 0). */
+  fusedRank: number
+  /**
+   * D3: the "this channel did not recall me" indicator. Default weight 0, and it
+   * exists so that a missing value can be *learned about* rather than only being
+   * absent (the plan's §3-D3 optional 缺失指示特征).
+   */
+  semanticAbsent: number
 }
 
 /** The shipped initial values — the plan's table, verbatim. */
@@ -78,6 +92,11 @@ export const DEFAULT_FEATURE_WEIGHTS: RerankFeatureWeights = {
   freshness: 0.2,
   signalScore: 0.3,
   docMountBonus: 0.15,
+  // D4/D3: shipped at 0 so that "关掉即今天" holds by construction. The plan
+  // requires an A/B with numbers before any of these stops being zero.
+  semanticRank: 0,
+  fusedRank: 0,
+  semanticAbsent: 0,
 }
 
 /** The status multipliers — unchanged from the first level (不变量 9 的可回滚性). */
@@ -154,6 +173,17 @@ export interface RerankCandidate {
   annotations: readonly string[]
   /** Derived chunk count behind the entry's evidence (M9-1 fact). */
   docHeadingCount?: number
+  /**
+   * D4: this candidate's rank (1-based) inside the SEMANTIC channel.
+   *
+   * Absent means "the vector channel did not recall this candidate" — D3's
+   * missing state, not a bad rank. The RAW rank is what the caller passes; the
+   * normalization to 0–1 happens in {@link rerankAll}, which is the only place
+   * that knows the pool size.
+   */
+  semanticRank?: number
+  /** D4: this candidate's rank (1-based) in the FUSED order it arrived in. */
+  fusedRank?: number
 }
 
 /** Everything the features need that is not a property of the candidate. */
@@ -200,6 +230,26 @@ export interface RerankContext {
   semanticFloor?: number
   /** The calibration ceiling (a cosine at or above this counts as full evidence). */
   semanticCeil?: number
+  /**
+   * D3: what a feature whose channel did NOT recall the candidate means.
+   *
+   * `zero` (default, = today) folds "not recalled" and "recalled with a low
+   * score" into the same number. `absent` keeps them apart: the term contributes
+   * nothing AND is excluded from every candidate-set normalization, and
+   * `--explain` says 未参与 instead of printing a `+0.000` line.
+   *
+   * Honest note: in the CURRENT additive model the two modes produce identical
+   * scores (a missing term contributes 0 anyway, and the only candidate-set
+   * normalization — D1's `candidates` mode — already ignores zero raw scores).
+   * What `absent` buys today is the tri-state bookkeeping, the explain line and
+   * the absence indicator; it becomes arithmetically decisive only if a future
+   * feature normalizes over "recalled by this channel" only.
+   */
+  missingFeatureMode?: 'zero' | 'absent'
+  /** D4: the number of candidates the semantic channel recalled (rank normalizer). */
+  semanticPoolSize?: number
+  /** D4: the number of candidates in the fused window (rank normalizer). */
+  fusedPoolSize?: number
 }
 
 /** One reranked candidate with its full arithmetic. */
@@ -214,6 +264,12 @@ export interface RerankResult {
   factors: Record<string, number>
   /** Human-readable lines: one per term that moved the score. */
   explanation: string[]
+  /**
+   * D3: the feature keys that are MISSING because their channel did not recall
+   * this candidate (`semantic`, `semanticRank`). Empty in the `zero` mode, where
+   * the distinction is deliberately not drawn.
+   */
+  missing: string[]
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -316,6 +372,13 @@ export function rerankOne(candidate: RerankCandidate, context: RerankContext, bm
     : (bm25Normalizer <= 0 ? 0 : raw / bm25Normalizer)
   const haystack = normalizePhrase(`${entry.title} ${entry.tags.join(' ')} ${entryTextAfterRedlines(entry)}`)
   const exactPhrase = exactPhraseFeature(haystack, context.queryText)
+  // ── D3: the tri-state of a channel feature ────────────────────────────────
+  // `present` = the channel recalled this candidate. `value` = the feature's
+  // number, which is 0 in BOTH modes when the channel did not recall it (the
+  // difference is bookkeeping: `absent` drops the term from the summation and
+  // from every candidate-set statistic, and says so in `--explain`).
+  const missingMode = context.missingFeatureMode ?? 'zero'
+  const semanticPresent = candidate.semantic !== undefined
   const semanticRaw = candidate.semantic ?? 0
   // D2: put the cosine on the same scale as everything else. The floor/ceil come
   // from the embedder family's calibration (a setting), never from the candidate
@@ -323,6 +386,19 @@ export function rerankOne(candidate: RerankCandidate, context: RerankContext, bm
   const semantic = (context.semanticScale ?? 'raw') === 'calibrated'
     ? Math.max(0, Math.min(1, (semanticRaw - (context.semanticFloor ?? 0.3)) / Math.max(1e-9, (context.semanticCeil ?? 0.8) - (context.semanticFloor ?? 0.3))))
     : semanticRaw
+  // D4: rank as a feature. `1 − (rank−1)/(N−1)` maps the channel's own order
+  // onto 0–1; a single-candidate pool is 1 by definition. This cannot replace
+  // D1/D2 (the plan's worked example: rank normalization alone still loses),
+  // which is why the weight ships at 0.
+  const rankFeature = (rank: number | undefined, poolSize: number | undefined): number => {
+    if (rank === undefined || !Number.isFinite(rank) || rank < 1) return 0
+    if (poolSize === undefined || poolSize <= 1) return 1
+    return Math.max(0, Math.min(1, 1 - (rank - 1) / (poolSize - 1)))
+  }
+  const semanticRankPresent = candidate.semanticRank !== undefined
+  const semanticRank = rankFeature(candidate.semanticRank, context.semanticPoolSize)
+  const fusedRank = rankFeature(candidate.fusedRank, context.fusedPoolSize)
+  const semanticAbsent = semanticPresent ? 0 : 1
   const specificity = context.queryTokens.length === 0 ? 0 : candidate.matched.length / context.queryTokens.length
   const bindingOverlap = (context.bindingWeightEnabled ?? false) && context.changedFiles !== undefined
     ? bindingOverlapOf(entry, context.changedFiles)
@@ -345,17 +421,38 @@ export function rerankOne(candidate: RerankCandidate, context: RerankContext, bm
     freshness,
     signalScore,
     docMountBonus,
+    semanticRank,
+    fusedRank,
+    semanticAbsent,
   }
+  /**
+   * D3: which terms are ABSENT (their channel did not recall this candidate).
+   *
+   * Only channel features can be absent — `exactPhrase`, `freshness` and friends
+   * are properties of the entry, not of a recall decision, so a 0 there really
+   * does mean "scored 0".
+   */
+  const missing: string[] = missingMode === 'absent'
+    ? [
+      ...(semanticPresent ? [] : ['semantic']),
+      ...(semanticRankPresent ? [] : ['semanticRank']),
+    ]
+    : []
+  const absent = new Set(missing)
+  const term = (key: string, value: number): number => (absent.has(key) ? 0 : value)
   const contributions: Record<string, number> = {
     bm25ish: weights.bm25ish * bm25ish,
     exactPhrase: weights.exactPhrase * exactPhrase,
-    semantic: weights.semantic * semantic,
+    semantic: term('semantic', weights.semantic * semantic),
     specificity: weights.specificity * specificity,
     bindingOverlap: weights.bindingOverlap * bindingOverlap,
     redlinePenalty: weights.redlinePenalty * redlineRatio,
     freshness: weights.freshness * freshness,
     signalScore: weights.signalScore * signalScore,
     docMountBonus: weights.docMountBonus * docMountBonus,
+    semanticRank: term('semanticRank', weights.semanticRank * semanticRank),
+    fusedRank: weights.fusedRank * fusedRank,
+    semanticAbsent: weights.semanticAbsent * semanticAbsent,
   }
   const factors: Record<string, number> = {
     statusFactor: RERANK_STATUS_FACTOR[entry.status] ?? 0,
@@ -380,10 +477,19 @@ export function rerankOne(candidate: RerankCandidate, context: RerankContext, bm
     freshness: '新鲜度',
     signalScore: '窗口信号分',
     docMountBonus: '有原文层可下钻',
+    semanticRank: '语义名次',
+    fusedRank: '融合名次',
+    semanticAbsent: '语义缺失指示',
   }
   for (const [key, value] of Object.entries(contributions)) {
+    // D3: present-but-tiny is silent (as before); absent-and-counting is not.
     if (Math.abs(value) < 0.0005) continue
     explanation.push(`${label[key] ?? key} ${value >= 0 ? '+' : ''}${value.toFixed(3)}`)
+  }
+  for (const key of missing) {
+    const weight = key === 'semanticRank' ? weights.semanticRank : weights.semantic
+    if (weight === 0) continue
+    explanation.push(`${label[key] ?? key} 未参与(该通道未召回,不计 0 分)`)
   }
   explanation.push(`词法召回分 ${candidate.lexicalScore}(保留,不参与精排)`)
   if (factors.statusFactor !== 1) explanation.push(`状态 ${entry.status} ×${factors.statusFactor}`)
@@ -392,7 +498,7 @@ export function rerankOne(candidate: RerankCandidate, context: RerankContext, bm
   if (context.profile !== undefined) {
     explanation.push(`通道 profile ${context.profile.name}(词法 ×${context.profile.lexicalWeight} / 语义 ×${context.profile.semanticWeight})`)
   }
-  return { candidate, score, features, contributions, factors, explanation }
+  return { candidate, score, features, contributions, factors, explanation, missing }
 }
 
 /**
@@ -427,8 +533,27 @@ export function rerankAll(candidates: readonly RerankCandidate[], context: Reran
     return positive[Math.min(positive.length - 1, Math.floor(positive.length * 0.9))] as number
   })()
   const lexicalMode = context.lexicalNormalization ?? 'candidates'
+  /**
+   * D4: the pool sizes the rank features normalize against.
+   *
+   * Both are derived here rather than asked of the caller: the semantic pool is
+   * "how many candidates this channel recalled" (nothing else can know it), and
+   * the fused pool is the window we were handed — `fusedRank` defaults to the
+   * position in that array, which IS the fusion order (the caller fuses before
+   * it calls us, and 不变量 1 keeps that order untouched).
+   */
+  const semanticPoolSize = candidates.filter((candidate) => candidate.semanticRank !== undefined).length
+  const fusedContext: RerankContext = {
+    ...context,
+    semanticPoolSize: context.semanticPoolSize ?? semanticPoolSize,
+    fusedPoolSize: context.fusedPoolSize ?? candidates.length,
+  }
   return candidates
-    .map((candidate) => rerankOne(candidate, context, lexicalMode === 'absolute' ? scaleQ : best))
+    .map((candidate, index) => rerankOne(
+      candidate.fusedRank === undefined ? { ...candidate, fusedRank: index + 1 } : candidate,
+      fusedContext,
+      lexicalMode === 'absolute' ? scaleQ : best,
+    ))
     .sort((a, b) =>
       b.score - a.score
       || (a.candidate.entry.tier === b.candidate.entry.tier ? 0 : a.candidate.entry.tier === 'project' ? -1 : 1)

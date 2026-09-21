@@ -47,6 +47,8 @@ export const RETRIEVAL_DEFAULTS = {
   semanticFloor: 0.3,
   /** D2's calibration ceiling. */
   semanticCeil: 0.8,
+  /** D3: how a feature whose channel did not recall the candidate is treated. */
+  missingFeatureMode: 'zero' as 'zero' | 'absent',
 } as const
 
 /** The type of the table (so a schema can be typed from it). */

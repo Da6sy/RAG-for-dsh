@@ -122,8 +122,20 @@ const knobs = {
   // ones are D1's `lexicalNormalization` and D2's `semanticScale`.
   ...(args['lexical-normalization'] !== undefined ? { lexicalNormalization: String(args['lexical-normalization']) } : {}),
   ...(args['semantic-scale'] !== undefined ? { semanticScale: String(args['semantic-scale']) } : {}),
+  // D3/D4: the tri-state switch and the two rank features (weights 0 by default).
+  ...(args['missing-mode'] !== undefined ? { missingFeatureMode: String(args['missing-mode']) } : {}),
   ...(args['semantic-floor'] !== undefined ? { semanticFloor: Number(args['semantic-floor']) } : {}),
   ...(args['semantic-ceil'] !== undefined ? { semanticCeil: Number(args['semantic-ceil']) } : {}),
+  // D4's weights are the two rank features; they ship at 0, so an A/B has to be
+  // able to move exactly one of them at a time.
+  ...(args['semantic-rank-weight'] !== undefined || args['fused-rank-weight'] !== undefined
+    ? {
+      featureWeights: {
+        ...(args['semantic-rank-weight'] !== undefined ? { semanticRank: Number(args['semantic-rank-weight']) } : {}),
+        ...(args['fused-rank-weight'] !== undefined ? { fusedRank: Number(args['fused-rank-weight']) } : {}),
+      },
+    }
+    : {}),
   ...(args['channel-weight-vector'] !== undefined
     ? { channelWeights: { lexical: Number(args['channel-weight-lexical'] ?? 1), vector: Number(args['channel-weight-vector']) } }
     : {}),

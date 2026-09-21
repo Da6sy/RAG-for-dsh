@@ -156,6 +156,8 @@ export const RetrievalSchema = z.object({
   /** D2's calibration bounds (per embedder family, not per corpus). */
   semanticFloor: z.number().default(RETRIEVAL_DEFAULTS.semanticFloor),
   semanticCeil: z.number().default(RETRIEVAL_DEFAULTS.semanticCeil),
+  /** D3: `zero` (today) folds "not recalled" into 0; `absent` keeps the tri-state. */
+  missingFeatureMode: z.union([z.const('zero'), z.const('absent')]).default(RETRIEVAL_DEFAULTS.missingFeatureMode),
   featureWeights: z.object({
     bm25ish: z.number().default(DEFAULT_FEATURE_WEIGHTS.bm25ish),
     exactPhrase: z.number().default(DEFAULT_FEATURE_WEIGHTS.exactPhrase),
@@ -166,6 +168,12 @@ export const RetrievalSchema = z.object({
     freshness: z.number().default(DEFAULT_FEATURE_WEIGHTS.freshness),
     signalScore: z.number().default(DEFAULT_FEATURE_WEIGHTS.signalScore),
     docMountBonus: z.number().default(DEFAULT_FEATURE_WEIGHTS.docMountBonus),
+    // D4 (docs/修复方案-精排量纲与语义名次.md §3): rank features. They SHIP at 0 —
+    // the plan requires an A/B with numbers on disk before they count.
+    semanticRank: z.number().default(DEFAULT_FEATURE_WEIGHTS.semanticRank),
+    fusedRank: z.number().default(DEFAULT_FEATURE_WEIGHTS.fusedRank),
+    // D3's missing-value indicator — also 0.
+    semanticAbsent: z.number().default(DEFAULT_FEATURE_WEIGHTS.semanticAbsent),
   }).default({ ...DEFAULT_FEATURE_WEIGHTS }),
 })
 
