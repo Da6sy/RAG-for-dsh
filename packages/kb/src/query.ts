@@ -224,16 +224,40 @@ export function scoreEntry(
     matched = hits
   }
 
+  return applyGovernanceFactors(entry, raw, matched, scorer)
+}
+
+/**
+ * The governance multipliers plus the rounding law — the half of the score that
+ * depends only on the entry's FACTS, not on its text.
+ *
+ * Extracted in R1 so the indexed path can score a candidate straight from the
+ * index's per-entry facts (status / tier / needsReview) without reading the
+ * entry file: a common query token matches thousands of entries, and loading
+ * each of them to discover its status was the dominant cost left in the indexed
+ * path. One implementation for both paths, as always.
+ * @param facts - status/tier/needsReview (an entry or the index's facts record).
+ * @param raw - the raw lexical score.
+ * @param matched - the tokens that earned it.
+ * @param scorer - which rounding law applies (see below).
+ * @returns the score a caller orders by, plus the matched tokens.
+ */
+export function applyGovernanceFactors(
+  facts: { status: KbEntry['status']; tier: KbEntry['tier']; needsReview: boolean },
+  raw: number,
+  matched: readonly string[],
+  scorer: LexicalScorer,
+): { score: number; matched: string[] } {
   if (raw === 0 || matched.length === 0) return { score: 0, matched: [] }
   const adjusted = raw
-    * (STATUS_FACTOR[entry.status] ?? 0)
-    * (TIER_FACTOR[entry.tier] ?? 1)
-    * (entry.needsReview ? 0.7 : 1)
+    * (STATUS_FACTOR[facts.status] ?? 0)
+    * (TIER_FACTOR[facts.tier] ?? 1)
+    * (facts.needsReview ? 0.7 : 1)
   // `weights` keeps the historical two-decimal rounding (its raw score is a
   // small integer, so nothing is lost). BM25's score is continuous: rounding it
   // would manufacture ties and degrade the order into "by entryId", so the
   // ordering value stays exact.
-  return { score: scorer === 'bm25' ? adjusted : Math.round(adjusted * 100) / 100, matched }
+  return { score: scorer === 'bm25' ? adjusted : Math.round(adjusted * 100) / 100, matched: [...matched] }
 }
 
 /**
@@ -337,25 +361,54 @@ export async function queryKb(
   if (indexes.length > 0 && scorer === 'bm25') {
     const index = mergeLexicalIndexes(indexes)
     const stats = lexicalStatsFrom(index)
-    const indexed: QueryHit[] = []
+    /**
+     * PASS 1 — score from the index alone, without reading a single entry.
+     *
+     * The index carries everything the score needs (postings, field lengths,
+     * status/tier/review) and nothing the SCORE needs requires the entry's text
+     * (the tokens already came from the postings). Measured reason: a common
+     * query token matches thousands of entries, and a file read per candidate
+     * was the dominant cost left after the scan was removed.
+     */
+    const scored: Array<{ id: string; tier: KbEntry['tier']; score: number; matched: string[] }> = []
     for (const candidate of lexicalCandidates(index, queryTokens)) {
       const facts = candidate.facts
       if (facts.status === 'discarded') continue
       if (facts.status === 'expired' && options.includeExpired !== true) continue
       if (options.kinds !== undefined && !options.kinds.includes(facts.kind)) continue
+      const raw = bm25fScoreFrom(candidate.fields, queryTokens, stats, weights)
+      const { score, matched } = applyGovernanceFactors(facts, raw.score, raw.matched, scorer)
+      if (score === 0 || matched.length === 0) continue
+      scored.push({ id: candidate.id, tier: facts.tier, score, matched })
+    }
+    scored.sort((a, b) =>
+      b.score - a.score
+      || (a.tier === b.tier ? 0 : a.tier === 'project' ? -1 : 1)
+      || a.id.localeCompare(b.id))
+
+    /**
+     * PASS 2 — read only what can be RETURNED.
+     *
+     * `limit` is what the caller asked for; enrichment (freshness hashes, the
+     * reference touch, doc facts) is the expensive per-hit work, and it is
+     * done on the rows that leave this function. The scan path does it for
+     * every hit it considered; that difference is a PERFORMANCE fact, and the
+     * returned rows are provably the same (same sort key before and after
+     * enrichment — enrichment annotates, it never re-scores).
+     */
+    const indexed: QueryHit[] = []
+    for (const row of scored.slice(0, limit)) {
       // The index records the tier, but a lookup falls back to the other one:
       // the entry id is the identity, and "which store owns it" must never be
       // the reason a hit disappears (a mis-recorded tier would otherwise be a
       // silent ranking change).
-      const preferred = facts.tier === 'global' ? global : project
-      const other = facts.tier === 'global' ? project : global
+      const preferred = row.tier === 'global' ? global : project
+      const other = row.tier === 'global' ? project : global
       const entry = preferred === null
-        ? (other === null ? null : await other.get(candidate.id as KbEntryId))
-        : (await preferred.get(candidate.id as KbEntryId)) ?? (other === null ? null : await other.get(candidate.id as KbEntryId))
+        ? (other === null ? null : await other.get(row.id as KbEntryId))
+        : (await preferred.get(row.id as KbEntryId)) ?? (other === null ? null : await other.get(row.id as KbEntryId))
       if (entry === null) continue
-      const { score, matched } = scoreEntry(entry, queryTokens, weights, { scorer, stats, fields: candidate.fields })
-      if (score === 0 || matched.length === 0) continue
-      indexed.push({ entry, score, matched, annotations: annotationsFor(entry) })
+      indexed.push({ entry, score: row.score, matched: row.matched, annotations: annotationsFor(entry) })
     }
     return finishQuery(indexed, { project, global, options, at, limit })
   }

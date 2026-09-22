@@ -23,7 +23,16 @@
  *
  * @module @clue-harness/rag/retrieve
  */
-import { annotationsFor, queryKb, type KbEntry, type KbStore, type LexicalScorer, type QueryHit, type RetrievalWeights } from '@clue-harness/kb'
+import {
+  annotationsFor,
+  queryKb,
+  type KbEntry,
+  type KbStore,
+  type LexicalIndex,
+  type LexicalScorer,
+  type QueryHit,
+  type RetrievalWeights,
+} from '@clue-harness/kb'
 
 /** One retrieval call's knobs. */
 export interface RetrieveOptions {
@@ -61,6 +70,16 @@ export interface RagRetriever {
 export interface RetrieverConfig {
   /** Field weights; absent keys keep the kb defaults (3/2/1). */
   weights?: Partial<RetrievalWeights>
+  /**
+   * R1 (落地计划 §2-1): validated inverted indexes, project tier first.
+   *
+   * The delegated pure-lexical path (`--channel lexical --rerank off`, the
+   * rollback configuration) is a first-level query and gets the same index the
+   * hybrid path uses — otherwise the rollback switch would also be a 100×
+   * performance switch, and "关掉即今天" would quietly stop meaning "same
+   * speed, same answer".
+   */
+  lexicalIndexes?: readonly LexicalIndex[]
   /**
    * Score multiplier applied to text-matched bound hits (their promoted
    * score is what the annotation explains). Default 1.5. Set to 1 to keep
@@ -128,6 +147,7 @@ export function createFulltextRetriever(
       const hits = await queryKb(project, global, {
         text: query,
         limit: bindingRecall ? limit * 3 : limit,
+        ...(config.lexicalIndexes !== undefined ? { lexicalIndexes: config.lexicalIndexes } : {}),
         ...(options.includeExpired !== undefined ? { includeExpired: options.includeExpired } : {}),
         ...(options.includeGlobal !== undefined ? { includeGlobal: options.includeGlobal } : {}),
         ...(config.weights !== undefined ? { weights: config.weights } : {}),

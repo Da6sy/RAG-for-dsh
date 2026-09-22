@@ -361,6 +361,9 @@ export function createHybridRetriever(
     // --rerank off` is exactly the configuration the plan names as the way to
     // reproduce pre-R2 behavior (R2 of docs/开发记录.md).
     ...(config.lexicalScorer !== undefined ? { lexicalScorer: config.lexicalScorer } : {}),
+    // R1: the delegated rollback path gets the SAME index, so turning reranking
+    // off stays a quality switch rather than becoming a performance cliff.
+    ...(config.lexicalIndexes !== undefined ? { lexicalIndexes: config.lexicalIndexes } : {}),
   })
 
   const storeOf = (entry: KbEntry): KbStore | null => (entry.tier === 'global' ? global : project)

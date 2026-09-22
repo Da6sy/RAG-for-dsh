@@ -25,7 +25,13 @@
  * @module @clue-harness/kb-face/retrieval-plane
  */
 import { readSignals, type KbStore, type QueryHit } from '@clue-harness/kb'
-import { appendRankLog, createHybridRetriever, type ChunkVectorConfig, type VectorChannelState } from '@clue-harness/rag'
+import {
+  appendRankLog,
+  createHybridRetriever,
+  ensureLexicalIndexes,
+  type ChunkVectorConfig,
+  type VectorChannelState,
+} from '@clue-harness/rag'
 import type { Context } from '@deepseek-ai/cordis'
 import {
   embeddingKeyStatus,
@@ -67,6 +73,12 @@ export interface PlaneRetrieval {
   profile: string
   /** Why the semantic channel did or did not contribute (不变量 5). */
   vector: VectorChannelState
+  /**
+   * R1: whether the first level answered from the inverted index or scanned the
+   * corpus, plus the reason when it scanned (不变量 5 applies to performance
+   * degradations too: "索引待建" must be readable, not just slower).
+   */
+  lexicalIndex: { used: boolean; note: string }
 }
 
 /** The retrieval plane's own state, as a panel or a CLI line reports it. */
@@ -151,7 +163,21 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
     const useVector = ready && tuning.fusion === 'rrf'
     const home = options.home
     const profile = retrieveOptions.profile ?? 'tool'
+    // R1 (落地计划 §2-1): the faced layer owns the POLICY — make sure every tier
+    // has an index, rebuilding a derived layer silently when it is merely
+    // missing/stale, and handing the retriever the honest note when it is not.
+    // Rollback switch, and the switch an A/B needs: `CLUE_LEXICAL_INDEX=off`
+    // (or `scan`) reproduces the pre-R1 scanning path exactly.
+    const indexMode = (process.env.CLUE_LEXICAL_INDEX ?? '').toLowerCase()
+    const lexical = indexMode === 'off' || indexMode === 'scan'
+      ? { indexes: [], status: 'missing' as const, note: '词法索引被显式关闭(CLUE_LEXICAL_INDEX=off),本次扫描全库' }
+      : await ensureLexicalIndexes([stores.project, stores.global])
+    if (process.env.CLUE_LEXICAL_INDEX_DEBUG === '1') {
+      warn(`[r1-debug] 索引候选=${lexical.indexes.length} 状态=${lexical.status} 备注=${lexical.note}`)
+    }
     const retriever = createHybridRetriever(stores.project, stores.global, {
+      ...(lexical.indexes.length > 0 ? { lexicalIndexes: lexical.indexes } : {}),
+      lexicalIndexNote: lexical.note,
       channels: useVector ? 'hybrid' : 'lexical',
       profile,
       rerank: tuning.rerank,
@@ -199,6 +225,7 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
     })
     return {
       hits: detailed.hits,
+      lexicalIndex: detailed.lexicalIndex,
       channels: useVector ? 'hybrid' : 'lexical',
       rerank: detailed.rerank,
       profile: detailed.profile.name,

@@ -36,8 +36,15 @@ export interface LexicalIndexSelection {
   note: string
 }
 
-/** How long a failed attempt is remembered (milliseconds). */
-export const LEXICAL_INDEX_RETRY_COOLDOWN_MS = 30_000
+/**
+ * How long a failed attempt is remembered (milliseconds).
+ *
+ * Short on purpose: the cooldown stops a store that is rewritten between every
+ * query from rebuilding the whole index each time, and a blocked rebuild costs
+ * only PERFORMANCE (the caller scans instead) — never correctness. A long window
+ * would keep a healthy library on the slow path for no reason.
+ */
+export const LEXICAL_INDEX_RETRY_COOLDOWN_MS = 2_000
 
 /** Attempt stamps per store dir (process-local: it only guards repeated work). */
 const LAST_ATTEMPT = new Map<string, number>()
@@ -71,9 +78,20 @@ export async function ensureLexicalIndexes(
   const cooldown = options.cooldownMs ?? LEXICAL_INDEX_RETRY_COOLDOWN_MS
   const indexes: LexicalIndex[] = []
   const notes: string[] = []
-  let worst: LexicalIndexStatus | 'partial' | null = null
   const tiers = stores.filter((store): store is KbStore => store !== null)
   if (tiers.length === 0) return { indexes: [], status: 'missing', note: '没有可索引的库' }
+  /**
+   * ALL OR NOTHING, and that is the whole safety argument.
+   *
+   * An index that covers only some of the participating tiers would change the
+   * corpus the query sees — `df`, the averages, and the candidate set all shrink
+   * with it — so "partial" is not a slower answer, it is a WRONG one. (Measured:
+   * a stale project index plus no global index silently turned a gate retrieval
+   * into zero hits.) So the moment one tier cannot be indexed, NO index is
+   * handed over and the scan path runs for the whole query.
+   */
+  let blocked: LexicalIndexStatus | null = null
+  let blockedNote = ''
 
   for (const store of tiers) {
     const loaded = await loadLexicalIndex(store.dir, {
@@ -83,6 +101,14 @@ export async function ensureLexicalIndexes(
     if (loaded.index !== null) {
       indexes.push(loaded.index)
       continue
+    }
+    // An EMPTY tier owes nothing: it contributes no statistics and no
+    // candidates, so "no index file" is not a gap for it.
+    if (loaded.status === 'missing' && (await emptyStore(store))) continue
+    if (loaded.status === 'over-budget') {
+      blocked = 'over-budget'
+      blockedNote = loaded.note
+      break
     }
     const repairable = loaded.status === 'missing' || loaded.status === 'stale' || loaded.status === 'corrupt'
     const last = LAST_ATTEMPT.get(store.dir) ?? 0
@@ -98,24 +124,37 @@ export async function ensureLexicalIndexes(
         notes.push(`索引已重建(${built.report.entries} 条 / ${built.report.postings} 条 posting)`)
         continue
       }
-      notes.push(built.report.reason)
-      worst = 'over-budget'
-      continue
+      blocked = built.report.overBudget ? 'over-budget' : 'stale'
+      blockedNote = built.report.reason
+      break
     }
-    notes.push(loaded.note)
-    // The worst status wins the summary: a caller that prints one line must see
-    // the reason the corpus was scanned, not the cheerful half.
-    if (worst === null || loaded.status !== 'current') worst = loaded.status
+    blocked = loaded.status
+    blockedNote = repairable && options.noBuild !== true && now() - last < cooldown
+      ? `${loaded.note}(重建冷却中,${Math.ceil((cooldown - (now() - last)) / 1000)}s 后重试)`
+      : loaded.note
+    break
   }
 
-  const allIndexed = indexes.length === tiers.length && indexes.length > 0
+  if (blocked !== null) {
+    return {
+      indexes: [],
+      status: blocked,
+      note: `${blockedNote};本次整条查询退回全库扫描(索引只覆盖部分库会让结果变错,不只是变慢)`,
+    }
+  }
   return {
     indexes,
-    status: allIndexed ? (worst === null ? 'current' : worst) : indexes.length > 0 ? 'partial' : (worst ?? 'missing'),
-    note: allIndexed
-      ? (notes.length === 0 ? '词法索引可用(本次未扫描全库)' : notes.join(';'))
-      : notes.length === 0
-        ? '词法索引不可用,本次退回全库扫描'
-        : notes.join(';'),
+    status: 'current',
+    note: notes.length === 0 ? '词法索引可用(本次未扫描全库)' : notes.join(';'),
+  }
+}
+
+/** Whether a store holds no entries at all (then it needs no index). */
+async function emptyStore(store: KbStore): Promise<boolean> {
+  try {
+    const entries = await store.list()
+    return entries.length === 0
+  } catch {
+    return false
   }
 }

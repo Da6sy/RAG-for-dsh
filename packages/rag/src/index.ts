@@ -112,7 +112,13 @@ export {
   type RerankFeatureWeights,
   type RerankResult,
 } from './rerank.ts'
-export { RETRIEVAL_DEFAULTS, type RetrievalDefaults } from './defaults.ts'
+export { RETRIEVAL_DEFAULTS, resolveLexicalNormalization, resolveSemanticScale, type RetrievalDefaults, type ScaleChannel } from './defaults.ts'
+export {
+  ensureLexicalIndexes,
+  forgetLexicalIndexPolicy,
+  LEXICAL_INDEX_RETRY_COOLDOWN_MS,
+  type LexicalIndexSelection,
+} from './lexical-index-policy.ts'
 export {
   DEFAULT_RECALL_DEPTH,
   DEFAULT_RERANK_CANDIDATES,
