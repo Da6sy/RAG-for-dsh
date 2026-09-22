@@ -108,3 +108,20 @@ test('不变量 8 的钉子: embedderVersion 只有 types.ts 一个出处', asyn
   }
   assert.deepEqual(offenders, [], '这些文件自己拼了 embedderVersion 字符串(应调用 embedderVersion())')
 })
+
+test('落地计划 §2-1: indexVersion 只在 kb 的 types.ts 生成一处', async () => {
+  const files = await sourceFiles(path.join(repoRoot, 'packages'))
+  const offenders: string[] = []
+  for (const file of files) {
+    const relative = path.relative(repoRoot, file)
+    if (relative.endsWith(path.join('kb', 'src', 'types.ts'))) continue
+    if (relative.endsWith('architecture.test.ts')) continue
+    const source = await readFile(file, 'utf8')
+    // The same rule as `embedderVersion`: a hand-built stamp somewhere else is
+    // how `chunkerVersion` ended up in three files with one of them stale, and
+    // every query decided the ledger needed a rebuild.
+    if (/'lexical-v1/.test(source) || /`lexical-v1/.test(source)) offenders.push(relative)
+    if (/function\s+lexicalIndexVersion/.test(source)) offenders.push(relative)
+  }
+  assert.deepEqual(offenders, [], '这些文件自己拼了词法索引版本号(应调用 lexicalIndexVersion())')
+})

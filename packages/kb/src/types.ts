@@ -219,6 +219,29 @@ export function embedderVersion(input: { modelId: string; dim: number }): string
 }
 
 /**
+ * The lexical-index format stamp (落地计划 §2-1).
+ *
+ * Same rule as {@link embedderVersion}: the string is built in exactly ONE
+ * place, and an architecture test pins that. The lesson is on the record —
+ * `chunkerVersion` once lived as a literal in three files and every query
+ * decided the ledger was stale (坑 1 of `k-mtzi7ju0-a9b33b`). The inverted
+ * index is a derived layer of the same kind, so it gets the same treatment.
+ *
+ * Bump the trailing revision whenever the POSTINGS' meaning changes (fields,
+ * tokenizer contract, presence-vs-count semantics) — a changed meaning with an
+ * unchanged stamp is how a stale index keeps answering.
+ */
+export const LEXICAL_INDEX_FORMAT = 'lexical-v1'
+
+/**
+ * The ONE place a lexical-index version string is built.
+ * @returns the format stamp the index files must carry.
+ */
+export function lexicalIndexVersion(): string {
+  return `${LEXICAL_INDEX_FORMAT}:k1=${1.2}:b=${0.75}`
+}
+
+/**
  * One derived retrieval unit (proposal §3/§4). Chunks own NOTHING: no status,
  * no signal, no approval, no lifecycle. They are rebuilt from the immutable
  * snapshot whenever `chunkerVersion` no longer matches the current chunker.

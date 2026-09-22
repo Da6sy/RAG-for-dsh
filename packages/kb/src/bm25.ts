@@ -139,6 +139,27 @@ export interface Bm25Score {
 }
 
 /**
+ * A document's fields as an INDEX already knows them (落地计划 §2-1).
+ *
+ * Why this exists: with an inverted index, the query path must not tokenize a
+ * document to score it — the postings already say which query tokens occur in
+ * which field, and the meta table already carries the field lengths. Passing
+ * those in lets the SAME arithmetic serve both a scan and a lookup; a second
+ * scoring function for the indexed path is exactly the "two copies of the
+ * formula" the module header forbids.
+ */
+export interface PrecomputedFields {
+  /** Distinct-token count per field (what the length normalizer divides by). */
+  lengths: { title: number; tag: number; text: number }
+  /** Query tokens that occur in the title (presence). */
+  title: ReadonlySet<string>
+  /** Query tokens that occur in the tags (presence). */
+  tag: ReadonlySet<string>
+  /** Query tokens that occur in the redline-filtered body (presence). */
+  text: ReadonlySet<string>
+}
+
+/**
  * Score one document with BM25F (field-weighted BM25).
  *
  * `score = Σ_t IDF(t) · Σ_f w_f · tf_f · (k1+1) / (tf_f + k1 · (1 − b + b · len_f/avgLen_f))`
@@ -165,14 +186,39 @@ export function bm25fScore(
   stats: LexicalStats,
   weights: Bm25FieldWeights,
 ): Bm25Score {
-  const title = new Set(fields.title)
-  const tag = new Set(fields.tag)
-  const text = new Set(fields.text)
+  return bm25fScoreFrom({
+    lengths: { title: fields.title.length, tag: fields.tag.length, text: fields.text.length },
+    title: new Set(fields.title),
+    tag: new Set(fields.tag),
+    text: new Set(fields.text),
+  }, queryTokens, stats, weights)
+}
+
+/**
+ * The SAME BM25F arithmetic, over fields an inverted index already knows.
+ *
+ * {@link bm25fScore} is a thin adapter over this function — the formula is
+ * written once, so a scan and a lookup can never drift apart.
+ * @param fields - per-field lengths plus the query tokens present in each field.
+ * @param queryTokens - the query's tokens.
+ * @param stats - the corpus statistics (from the index, when there is one).
+ * @param weights - field weights.
+ * @returns the raw BM25 score (unrounded) and the matched tokens.
+ */
+export function bm25fScoreFrom(
+  fields: PrecomputedFields,
+  queryTokens: readonly string[],
+  stats: LexicalStats,
+  weights: Bm25FieldWeights,
+): Bm25Score {
+  const title = fields.title
+  const tag = fields.tag
+  const text = fields.text
   const norm = (length: number, average: number): number =>
     1 - BM25_B + BM25_B * (average <= 0 ? 1 : length / average)
-  const titleNorm = norm(fields.title.length, stats.avgTitle)
-  const tagNorm = norm(fields.tag.length, stats.avgTag)
-  const textNorm = norm(fields.text.length, stats.avgText)
+  const titleNorm = norm(fields.lengths.title, stats.avgTitle)
+  const tagNorm = norm(fields.lengths.tag, stats.avgTag)
+  const textNorm = norm(fields.lengths.text, stats.avgText)
   const saturation = (weight: number, normalizedLength: number): number =>
     weight * ((BM25_K1 + 1) / (1 + BM25_K1 * normalizedLength))
 

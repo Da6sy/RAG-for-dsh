@@ -50,9 +50,36 @@ export {
   type Bm25Fields,
   type Bm25Score,
   type LexicalStats,
+  type PrecomputedFields,
   type StatsDoc,
 } from './bm25.ts'
-export { tokenize } from './tokenize.ts'
+export { tokenize, tokenizeCounts } from './tokenize.ts'
+export {
+  buildLexicalIndex,
+  DEFAULT_LEXICAL_BUDGET,
+  entryProjectionHash,
+  fingerprintLexicalEntries,
+  fingerprintLexicalIndex,
+  forgetLexicalIndex,
+  lexicalCandidates,
+  lexicalIndexDir,
+  lexicalStatsFrom,
+  loadLexicalIndex,
+  LEXICAL_FIELD_ORDER,
+  LEXICAL_INDEX_DIRNAME,
+  LEXICAL_META_FILE,
+  LEXICAL_POSTINGS_FILE,
+  type FieldTriple,
+  type LexicalCandidate,
+  type LexicalEntryFacts,
+  type LexicalIndex,
+  type LexicalIndexBudget,
+  type LexicalIndexLoad,
+  type LexicalIndexMeta,
+  type LexicalIndexReport,
+  type LexicalIndexStatus,
+  type LexicalPosting,
+} from './lexical-index.ts'
 export {
   chunkDocument,
   DEFAULT_CHUNKER,
