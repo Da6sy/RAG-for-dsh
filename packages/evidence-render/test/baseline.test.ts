@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { RENDER_SNAPSHOT_VERSION, type LayoutSnapshot } from '../src/types.ts'
@@ -15,6 +15,7 @@ import {
   baselinesDir,
   confirmBaseline,
   encodeSegment,
+  externalAssetsOf,
   isStale,
   loadBaseline,
   saveBaseline,
@@ -129,4 +130,43 @@ test('sourceHash is sha256 of bytes and stable', async () => {
   const b = await sourceHash(fixture)
   assert.equal(a, b)
   assert.match(a, /^[0-9a-f]{64}$/)
+})
+
+// ── §9 of the 落地计划: 基准要绑页面的外链样式/脚本,不能只绑页面文件本身 ──
+test('externalAssetsOf 只取本地样式与脚本,跳过远程/内联/重复', () => {
+  const html = [
+    '<html><head>',
+    '<link rel="stylesheet" href="style.css">',
+    "<link rel='stylesheet' href='./sub/theme.css'>",
+    '<link rel="stylesheet" href="https://cdn.example.com/x.css">',
+    '<link rel="icon" href="favicon.ico">',
+    '<script src="app.js"></script>',
+    '<script src="//cdn.example.com/lib.js"></script>',
+    '<script>const inline = 1;</script>',
+    '<script src="app.js"></script>',
+    '</head></html>',
+  ].join('\n')
+  assert.deepEqual(externalAssetsOf(html), ['./sub/theme.css', 'app.js', 'style.css'])
+})
+
+test('§9 回归:改了页面引用的外部 CSS,基准必须变 stale', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'clue-baseline-assets-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await writeFile(path.join(root, 'search.html'), '<link rel="stylesheet" href="style.css"><h1>Search</h1>', 'utf8')
+  await writeFile(path.join(root, 'style.css'), ':root { --ink: #111; }', 'utf8')
+
+  const pageRel = 'search.html'
+  const hashes: Record<string, string> = { [pageRel]: await sourceHash(path.join(root, pageRel)) }
+  const pageHtml = await readFile(path.join(root, pageRel), 'utf8')
+  for (const asset of externalAssetsOf(pageHtml)) {
+    hashes[asset.replace(/^\.\//, '')] = await sourceHash(path.join(root, asset.replace(/^\.\//, '')))
+  }
+  const saved = await saveBaseline(root, snapshot(pageRel), hashes)
+  const record = saved.record
+  assert.deepEqual(Object.keys(record.sourceHashes).sort(), ['search.html', 'style.css'])
+
+  // 只改外部 CSS:哈希变了 ⇒ stale(这正是旧采集端看不见的那种改动)
+  const afterCss = { ...hashes, 'style.css': await sourceHash(path.join(root, 'style.css')).then(() => 'CHANGED') }
+  assert.equal(isStale(record, afterCss), true, '外链 CSS 变了必须标 stale')
+  assert.equal(isStale(record, hashes), false, '什么都没改时不得误报')
 })

@@ -143,8 +143,15 @@ export interface Config {
   injectPerEntryChars?: number
   /**
    * M9-0: an entry yields ENTIRELY (保广度弃深度) when the remainder of the
-   * block budget cannot hold at least this much of it. Default 200 — below
-   * that a line is a stub, and breadth beats a mutilated tail.
+   * block budget cannot hold at least this much of it.
+   *
+   * The shipped floor is **0** (`DEFAULT_INJECT_MIN_ENTRY_CHARS`, the one source
+   * in `packages/kb/src/render.ts`): a non-zero default would silently drop short
+   * entries from a block that still had room, and "retrieved but not shown" is
+   * indistinguishable from "does not exist" to the model reading the block. It is
+   * a DEPLOYMENT knob — a demo with a tiny budget raises it to keep the block
+   * legible. (This comment said "Default 200" while the code said 0; §9 of the
+   * 落地计划 caught the drift, and the code was right.)
    */
   injectMinEntryChars?: number
   /** Include expired (annotated) entries in retrieval. Default false. */

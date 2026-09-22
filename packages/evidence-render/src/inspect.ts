@@ -11,7 +11,7 @@
  * @module @clue-harness/evidence-render/inspect
  */
 import path from 'node:path'
-import { realpath, stat } from 'node:fs/promises'
+import { readFile, realpath, stat } from 'node:fs/promises'
 import { RENDER_SNAPSHOT_VERSION, type LayoutSnapshot } from './types.ts'
 import { serializeSnapshotJson, serializeSnapshotText } from './serialize.ts'
 import { DEFAULT_EXTRACT_CONFIG, extractInPage, type ExtractConfig, type RawLayout } from './extract.ts'
@@ -23,7 +23,7 @@ import { diffSnapshots, type DiffReport } from './diff.ts'
 import { serializeAssertionsText, serializeDiffText } from './report.ts'
 import {
   baselinePath, baselineSnapshot, clueHome, confirmBaseline, isStale,
-  loadBaseline, saveBaseline, sourceHash, type BaselineRecord,
+  externalAssetsOf, loadBaseline, saveBaseline, sourceHash, type BaselineRecord,
 } from './baseline.ts'
 
 export type InspectMode = 'show' | 'record' | 'compare' | 'confirm'
@@ -86,7 +86,21 @@ export async function inspectPage(options: InspectOptions): Promise<InspectResul
     }
   }
 
+  /**
+   * §9 of the 落地计划: bind the page AND the local styles/scripts it pulls in.
+   * `isStale` already compares both directions; the collector was the half that
+   * only ever handed it one file, so an edited external CSS never marked a
+   * baseline stale.
+   */
   const hashes: Record<string, string> = { [pageRel]: await sourceHash(pageAbs) }
+  const pageHtml = await readFile(pageAbs, 'utf8').catch(() => '')
+  for (const asset of externalAssetsOf(pageHtml)) {
+    const assetAbs = path.resolve(path.dirname(pageAbs), asset.split(/[?#]/)[0] as string)
+    if (!assetAbs.startsWith(projectRoot)) continue
+    const assetInfo = await stat(assetAbs).catch(() => null)
+    if (assetInfo === null || !assetInfo.isFile()) continue
+    hashes[path.relative(projectRoot, assetAbs).replace(/\\/g, '/')] = await sourceHash(assetAbs)
+  }
 
   const probe = await probeBrowser()
   if (!probe.ok) {

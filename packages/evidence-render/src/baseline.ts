@@ -129,6 +129,35 @@ export async function confirmBaseline(projectRoot: string, pageRel: string, home
   return record
 }
 
+/**
+ * The LOCAL files a page pulls in: stylesheets and scripts.
+ *
+ * §9 of `docs/落地计划-剩余工程.md` found the gap: the collector hashed only the
+ * page itself, while `BaselineRecord.sourceHashes` and {@link isStale} were built
+ * for many files — so editing an external CSS or JS file left the baseline
+ * "fresh" and the comparison silently judged the new code against an old
+ * baseline. Remote URLs are skipped on purpose: they are not files this project
+ * can hash, and pretending to bind them would be a check that cannot fail.
+ * @param html - the page's markup.
+ * @returns project-root-relative-ish hrefs/srcs, de-duplicated and sorted.
+ */
+export function externalAssetsOf(html: string): string[] {
+  const out = new Set<string>()
+  for (const tag of html.matchAll(/<link\b[^>]*>/gi)) {
+    const text = tag[0]
+    if (!/\brel\s*=\s*["']?[^"'>]*stylesheet/i.test(text)) continue
+    const href = /\bhref\s*=\s*["']([^"']+)["']/i.exec(text)?.[1]
+    if (href !== undefined) out.add(href.trim())
+  }
+  for (const tag of html.matchAll(/<script\b[^>]*>/gi)) {
+    const src = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(tag[0])?.[1]
+    if (src !== undefined) out.add(src.trim())
+  }
+  return [...out]
+    .filter((value) => value !== '' && !/^[a-z]+:\/\//i.test(value) && !value.startsWith('//') && !value.startsWith('data:'))
+    .sort()
+}
+
 /** True when any bound source file's hash no longer matches the record. */
 export function isStale(record: BaselineRecord, currentHashes: Record<string, string>): boolean {
   for (const [file, hash] of Object.entries(record.sourceHashes)) {

@@ -11,6 +11,7 @@
  *
  * @module @clue-harness/evidence-render
  */
+export { externalAssetsOf } from './baseline.ts'
 export {
   RENDER_SNAPSHOT_VERSION,
   type AssertionResult,

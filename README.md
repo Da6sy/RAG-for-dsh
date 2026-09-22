@@ -54,12 +54,19 @@ node apps/cli/src/bin.ts kb rescue <id> --reason "复查后其实是对的"     
 node scripts/demo-twolevel.mjs   # 徽章 → 分片浏览器 → 划除 → 拆分 → 提升 → 审批工作台(待复核/候选)
 ```
 
-## 向量混合检索与精排速览（V0–V2）
+## 检索速览（一级 BM25 + 倒排索引 + 向量混合 + 精排）
 
-词法（CJK bigram）与向量**并联召回 → RRF 融合（k=60）→ 确定性特征精排**；
-向量层是派生索引（`vectors/` 删了能重建），嵌入走外部 OpenAI 兼容端点，
+词法（BM25F，CJK bigram）与向量**并联召回 → RRF 融合（k=60）→ 确定性特征精排**；
+**一级检索走倒排索引**（`<工作区>/lexical/`，派生层：删了会按预算静默重建，坏了就退回全库扫描并在结果里标注"索引待建"）——
+实测 nfcorpus（3633 条）单查询 **1.61s → 67ms**，回滚档（`--channel lexical --rerank off`）3.36s → 21ms。
+向量层同样是派生索引（`vectors/` 删了能重建），嵌入走外部 OpenAI 兼容端点，
 url / key / model 由第三个设置页「知识检索与向量」管理，**密钥只存引用或凭据存储，永不回显**。
 无嵌入配置时**无损降级**为纯词法并在检索结果里如实标注（绝不把词法命中伪装成语义命中）。
+
+**两条硬线**（`clue bench diff` 判定，容差 0，失败即退出码 1）：
+`hybrid+rerank ≥ lexical+rerank`，且真端点上 `hybrid+rerank ≥ hybrid+no-rerank`。
+**量纲档位默认 `auto`**：hybrid 用绝对词法尺度 + 语义定标，纯词法保持旧档（显式值永远优先）。
+其余旋钮（词频口径、子词切分、语义归一化与门控、通道权重含义、向量独有配额）都在设置页「检索调优 → 量纲与名次」，**默认都是今天的行为**，A/B 之后再翻。
 
 ```bash
 # 配置(CLI 与设置页写同一份文档:$DSH_HOME/settings.yaml + dsh 凭据存储)
@@ -77,7 +84,9 @@ node apps/cli/src/bin.ts kb query 分片 重建 --explain          # 分数分�
 
 # 消融台:每配置一行 + 相对纯词法基线的 delta + 硬护栏
 node apps/cli/src/bin.ts recall --embedder hash               # 默认跑 词法/混合 × 精排开关 四行
-node scripts/demo-embedding.mjs                               # 真浏览器验收(15 项断言 + 截图)
+node scripts/demo-embedding.mjs                               # 真浏览器验收(39 项断言 + 截图)
+node scripts/bench-beir.mjs --dataset scifact --queries 50 --embedder http   # 公开基准;clue bench diff 判硬线
+node scripts/diagnose-rerank-recall.mjs --datasets coir-cosqa --embedder http # 取证:谁被挤出去、被谁挤掉
 ```
 
 **V3–V5 已落地**：三通道 profile（pre-step/gate/tool，含 query 规范化与标识符只走词法）· 提示词意图句 A/B（真模型）·
