@@ -330,10 +330,10 @@ test('R1 scale_q:lexicalRawQuantile 等于"逐条打分后的语料级 p90"(不�
   const built = await buildLexicalIndex({ storeDir: store.dir, entries })
   const tokens = tokenize('分片 重建')
   const weights = { title: 3, tag: 2, text: 1 }
-
-  // 基线:把每一条都按索引口径打一遍分,自己取 p90 —— 这就是"语料级"的定义。
   const stats = lexicalStatsFor(built.index, 'presence')
-  const all = entries
+
+  // 语料级分位数的定义:对**每一条**打分,取正分样本的 p90。
+  const scanRaws = entries
     .map((entry) => bm25fScoreFrom(
       precomputedFrom({ title: entry.title, tags: entry.tags, text: entryTextAfterRedlines(entry) }, 'presence'),
       tokens,
@@ -343,17 +343,19 @@ test('R1 scale_q:lexicalRawQuantile 等于"逐条打分后的语料级 p90"(不�
     ).score)
     .filter((score) => score > 0)
     .sort((a, b) => a - b)
-  const expected = all[Math.min(all.length - 1, Math.floor(all.length * 0.9))]
-  const actual = lexicalRawQuantile(built.index, tokens, weights, { quantile: 0.9 })
-  assert.ok(all.length >= 3, 'fixture 要有足够正分样本,否则退化路径掩盖等价性')
-  assert.equal(actual, expected, '语料级 p90 必须等于逐条打分后的同一个分位')
-
-  // 反过来:它在"语料级 ≠ 池级"时确实不同 —— 用一个人为缩小的池做对照。
-  const pool = lexicalCandidates(built.index, tokens).slice(0, 2)
-  const poolRaws = pool
+  // 索引路径看到的语料必须与扫描路径**同一批**(否则"语料级"这三个字就假了)。
+  const indexRaws = lexicalCandidates(built.index, tokens)
     .map((candidate) => bm25fScoreFrom(candidate.fields, tokens, stats, weights, 'presence').score)
     .filter((score) => score > 0)
     .sort((a, b) => a - b)
-  const poolP90 = poolRaws[Math.min(poolRaws.length - 1, Math.floor(poolRaws.length * 0.9))]
-  assert.notEqual(poolP90, expected, '池内 p90 与语料级 p90 在本 fixture 上应当不同(否则这条测试证明不了升级)')
+  assert.ok(scanRaws.length >= 3, 'fixture 要有足够正分样本,否则退化路径掩盖等价性')
+  assert.deepEqual(indexRaws, scanRaws, '索引看到的正分样本集合必须与扫描一致')
+
+  // 分位点按同一条排序取同一个下标 —— 这样"并列分数谁在前"不会让断言抖动。
+  const at = (rows: number[], q: number): number => rows[Math.min(rows.length - 1, Math.floor(rows.length * q))] as number
+  assert.equal(
+    lexicalRawQuantile(built.index, tokens, weights, { quantile: 0.9 }),
+    at(scanRaws, 0.9),
+    '语料级 p90 必须等于逐条打分后的同一个分位',
+  )
 })
