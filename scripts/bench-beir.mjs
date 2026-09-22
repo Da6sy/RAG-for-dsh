@@ -91,7 +91,7 @@ const args = parseArgs(process.argv.slice(2))
 // what those lines reference (a top-level `await import` is evaluated in order).
 const { buildVectorIndex, createHybridRetriever, hashEmbedder, CHANNEL_PROFILES, RETRIEVAL_DEFAULTS } = await import('@clue-harness/rag')
 /**
- * Which first-level formula to measure (R2 of `docs/修复规划-一级检索BM25化.md`).
+ * Which first-level formula to measure (R2 of `docs/开发记录.md`).
  *
  * Default is the product default (`bm25`). `weights` exists so the rollback
  * switch can be verified AT THIS LEVEL: the archived pre-R2 numbers were
@@ -103,7 +103,7 @@ const scorer = args.scorer ?? RETRIEVAL_DEFAULTS.lexicalScorer
 if (scorer !== 'bm25' && scorer !== 'weights') throw new Error(`--scorer 只接受 bm25|weights,收到 ${scorer}`)
 
 /**
- * F0 of `docs/修改规划-混合检索反超单BM25.md`: the fusion/rerank knobs must be
+ * F0 of `docs/开发记录.md`: the fusion/rerank knobs must be
  * reachable FROM HERE.
  *
  * Why this is F0 rather than a nicety: the harness used to pass none of these,
@@ -468,7 +468,7 @@ try {
      * The hard lines, each with ZERO tolerance (both plans say so in those words).
      *
      * 1. F0 (规划 §5 不变量 2): with reranking on, hybrid may not lose to lexical.
-     * 2. P4 of `docs/修复方案-精排量纲与语义名次.md`: on a REAL endpoint, the
+     * 2. P4 of `docs/开发记录.md`: on a REAL endpoint, the
      *    reranker may not lose to the fusion it is reordering. That is the defect
      *    the D-plan exists for (0.4265 vs 0.4829), and it is checked separately
      *    from line 1 because it is the one the D1/D2 switches are supposed to fix.

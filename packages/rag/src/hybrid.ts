@@ -144,7 +144,7 @@ export interface HybridConfig {
   semanticFloor?: number
   semanticCeil?: number
   /**
-   * D3 (`docs/修复方案-精排量纲与语义名次.md` §3): how a feature whose channel did
+   * D3 (`docs/开发记录.md` §3): how a feature whose channel did
    * not recall the candidate is treated. `zero` (default) is today.
    */
   missingFeatureMode?: 'zero' | 'absent'
@@ -307,7 +307,7 @@ export function createHybridRetriever(
     ...(config.topK !== undefined ? { topK: config.topK } : {}),
     // The rollback switch must reach the DELEGATED path too: `--channel lexical
     // --rerank off` is exactly the configuration the plan names as the way to
-    // reproduce pre-R2 behavior (R2 of docs/修复规划-一级检索BM25化.md).
+    // reproduce pre-R2 behavior (R2 of docs/开发记录.md).
     ...(config.lexicalScorer !== undefined ? { lexicalScorer: config.lexicalScorer } : {}),
   })
 

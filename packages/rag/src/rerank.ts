@@ -66,7 +66,7 @@ export interface RerankFeatureWeights {
   signalScore: number
   docMountBonus: number
   /**
-   * D4 (`docs/修复方案-精排量纲与语义名次.md` §3): the SEMANTIC channel's rank as
+   * D4 (`docs/开发记录.md` §3): the SEMANTIC channel's rank as
    * a feature. Default weight 0 — the plan's 待拍板 §9-3: add the feature, keep
    * the behavior, decide the weight only after an A/B.
    */
@@ -211,7 +211,7 @@ export interface RerankContext {
   /** The channel profile (recorded in the explanation; weights live in fusion). */
   profile?: ChannelProfile
   /**
-   * D1 (`docs/修复方案-精排量纲与语义名次.md` §3): what `bm25ish` is relative TO.
+   * D1 (`docs/开发记录.md` §3): what `bm25ish` is relative TO.
    *
    * `candidates` (default, = today) divides by the best raw score IN the
    * candidate set, so SOME document is always scaled to 1.0 — the feature cannot

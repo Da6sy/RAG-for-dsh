@@ -1,5 +1,5 @@
 /**
- * `@clue-harness/eval` — the evaluation engine (規劃 `docs/设计规划_评测路线.md` E1/E2).
+ * `@clue-harness/eval` — the evaluation engine (規劃 `docs/设计.md` E1/E2).
  *
  * Three jobs, and nothing else:
  *

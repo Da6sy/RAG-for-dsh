@@ -1,5 +1,5 @@
 /**
- * D1/D2 of `docs/修复方案-精排量纲与语义名次.md` — the two scales that make the
+ * D1/D2 of `docs/开发记录.md` — the two scales that make the
  * reranker's features comparable.
  *
  * The measured defect these fix (真端点 cosqa, 20 查询): `hybrid+rerank` lost to

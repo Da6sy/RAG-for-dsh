@@ -1,5 +1,5 @@
 /**
- * F1 of `docs/修改规划-混合检索反超单BM25.md` — the embedder-ability gate.
+ * F1 of `docs/开发记录.md` — the embedder-ability gate.
  *
  * The plan's attribution was explicit: with `hashEmbedder` (a deterministic
  * fallback with no semantic ability) the semantic channel was REPLACING lexical

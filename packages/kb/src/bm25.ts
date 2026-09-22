@@ -1,6 +1,6 @@
 /**
  * BM25F — the ONE implementation of the lexical ranking formula (R1/R2 of
- * `docs/修复规划-一级检索BM25化.md`).
+ * `docs/开发记录.md`).
  *
  * Why this file exists at all: the formula was already written, in the wrong
  * layer. `packages/rag`'s reranker had `bm25ish` (IDF + a length norm) as a

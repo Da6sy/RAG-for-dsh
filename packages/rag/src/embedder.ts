@@ -36,7 +36,7 @@ export interface Embedder {
   readonly dim: number
   /**
    * What the embedder can actually do, SELF-REPORTED (F1 of
-   * `docs/修改规划-混合检索反超单BM25.md`).
+   * `docs/开发记录.md`).
    *
    * `none` means "this is a deterministic fallback, not a semantic model" —
    * `hashEmbedder` is a hashed bag of tokens, so its ranking carries no meaning

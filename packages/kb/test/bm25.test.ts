@@ -1,5 +1,5 @@
 /**
- * R1/R2 of `docs/修复规划-一级检索BM25化.md` — the BM25 engine invariants.
+ * R1/R2 of `docs/开发记录.md` — the BM25 engine invariants.
  *
  * The three claims that matter, and why each is a test rather than a comment:
  *

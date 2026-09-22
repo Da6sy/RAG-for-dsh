@@ -144,12 +144,12 @@ export const RetrievalSchema = z.object({
    */
   queryStyle: z.union([z.const('intent'), z.const('keywords')]).default(RETRIEVAL_DEFAULTS.queryStyle),
   /**
-   * R2 of `docs/修复规划-一级检索BM25化.md`: which first-level ranking formula
+   * R2 of `docs/开发记录.md`: which first-level ranking formula
    * ships. `bm25` is the new default; `weights` reproduces the pre-R2 order
    * exactly (the rollback switch, pinned by a test).
    */
   lexicalScorer: z.union([z.const('bm25'), z.const('weights')]).default(RETRIEVAL_DEFAULTS.lexicalScorer),
-  /** D1 (`docs/修复方案-精排量纲与语义名次.md`): lexical feature scale. */
+  /** D1 (`docs/开发记录.md`): lexical feature scale. */
   lexicalNormalization: z.union([z.const('candidates'), z.const('absolute')]).default(RETRIEVAL_DEFAULTS.lexicalNormalization),
   /** D2: semantic feature scale. */
   semanticScale: z.union([z.const('raw'), z.const('calibrated')]).default(RETRIEVAL_DEFAULTS.semanticScale),
@@ -168,7 +168,7 @@ export const RetrievalSchema = z.object({
     freshness: z.number().default(DEFAULT_FEATURE_WEIGHTS.freshness),
     signalScore: z.number().default(DEFAULT_FEATURE_WEIGHTS.signalScore),
     docMountBonus: z.number().default(DEFAULT_FEATURE_WEIGHTS.docMountBonus),
-    // D4 (docs/修复方案-精排量纲与语义名次.md §3): rank features. They SHIP at 0 —
+    // D4 (docs/开发记录.md §3): rank features. They SHIP at 0 —
     // the plan requires an A/B with numbers on disk before they count.
     semanticRank: z.number().default(DEFAULT_FEATURE_WEIGHTS.semanticRank),
     fusedRank: z.number().default(DEFAULT_FEATURE_WEIGHTS.fusedRank),

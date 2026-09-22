@@ -1,5 +1,5 @@
 /**
- * The ONE table of retrieval defaults (F0 of `docs/修改规划-混合检索反超单BM25.md`).
+ * The ONE table of retrieval defaults (F0 of `docs/开发记录.md`).
  *
  * Why this file exists: the same knob had a default written in TWO places — the
  * settings namespace (`packages/kb-face/src/embedding-config.ts`, what the

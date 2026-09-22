@@ -1,5 +1,5 @@
 /**
- * D3/D4 of `docs/修复方案-精排量纲与语义名次.md` — missing values and ranks.
+ * D3/D4 of `docs/开发记录.md` — missing values and ranks.
  *
  * D3's claim is narrow and it is tested as such: "没召回" and "召回但分低" must be
  * distinguishable, which in the current additive model means the bookkeeping

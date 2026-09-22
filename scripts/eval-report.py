@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""从 evals/runs/*.json 生成 docs/评测结果汇总-BEIR-CoIR-RGB.md(表格化结果文档)。
+"""把 evals/runs/*.json 里的数字摊平成一张快照表,写到 evals/runs/SUMMARY.md。
 
-数字一律来自报告文件,不手抄;口径纪律写进文档头。运行:python3 scripts/eval-report.py
+用途:**不手抄数字**地查看"某个语料某一行现在是多少"。它是中间产物,不是耐久文档——
+耐久结论(以及所有数字的解读、口径纪律、未完成项)在 `docs/评测结果.md`,由人维护。
+**不要**让本脚本写进 docs/:自动生成的结论文本会立刻过期,而且会覆盖人写的那份。
+
+运行:python3 scripts/eval-report.py
 """
 import json, glob, pathlib, datetime
 
@@ -49,17 +53,11 @@ rgb_cost = max((r.get('cost', {}).get('calls', 0) for r in rgb_reports), default
 rgb_cost_row = next((r.get('cost', {}) for r in rgb_reports if r.get('cost', {}).get('calls', 0) == rgb_cost), {})
 
 d = []
-d += ['# 评测结果汇总：三类公开基准（BEIR · CoIR · RGB）', '',
-      f'> 生成：{datetime.datetime.now().isoformat(timespec="seconds")} · 由 `python3 scripts/eval-report.py` 从 `evals/runs/*.json` **自动生成**（数字非手抄）。',
-      '> 设计与方法：`docs/设计_公开基准测评-BEIR-CoIR-RGB.md`；评测术语解释：`docs/评估报告-按E0-E6核对.md` §7。',
-      '> **口径纪律**：公开基准的数字**永不**与内部合成集/金标集混算；每张表都标出样本量与嵌入/判分模型。', '',
-      '## 1. 一句话结论', '',
-      '**检索侧**：教科书 BM25 在三个语料上都赢我们最好的配置（nfcorpus 0.2779 vs 0.1872、cosqa 0.3768 vs 0.1750）——',
-      '我们的一级评分没有 IDF、没有长度归一，是**召回闸门**而不是有竞争力的排序器。最硬的证据在 cosqa：',
-      '**四个配置的 recall@10 完全相同（0.20）**，说明瓶颈在召回——精排只能重排一级已召回的候选，其余 80% 的金标永远进不了候选集。', '',
-      '**生成侧**：判分器可用但要**分指标看**——faithfulness 与 answer relevance 稳定抓住坏例；',
-      '`context precision` 分不出"主题对但事实错"的段，该项一律标"未证明"。噪声鲁棒必须用**替换式**对照（金标不在场）才测得出来。', '',
-      '## 2. 总览', '',
+d += ['# 报告快照(自动生成,非耐久文档)', '',
+      f'> 生成：{datetime.datetime.now().isoformat(timespec="seconds")} · `python3 scripts/eval-report.py` 从 `evals/runs/*.json` 摊平而来。',
+      '> **结论、口径纪律与未完成项在 `docs/评测结果.md`（人维护）**；本文只有数字,不解释,也不下判断。',
+      '> 注意:每张表取的是"最新一份匹配的报告",样本量与配置口径可能不同,横向对比前先看 `clue bench list`。', '',
+      '## 1. 总览', '',
       '| 基准 | 类型 | 样本量 | 嵌入/模型 | 结论指针 |', '|---|---|---|---|---|']
 def meta(rep):
     e = rep.get('embedder') if rep else None
@@ -128,11 +126,11 @@ d += ['', '## 9. 复跑命令', '', '```bash',
       'clue bench list                        # 历史报告（数据集/样本量/模型/是否通过）',
       'clue bench diff <报告id> <报告id>       # 逐指标对比（回退即 exit 1）',
       'clue bench clean --all                 # 清理数据+报告+缓存',
-      'python3 scripts/eval-report.py          # 重新生成本文档',
+      'python3 scripts/eval-report.py          # 从报告摊平一张快照表到 evals/runs/SUMMARY.md',
       '',
       'node scripts/bench-beir.mjs --dataset nfcorpus --queries 50 --depth 20',
       'node scripts/bench-beir.mjs --dataset coir-cosqa --label coir/cosqa --queries 20',
       'node scripts/bench-rag.mjs --records 3  # D3：四指标 + 三条负对照',
       '```']
-pathlib.Path('docs/评测结果汇总-BEIR-CoIR-RGB.md').write_text('\n'.join(d) + '\n')
+pathlib.Path('evals/runs/SUMMARY.md').write_text('\n'.join(d) + '\n')
 print('lines:', len(d))

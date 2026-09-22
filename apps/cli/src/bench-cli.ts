@@ -1,6 +1,6 @@
 /**
  * `clue bench` — the command surface of the public-benchmark evaluation
- * (規劃 E1/E5; design in `docs/设计_公开基准测评-BEIR-CoIR-RGB.md`).
+ * (規劃 E1/E5; design in `docs/设计.md`).
  *
  * One place to answer "what has been measured", which is the question that makes
  * an evaluation usable months later:
@@ -60,6 +60,19 @@ export interface IndexEntry {
   okHybridVsLexical?: boolean
   ok: boolean
   caveats: string[]
+  /**
+   * Provenance, for the "same experiment?" check (§7.2 of
+   * `docs/评测结果.md`).
+   *
+   * A diff between a 50-query report and a 10-query one used to print
+   * "✓ 提升 / ✗ 回退" and hand back an exit code as if the two numbers were
+   * comparable. They are not: the sample changed, so the difference may be the
+   * sample rather than the change. These fields let the tool say so.
+   */
+  embedderId: string | null
+  embedderSemantics: string | null
+  ks: number[]
+  knobs: Record<string, unknown>
 }
 
 /**
@@ -75,10 +88,12 @@ async function collect(): Promise<IndexEntry[]> {
       dataset: string
       split?: string
       corpus?: { documents?: number; queries?: number }
-      embedder?: { id: string; dim: number; semantics: string }
+      embedder?: { id: string; dim: number; semantics?: string }
       judge?: { id: string; promptVersion: string }
       rows?: Array<{ config: string; metrics?: Record<string, number> } & Record<string, unknown>>
       ok?: boolean
+      ks?: number[]
+      retrieval?: { knobs?: Record<string, unknown> }
       /** F0's cross-config verdict, when the report carries it. */
       hybridMinusLexical?: number | null
       /** P4 of the D-plan: the second hard line and its two halves. */
@@ -117,6 +132,10 @@ async function collect(): Promise<IndexEntry[]> {
       ...(report.okRerankVsFusion !== undefined ? { okRerankVsFusion: report.okRerankVsFusion } : {}),
       ok: report.ok ?? true,
       caveats: report.caveats ?? [],
+      embedderId: report.embedder?.id ?? null,
+      embedderSemantics: report.embedder?.semantics ?? null,
+      ks: report.ks ?? [],
+      knobs: report.retrieval?.knobs ?? {},
     })
   }
   return entries.sort((a, b) => b.generatedAt.localeCompare(a.generatedAt))
@@ -146,76 +165,170 @@ async function list(): Promise<number> {
 }
 
 /**
- * Compare two reports metric by metric.
- * @param a - file name or id of the baseline report.
- * @param b - file name or id of the newer report.
- * @returns exit code 0 when every shared metric is >= the baseline, 1 otherwise.
+ * One reason two reports are not the same experiment.
+ *
+ * Deliberately NOT checked: the retrieval knobs. Changing a knob is the *point*
+ * of an A/B; the sample and the embedder are what must hold still.
  */
-async function diff(a: string, b: string): Promise<number> {
-  const entries = (JSON.parse(await readFile(INDEX, 'utf8')) as { reports: IndexEntry[] }).reports
-  const find = (needle: string): IndexEntry | undefined => entries.find((entry) => entry.id === needle || entry.file === needle || entry.id.includes(needle))
-  const left = find(a)
-  const right = find(b)
-  if (left === undefined || right === undefined) {
-    console.error(`找不到报告:${left === undefined ? a : ''} ${right === undefined ? b : ''}(用 clue bench list 看 id)`)
-    return 2
+export interface ProvenanceMismatch {
+  field: string
+  left: string
+  right: string
+}
+
+/** Same-experiment check for a diff (see {@link ProvenanceMismatch}). */
+export function provenanceMismatches(left: IndexEntry, right: IndexEntry): ProvenanceMismatch[] {
+  const out: ProvenanceMismatch[] = []
+  const add = (field: string, a: unknown, b: unknown): void => {
+    const show = (value: unknown): string => (value === null || value === undefined ? '-' : String(value))
+    if (show(a) !== show(b)) out.push({ field, left: show(a), right: show(b) })
   }
-  console.log(`${left.dataset}(${left.generatedAt.slice(0, 19)}) → ${right.dataset}(${right.generatedAt.slice(0, 19)})`)
-  let regressed = false
-  /**
-   * P0 of `docs/修复方案-精排量纲与语义名次.md` §10: the comparison used to treat
-   * EVERY numeric field as a quality metric, so a run that got FASTER was
-   * reported as a regression and the command exited 1 — a measurement defect
-   * that would have masked real ones.
-   *
-   * Three classes now: quality (higher is better), cost (lower is better), and
-   * observation (no verdict either way — counts, coverage, spread).
-   */
-  const LOWER_IS_BETTER = new Set(['seconds'])
-  const OBSERVATION = new Set([
-    'vectorUsed',
-    'goldInWindow',
-    'semanticSpread',
-    'vectorStatus',
-    // P0 of the D-plan: the forensic columns. `goldDemotedOutOfTop10` and
-    // `bm25ishSaturatedQueries` are *diagnoses*, not quality — a run that demotes
-    // more gold may still score higher, and the report must not call that a
-    // regression on the diagnosis itself.
-    'goldDemotedOutOfTop10',
-    'goldInWindowTop10',
-    'semanticTop1Gold',
-    'semanticTop1Survived',
-    'bm25ishTopMean',
-    'bm25ishSaturatedQueries',
-  ])
+  // Defensive about half-populated entries: an INDEX.json written by an older
+  // build lacks `ks` / `embedderId` / `knobs`, and a missing field must read as
+  // "unknown", not crash the comparison.
+  const ks = (entry: IndexEntry): string => (entry.ks ?? []).join(',')
+  add('数据集', left.dataset, right.dataset)
+  add('split', left.split, right.split)
+  add('查询数', left.queries, right.queries)
+  add('语料规模', left.documents, right.documents)
+  add('k 截断', ks(left), ks(right))
+  add('嵌入器', left.embedderId, right.embedderId)
+  add('语义能力', left.embedderSemantics, right.embedderSemantics)
+  add('判分器版本', left.judgeVersion, right.judgeVersion)
+  return out
+}
+
+/** Whether an entry carries the provenance fields this build needs. */
+export function hasProvenance(entry: IndexEntry): boolean {
+  return Array.isArray(entry.ks) && entry.embedderId !== undefined
+}
+
+/** What one report's hard lines say. `unproven` means "this report cannot decide it". */
+export interface HardLineVerdict {
+  /** The measured quantity, e.g. `hybrid−lexical nDCG@10`. */
+  line: string
+  /** The number behind it (null when the report does not carry it). */
+  delta: number | null
+  state: 'pass' | 'fail' | 'unproven'
+  /** Why it is unproven (empty for pass/fail). */
+  reason: string
+}
+
+/**
+ * The two hard lines, evaluated for ONE report, with the two ways a verdict can
+ * legitimately not exist spelled out.
+ *
+ * 1. **No semantic ability** (`semantics: 'none'`, e.g. `hashEmbedder`): F1's
+ *    ability gate forces `hybrid ≡ lexical`, so a "✓ 通过" here is a property of
+ *    the gate, not a measurement. Reporting it as a PASS is how a meaningless
+ *    green CI gets built, so it is reported as UNPROVEN instead.
+ * 2. **A single-config report** (`--only …`): the cross-config deltas do not
+ *    exist in the file at all.
+ * @param entry - one report's index entry.
+ * @returns one verdict per hard line (missing lines are omitted).
+ */
+export function hardLineVerdicts(entry: IndexEntry): HardLineVerdict[] {
+  const out: HardLineVerdict[] = []
+  const noAbility = entry.embedderSemantics === 'none'
+    ? '嵌入器自报语义能力=0(hashEmbedder 之类的确定性兜底):F1 能力门控下 hybrid 恒等于 lexical,该硬线在此配置下无法被证明'
+    : null
+  // A report can lack the delta for two very different reasons, and saying
+  // "you only ran one config" about a full-matrix report from an older schema
+  // would send the reader looking in the wrong place.
+  const matrix = ['lexical+rerank', 'hybrid+no-rerank', 'hybrid+rerank'].every((config) => entry.rows[config] !== undefined)
+  const missingReason = matrix
+    ? '报告写于该硬线列存在之前(旧 schema 缺字段):重跑一次即可得到判定'
+    : '报告缺少 4 行配置矩阵(--only 单配置跑),跨配置硬线无从计算'
+  const verdict = (line: string, delta: number | null | undefined, ok: boolean | undefined): HardLineVerdict => {
+    if (delta === undefined || delta === null) return { line, delta: null, state: 'unproven', reason: missingReason }
+    if (noAbility !== null) return { line, delta, state: 'unproven', reason: noAbility }
+    return { line, delta, state: ok === false ? 'fail' : 'pass', reason: '' }
+  }
+  out.push(verdict(
+    'hybrid−lexical nDCG@10',
+    entry.hybridMinusLexical,
+    entry.okHybridVsLexical ?? (entry.hybridMinusLexical === undefined ? undefined : entry.ok),
+  ))
+  out.push(verdict(
+    'hybrid+rerank − hybrid+no-rerank',
+    entry.rerankMinusFusion,
+    entry.okRerankVsFusion ?? (entry.rerankMinusFusion === undefined ? undefined : entry.ok),
+  ))
+  return out.filter((row) => row.delta !== null || row.reason === missingReason)
+}
+
+/** One metric row of the diff. */
+export interface DiffRow {
+  config: string
+  metric: string
+  previous: number
+  value: number
+  delta: number
+  kind: 'quality' | 'cost' | 'observe'
+  flag: string
+  /** Whether this row alone fails the command (quality-only, and only when comparable). */
+  regresses: boolean
+}
+
+/** Everything `clue bench diff` prints, as data. */
+export interface DiffReport {
+  mismatches: ProvenanceMismatch[]
+  comparable: boolean
+  rows: DiffRow[]
+  before: HardLineVerdict[]
+  after: HardLineVerdict[]
+  /** Why nothing could be decided (values are human-readable reasons). */
+  unproven: string[]
+  /** Whether the command should exit non-zero. */
+  regressed: boolean
+}
+
+/** Metric classes (P0 of the D-plan; see {@link DiffRow.kind}). */
+const LOWER_IS_BETTER = new Set(['seconds'])
+const OBSERVATION = new Set([
+  'vectorUsed',
+  'goldInWindow',
+  'semanticSpread',
+  'vectorStatus',
+  // P0 of the D-plan: the forensic columns. `goldDemotedOutOfTop10` and
+  // `bm25ishSaturatedQueries` are *diagnoses*, not quality — a run that demotes
+  // more gold may still score higher, and the report must not call that a
+  // regression on the diagnosis itself.
+  'goldDemotedOutOfTop10',
+  'goldInWindowTop10',
+  'semanticTop1Gold',
+  'semanticTop1Survived',
+  'bm25ishTopMean',
+  'bm25ishSaturatedQueries',
+])
+
+/**
+ * Compare two reports and decide.
+ *
+ * Three rules, each fixing a measured way this tool used to lie
+ * (`docs/评测结果.md` §7):
+ * - the BASELINE being red is context, never a regression: otherwise the very
+ *   change that repairs a failure is rejected by the command that measures it;
+ * - a provenance mismatch (sample size, embedder, k) makes every verdict
+ *   UNPROVEN instead of silently comparing two different experiments;
+ * - a no-ability embedder cannot prove the hard lines at all.
+ * @param left - the baseline report.
+ * @param right - the newer report.
+ * @returns the report to print, plus the exit-code decision.
+ */
+export function evaluateDiff(left: IndexEntry, right: IndexEntry): DiffReport {
+  const mismatches = provenanceMismatches(left, right)
+  const comparable = mismatches.length === 0
+  const unproven: string[] = []
+  if (!comparable) {
+    unproven.push(`口径不同(${mismatches.map((row) => row.field).join('、')}):本次只列数字,不作通过/回退判定`)
+  }
+  if (right.embedderSemantics === 'none') {
+    unproven.push('无能力嵌入器:两条硬线在本次配置下都无法被证明(需要 --embedder http)')
+  }
   const direction = (metric: string): 'quality' | 'cost' | 'observe' =>
     OBSERVATION.has(metric) ? 'observe' : LOWER_IS_BETTER.has(metric) ? 'cost' : 'quality'
-  /**
-   * F0 of `docs/修改规划-混合检索反超单BM25.md`: the plan's hard line is a
-   * CROSS-CONFIG one — with reranking on, `hybrid` may not lose to `lexical`
-   * (tolerance 0). The bench writes that verdict into each report as
-   * `ok` / `hybridMinusLexical`; this is where a human sees it and where CI
-   * would fail on it.
-   */
-  const verdict = (label: string, entry: IndexEntry): void => {
-    const delta = entry.hybridMinusLexical
-    if (delta !== undefined && delta !== null) {
-      const failed = entry.okHybridVsLexical === false || (entry.okHybridVsLexical === undefined && entry.ok === false)
-      if (failed) regressed = true
-      console.log(`  [硬线] ${label} hybrid−lexical nDCG@10 = ${delta >= 0 ? '+' : ''}${delta.toFixed(4)}${failed ? '  ✗ 混合劣于单词法' : '  ✓ 通过'}`)
-    }
-    // The D-plan's line: the reranker may not lose to the fusion order it
-    // reorders. On a real endpoint this is the defect being fixed (0.4265 vs
-    // 0.4829), so it gets its own verdict rather than hiding inside line 1.
-    const vsFusion = entry.rerankMinusFusion
-    if (vsFusion !== undefined && vsFusion !== null) {
-      const failed = entry.okRerankVsFusion === false
-      if (failed) regressed = true
-      console.log(`  [硬线] ${label} hybrid+rerank − hybrid+no-rerank = ${vsFusion >= 0 ? '+' : ''}${vsFusion.toFixed(4)}${failed ? '  ✗ 精排劣于融合序' : '  ✓ 通过'}`)
-    }
-  }
-  verdict('之前', left)
-  verdict('之后', right)
+  const rows: DiffRow[] = []
   for (const config of Object.keys(right.rows)) {
     const before = left.rows[config]
     const after = right.rows[config]
@@ -227,16 +340,74 @@ async function diff(a: string, b: string): Promise<number> {
       const kind = direction(metric)
       const worse = kind === 'cost' ? delta > 0.005 : delta < -0.005
       const better = kind === 'cost' ? delta < -0.005 : delta > 0.005
-      const flag = kind === 'observe' ? ' · 观察'
-        : worse ? (kind === 'cost' ? ' ✗ 变慢' : ' ✗ 回退')
-          : better ? (kind === 'cost' ? ' ✓ 更快' : ' ✓ 提升') : ''
-      // Only a QUALITY regression fails the command: cost and observation
-      // numbers are context, never verdicts.
-      if (kind === 'quality' && worse) regressed = true
-      console.log(`  ${config.padEnd(24)} ${metric.padEnd(12)} ${previous} → ${value} (${delta >= 0 ? '+' : ''}${delta.toFixed(4)})${flag}`)
+      const flag = !comparable ? ' · 口径不同,不作判定'
+        : kind === 'observe' ? ' · 观察'
+          : worse ? (kind === 'cost' ? ' ✗ 变慢' : ' ✗ 回退')
+            : better ? (kind === 'cost' ? ' ✓ 更快' : ' ✓ 提升') : ''
+      rows.push({
+        config, metric, previous, value, delta, kind, flag,
+        regresses: comparable && kind === 'quality' && worse,
+      })
     }
   }
-  return regressed ? 1 : 0
+  const before = hardLineVerdicts(left)
+  const after = hardLineVerdicts(right)
+  // ONLY the newer report decides: a red baseline is the reason to run a diff,
+  // not a reason for the diff to fail.
+  const failedLine = comparable && after.some((row) => row.state === 'fail')
+  const regressed = failedLine || rows.some((row) => row.regresses)
+  // With a provenance mismatch NOTHING is decided, including a line that would
+  // otherwise read as failed: the difference may be the sample.
+  if (!comparable) {
+    for (const row of after) {
+      if (row.state === 'unproven') continue
+      row.state = 'unproven'
+      row.reason = '口径不同,本次对比不构成判定'
+    }
+  }
+  return { mismatches, comparable, rows, before, after, unproven, regressed }
+}
+
+/**
+ * Compare two reports metric by metric.
+ * @param a - file name or id of the baseline report.
+ * @param b - file name or id of the newer report.
+ * @returns exit code 0 when nothing regressed and nothing was disproved, 1 otherwise.
+ */
+async function diff(a: string, b: string): Promise<number> {
+  const entries = (JSON.parse(await readFile(INDEX, 'utf8')) as { reports: IndexEntry[] }).reports
+  const find = (needle: string): IndexEntry | undefined => entries.find((entry) => entry.id === needle || entry.file === needle || entry.id.includes(needle))
+  const left = find(a)
+  const right = find(b)
+  if (left === undefined || right === undefined) {
+    console.error(`找不到报告:${left === undefined ? a : ''} ${right === undefined ? b : ''}(用 clue bench list 看 id)`)
+    return 2
+  }
+  const report = evaluateDiff(left, right)
+  console.log(`${left.dataset}(${left.generatedAt.slice(0, 19)}) → ${right.dataset}(${right.generatedAt.slice(0, 19)})`)
+  if (!hasProvenance(left) || !hasProvenance(right)) {
+    console.log('  ⚠ 索引是旧版本写的(缺 k 截断/嵌入器字段),口径校验不完整 —— 先跑 `clue bench index` 重建索引')
+  }
+  if (!report.comparable) {
+    console.log('  ⚠ 口径不同,本次对比不构成判定:')
+    for (const row of report.mismatches) console.log(`      ${row.field}: 之前 ${row.left} · 之后 ${row.right}`)
+  }
+  const printLine = (label: string, verdict: HardLineVerdict, decisive: boolean): void => {
+    const delta = verdict.delta === null ? '    -    ' : `${verdict.delta >= 0 ? '+' : ''}${verdict.delta.toFixed(4)}`
+    const mark = verdict.state === 'pass' ? '✓ 通过'
+      : verdict.state === 'fail' ? '✗ 未通过'
+        : `? 未证明 — ${verdict.reason}`
+    const note = !decisive && verdict.state === 'fail' ? '(基线未通过 — 仅作对照,不计入退出码)' : ''
+    console.log(`  [硬线] ${label} ${verdict.line} = ${delta}  ${mark}${note}`)
+  }
+  for (const verdict of report.before) printLine('之前', verdict, false)
+  for (const verdict of report.after) printLine('之后', verdict, true)
+  for (const row of report.rows) {
+    console.log(`  ${row.config.padEnd(24)} ${row.metric.padEnd(12)} ${row.previous} → ${row.value} (${row.delta >= 0 ? '+' : ''}${row.delta.toFixed(4)})${row.flag}`)
+  }
+  for (const reason of report.unproven) console.log(`  ⚠ 未证明: ${reason}`)
+  console.log(`  判定: ${report.regressed ? '✗ 未通过(见上面的 ✗ 行)' : report.unproven.length === 0 ? '✓ 通过' : '? 未证明(见上面的 ⚠ 行;退出码不因此变化)'}`)
+  return report.regressed ? 1 : 0
 }
 
 /**
@@ -256,7 +427,7 @@ async function clean(scope: 'datasets' | 'runs' | 'cache' | 'all'): Promise<numb
   }
   const kept = await stat(GOLDENS).catch(() => null)
   console.log(`保留 evals/goldens(${kept === null ? '尚未创建' : '人写的金标集,要版本化'}) · 缓存目录 ${path.relative(REPO, CACHE)} 也清了的话下次判分会重新调用模型`)
-  console.log(`提示:报告里的耐久数字副本在 docs/设计_公开基准测评-BEIR-CoIR-RGB.md,清理不会丢结论`)
+  console.log(`提示:报告里的耐久数字副本在 docs/评测结果.md,清理不会丢结论`)
   return 0
 }
 
@@ -284,7 +455,7 @@ export async function benchMain(argv: string[]): Promise<number> {
   node scripts/fetch-coir.mjs --task cosqa --cap 1200
   node scripts/bench-rag.mjs --records 3 [--judge-provider qwen --judge-model qwen3.8-max]
 
-产物都在 evals/(已 gitignore),可整体删除;耐久数字与结论在 docs/设计_公开基准测评-BEIR-CoIR-RGB.md`)
+产物都在 evals/(已 gitignore),可整体删除;耐久数字与结论在 docs/评测结果.md`)
       return 0
     case 'index': return index()
     case 'list': return list()

@@ -1,7 +1,7 @@
 /**
  * The retrieval tokenizer — ASCII words + CJK bigrams.
  *
- * Extracted from `query.ts` in R1 of `docs/修复规划-一级检索BM25化.md` so that
+ * Extracted from `query.ts` in R1 of `docs/开发记录.md` so that
  * `bm25.ts` and `query.ts` can both use it WITHOUT importing each other
  * (a cycle between two engine modules would work in ESM only by accident of
  * call timing, which is not a foundation worth building on).

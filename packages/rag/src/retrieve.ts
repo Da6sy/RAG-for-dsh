@@ -73,7 +73,7 @@ export interface RetrieverConfig {
   /**
    * Which first-level formula this retriever's `queryKb` calls use.
    *
-   * Load-bearing since R2 of `docs/修复规划-一级检索BM25化.md`: the hybrid
+   * Load-bearing since R2 of `docs/开发记录.md`: the hybrid
    * retriever DELEGATES `--channel lexical --rerank off` to this one, so if the
    * rollback switch (`'weights'`) were not forwarded here, the documented
    * rollback would silently apply to every path EXCEPT the one the plan names
