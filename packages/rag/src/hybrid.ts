@@ -1,5 +1,5 @@
 /**
- * The hybrid retriever (V2, 规划 §7): 词法与向量并联召回 → RRF 融合 → 特征精排.
+ * The hybrid retriever (V2, 原规划 §7): 词法与向量并联召回 → RRF 融合 → 特征精排.
  *
  * ```
  *   query → profile 规范化
@@ -98,11 +98,11 @@ export interface VectorChannelState {
   dim?: number
 }
 
-/** The retrieval knobs (规划 §9.3 B 检索调优). */
+/** The retrieval knobs (原规划 §9.3 B 检索调优). */
 export interface HybridConfig {
   /** Which channels recall. Default 'hybrid'. */
   channels?: RecallChannels
-  /** The channel profile name (规划 §7.3). Default 'tool'. */
+  /** The channel profile name (原规划 §7.3). Default 'tool'. */
   profile?: string
   /** Field weights of the lexical channel. */
   weights?: Partial<RetrievalWeights>
@@ -115,7 +115,7 @@ export interface HybridConfig {
   /** Whether to rerank. Default true. */
   rerank?: boolean
   /**
-   * F2 (规划 §3.2): the cap on candidates that ONLY the vector channel recalled.
+   * F2 (原规划 §3.2): the cap on candidates that ONLY the vector channel recalled.
    *
    * Semantics SUPPLEMENT the lexical channel, never replace it. The measured
    * damage was exactly that replacement: with equal RRF weights a vector-only
@@ -196,7 +196,7 @@ export interface HybridConfig {
   /** ClueHarness home — where the shared embed cache and rebuild writes live. */
   home?: string
   /**
-   * Rebuild a missing/stale index during a query (规划 §5.3, the chunks
+   * Rebuild a missing/stale index during a query (原规划 §5.3, the chunks
    * precedent). Requires `home`. Default true when an embedder is configured;
    * bound by `maxUnitsPerBuild`, and a failure degrades instead of throwing.
    */
@@ -218,7 +218,7 @@ export interface HybridConfig {
    */
   onRankError?: (error: unknown) => void
   /**
-   * V5 (规划 §8.4): the optional model reranker, default OFF. It runs AFTER the
+   * V5 (原规划 §8.4): the optional model reranker, default OFF. It runs AFTER the
    * deterministic rerank and its result is reported as a DIFF against it — the
    * deterministic order is never discarded silently, because the whole point of
    * ruling it in was that it is the explainable one.
@@ -266,7 +266,7 @@ export interface HybridRetrieval {
   /**
    * The model rerank's outcome, when it ran and succeeded. `null` means it did
    * not run (off, or fewer than two candidates); absent means it failed or timed
-   * out and the deterministic order stands (规划 §8.4 超时降级).
+   * out and the deterministic order stands (原规划 §8.4 超时降级).
    */
   llmRerank?: LlmRerankOutcome | null
 }
@@ -463,7 +463,7 @@ export function createHybridRetriever(
 
   /**
    * Rebuild an index during a query, when allowed and possible.
-   * Failure NEVER throws through retrieval (规划 §5.3 护栏 2).
+   * Failure NEVER throws through retrieval (原规划 §5.3 护栏 2).
    * @param store - the tier to rebuild.
    * @param target - which index.
    * @param reason - the state that triggered the rebuild (for the log line).
@@ -746,7 +746,7 @@ export function createHybridRetriever(
           state = { status: 'disabled', note: SEMANTIC_SKIP_NOTE }
         } else {
           // The adapter's error text carries the status code and host, never a
-          // key (规划 §9.4-2); the retrieval degrades instead of failing.
+          // key (原规划 §9.4-2); the retrieval degrades instead of failing.
           state = { status: 'error', note: error instanceof Error ? error.message : String(error) }
         }
       }

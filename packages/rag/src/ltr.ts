@@ -1,6 +1,6 @@
 /**
  * Offline LTR — the experiment the plan allows and the deployment it does not
- * (V5, 规划 §8.4).
+ * (V5, 原规划 §8.4).
  *
  * 拍板 2 chose hand-built features and left learning-to-rank as "攒够标注再说".
  * This module is the "再说" half: it reads the `ranklog.jsonl` the retrievals
@@ -80,7 +80,7 @@ export function buildTrainingSet(
   return out
 }
 
-/** Whether the corpus is big enough to bother (规划 §8.4: ≥500 有标注查询). */
+/** Whether the corpus is big enough to bother (原规划 §8.4: ≥500 有标注查询). */
 export const LTR_MIN_QUERIES = 500
 
 /** The readiness verdict the CLI prints. */

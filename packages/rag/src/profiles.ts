@@ -1,5 +1,5 @@
 /**
- * The channel-profile table (V3, 规划 §7.3) — configuration, never branching code.
+ * The channel-profile table (V3, 原规划 §7.3) — configuration, never branching code.
  *
  * §1.1 established the fact this file exists for: the three retrieval channels
  * have **two different query authors**. The `kb_search` tool's query is written
@@ -53,7 +53,7 @@ export interface ChannelProfile {
   normalization: ProfileNormalization
 }
 
-/** The shipped profiles (规划 §7.3's table, verbatim). */
+/** The shipped profiles (原规划 §7.3's table, verbatim). */
 export const CHANNEL_PROFILES: Record<string, ChannelProfile> = {
   // The model writes this one: short, intentional, already a sentence.
   tool: {

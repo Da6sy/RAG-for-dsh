@@ -1,5 +1,5 @@
 /**
- * V1 — the embedding configuration plane and the HTTP adapter (规划 §4/§9).
+ * V1 — the embedding configuration plane and the HTTP adapter (原规划 §4/§9).
  *
  * Three families of claims are pinned here, and the third is the one that
  * matters most:
@@ -10,7 +10,7 @@
  *    against a REAL local HTTP server (no network, no mock of `fetch`), so the
  *    status codes and payload shapes are exercised for real.
  * 3. **No secret ever lands anywhere it could be read back** (不变量 10/
- *    规划 §9.4): not in the settings document, not in an error message, not in
+ *    原规划 §9.4): not in the settings document, not in an error message, not in
  *    a summary. The key is written through dsh's own credential store and the
  *    test asserts the settings YAML and every printed string are free of it.
  *
@@ -251,7 +251,7 @@ test('不变量 11: 每操作解析一次 —— 换 key 后下一次解析立�
   assert.equal(await resolveEmbeddingKey(ctx, readEmbeddingConfig(ctx)), 'second-key', '同一进程内下一次解析必须看到新值')
 })
 
-test('无引用时走密钥库记录这条路(两种姿态都支持,规划 §15.2)', async (t) => {
+test('无引用时走密钥库记录这条路(两种姿态都支持,原规划 §15.2)', async (t) => {
   const { ctx } = await host(t)
   await writeEmbeddingConfig(ctx, { apiKeyEnv: '' })
   assert.equal((await embeddingKeyStatus(ctx)).writable, true)
@@ -295,7 +295,7 @@ test('适配器: 正常返回的向量被 L2 归一化,且带上 Bearer 密钥',
   assert.deepEqual([...(vectors[1] as Float32Array)].map((v) => Math.round(v * 100) / 100), [0, 1])
 })
 
-test('适配器: 401/403 → 鉴权失败,且报文里没有密钥(规划 §9.4-2)', async (t) => {
+test('适配器: 401/403 → 鉴权失败,且报文里没有密钥(原规划 §9.4-2)', async (t) => {
   const secret = 'sk-super-secret-xyz'
   const url = await fakeEndpoint(t, () => ({ status: 401, payload: { error: `bad key ${secret}` } }))
   const embedder = createHttpEmbedder({

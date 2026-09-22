@@ -1,5 +1,5 @@
 /**
- * The retrieval plane (V1/V2 wiring, 规划 §3 决策 4 + §7).
+ * The retrieval plane (V1/V2 wiring, 原规划 §3 决策 4 + §7).
  *
  * One place where the FACE decides what the knowledge base's retrieval looks
  * like right now, so no consumer has to reassemble the decision:
@@ -124,7 +124,7 @@ export interface RetrievalPlane {
   /** The current configuration and vector-layer posture. */
   status(): Promise<PlaneStatus>
   /**
-   * V4 (规划 §12): the chunk-level vector channel for二级检索, or null when no
+   * V4 (原规划 §12): the chunk-level vector channel for二级检索, or null when no
    * embedder is configured (then the caller keeps the lexical path, visibly).
    * @returns the channel config, or null.
    */
@@ -157,7 +157,7 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
         batchSize: config.batchSize,
       }
     },
-    // Per operation, never memoized (不变量 11 / 规划 §9.4-4).
+    // Per operation, never memoized (不变量 11 / 原规划 §9.4-4).
     resolveKey: () => resolveEmbeddingKey(ctx, readEmbeddingConfig(ctx)),
   })
 
@@ -236,8 +236,8 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
           vector: VectorChannelState['status']
         }) => {
           // The ranklog carries ids, features and the query — never a secret
-          // (规划 §9.4-1). A write failure is reported, never thrown: the log
-          // is annotation data, not the product's job (规划 §5.3 护栏 2).
+          // (原规划 §9.4-1). A write failure is reported, never thrown: the log
+          // is annotation data, not the product's job (原规划 §5.3 护栏 2).
           const file = ranklogFile(stores.project.dir)
           lastRanklogFile = file
           try {

@@ -66,7 +66,7 @@ export interface ParsedArgs { [flag: string]: string | string[]; _: string[] }
  * The query difficulties the harness measures separately.
  *
  * The first three shipped with the original harness; the last three arrive with
- * the hybrid retriever (规划 §10) because they are the failure modes a lexical
+ * the hybrid retriever (原规划 §10) because they are the failure modes a lexical
  * score alone cannot see: `cross-lingual` is the vector channel's entire reason
  * to exist, `negation` is where similarity famously misbehaves, and
  * `identifier` is where lexical must keep winning.
@@ -599,7 +599,7 @@ export async function recallMain(argv: readonly string[]): Promise<number> {
 }
 
 /**
- * The prompt A/B entry point (V3, 规划 §11).
+ * The prompt A/B entry point (V3, 原规划 §11).
  *
  * Needs the CONFIGURED CHAT MODEL, because the thing under test is what a model
  * writes for a query. The `.env` layering has to run first so the model's
@@ -659,7 +659,7 @@ async function runPromptAbMain(args: ParsedArgs): Promise<number> {
 }
 
 /**
- * The ablation entry point (V2, 规划 §10).
+ * The ablation entry point (V2, 原规划 §10).
  *
  * Self-checks the corpus BEFORE reporting anything: the cross-lingual class
  * must share no token with its gold document, or the number it produces would

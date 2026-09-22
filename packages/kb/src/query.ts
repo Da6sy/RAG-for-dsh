@@ -95,7 +95,7 @@ export interface RetrievalWeights {
 export const DEFAULT_WEIGHTS: RetrievalWeights = { title: 3, tag: 2, text: 1 }
 
 /**
- * The score decomposition of one hit (V2, 规划 §8.1 原则 3).
+ * The score decomposition of one hit (V2, 原规划 §8.1 原则 3).
  *
  * Every surface that shows a rank can show WHY: the features that fed the
  * linear score, what each contributed, the multiplicative governance factors,

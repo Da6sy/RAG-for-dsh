@@ -1,5 +1,5 @@
 /**
- * V0/V2 — the hybrid retriever (规划 §7, 不变量 5/7/9).
+ * V0/V2 — the hybrid retriever (原规划 §7, 不变量 5/7/9).
  *
  * Two things are being defended here, and they pull in opposite directions:
  *

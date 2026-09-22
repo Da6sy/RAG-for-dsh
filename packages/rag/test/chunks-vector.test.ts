@@ -1,5 +1,5 @@
 /**
- * V4 — the second level's vector channel (规划 §12).
+ * V4 — the second level's vector channel (原规划 §12).
  *
  * The gap V4 exists to close: a段 that answers the question in DIFFERENT WORDS
  * is invisible to bigram matching, so a long document's local answer stays

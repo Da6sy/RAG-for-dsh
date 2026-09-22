@@ -194,7 +194,7 @@ export interface DocRecord {
 }
 
 /**
- * The embedding-normalization stamp (V0, 规划 §5.2). It participates in
+ * The embedding-normalization stamp (V0, 原规划 §5.2). It participates in
  * {@link embedderVersion} so that changing HOW vectors are normalized (L2 vs
  * none, truncation, pooling) invalidates the whole derived layer exactly like
  * a model or dimension change does — a vector computed under a different
@@ -203,7 +203,7 @@ export interface DocRecord {
 export const EMBED_NORM_VERSION = 'l2-v1'
 
 /**
- * The ONE place an embedder version string is built (规划 §5.2 不变量 8).
+ * The ONE place an embedder version string is built (原规划 §5.2 不变量 8).
  *
  * M9 taught this lesson the hard way: `chunkerVersion` was written as a string
  * literal in three different files, so every query decided the ledger needed a

@@ -1,6 +1,6 @@
 /**
- * V3/V5 engine invariants: profile-driven query normalization (规划 §7.3) and
- * the model rerank's guards (规划 §8.4).
+ * V3/V5 engine invariants: profile-driven query normalization (原规划 §7.3) and
+ * the model rerank's guards (原规划 §8.4).
  *
  * Both are places where a wrong answer is expensive and invisible: a profile
  * that leaks paths into the embedding quietly degrades the semantic channel,

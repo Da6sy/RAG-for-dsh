@@ -754,7 +754,7 @@ export async function kbMain(argv: string[]): Promise<number> {  const args = pa
         return 0
       }
       case 'ltr': {
-        // V5 (规划 §8.4): the OFFLINE half of learning-to-rank. It reads the
+        // V5 (原规划 §8.4): the OFFLINE half of learning-to-rank. It reads the
         // ranklog the retrievals have been writing, joins it against the signal
         // ledger for labels, reports readiness, and — only when the data is
         // enough — fits a logistic model and compares it with the shipped hand
@@ -782,7 +782,7 @@ export async function kbMain(argv: string[]): Promise<number> {  const args = pa
         console.log(`  学到的权重: P@1 ${(learned.precisionAt1 * 100).toFixed(1)}% · MRR ${learned.mrr.toFixed(3)}(${learned.queries} 条查询)`)
         console.log('  (同一批数据上的对照只是下限证据;真要上线要先做按查询分组的留出集)')
         console.log(`  学到的权重: ${Object.entries(model.weights).map(([k, v]) => `${k}=${v.toFixed(3)}`).join(' ')}`)
-        console.log('提示: 本命令只报告,不会改写设置里的特征权重(规划 §8.4:先离线实验,再人决定)。')
+        console.log('提示: 本命令只报告,不会改写设置里的特征权重(原规划 §8.4:先离线实验,再人决定)。')
         return 0
       }
       case 'status': {

@@ -1,5 +1,5 @@
 /**
- * V2 — the ablation harness's own invariants (规划 §10).
+ * V2 — the ablation harness's own invariants (原规划 §10).
  *
  * The generator is the part that can lie, and it has lied before (a phrase drawn
  * twice; non-unique phrases giving one query dozens of right answers). The

@@ -1,5 +1,5 @@
 /**
- * V2 — RRF fusion and the deterministic reranker (规划 §7.2/§8).
+ * V2 — RRF fusion and the deterministic reranker (原规划 §7.2/§8).
  *
  * What these tests defend: that fusion consumes RANKS (so an absent channel
  * degrades to the other one's order instead of producing garbage), and that the

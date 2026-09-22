@@ -482,7 +482,7 @@ try {
     /**
      * The hard lines, each with ZERO tolerance (both plans say so in those words).
      *
-     * 1. F0 (规划 §5 不变量 2): with reranking on, hybrid may not lose to lexical.
+     * 1. F0 (原规划 §5 不变量 2): with reranking on, hybrid may not lose to lexical.
      * 2. P4 of `docs/开发记录.md`: on a REAL endpoint, the
      *    reranker may not lose to the fusion it is reordering. That is the defect
      *    the D-plan exists for (0.4265 vs 0.4829), and it is checked separately

@@ -1,5 +1,5 @@
 /**
- * A minimal settings + credentials host for NON-Cordis surfaces (V1, 规划 §9.8).
+ * A minimal settings + credentials host for NON-Cordis surfaces (V1, 原规划 §9.8).
  *
  * The settings page gets `ctx.settings` and `ctx.credentials` from the running
  * host. The CLI (`clue kb embed-config …`, `clue kb embed`, `clue kb doctor`)

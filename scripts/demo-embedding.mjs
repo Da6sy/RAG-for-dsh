@@ -3,7 +3,7 @@
  *
  * Boots the real `clue web` composition on an isolated home, drives headless
  * Chromium to the third settings page, and checks the four promises the plan
- * makes about it (规划 §9). Every check is an assertion, so this doubles as the
+ * makes about it (原规划 §9). Every check is an assertion, so this doubles as the
  * V1 acceptance record rather than a screenshot script that can pass while the
  * page is broken:
  *

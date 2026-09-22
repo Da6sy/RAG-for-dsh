@@ -231,7 +231,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
 
   /**
-   * The V1 embedding routes (规划 §9.7 路径 B): the settings page's own API,
+   * The V1 embedding routes (原规划 §9.7 路径 B): the settings page's own API,
    * on the same prefix and the same same-origin channel as the rest of the
    * panel. They return null for every subpath they do not own, so dispatch
    * stays one table.

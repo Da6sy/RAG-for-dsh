@@ -1,5 +1,5 @@
 /**
- * Brute-force vector search (V0, 规划 §5.4).
+ * Brute-force vector search (V0, 原规划 §5.4).
  *
  * The corpus is 29 entries and one 28-段 document today, and the plan is
  * explicit that ANN (HNSW/IVF) is a NON-goal until ~5万 vectors: at 512
@@ -11,7 +11,7 @@
  * similarity, never looks at an entry's status, and never treats a similarity
  * as a statement about trust. Filtering is the first level's job (status/tier/
  * review/redline), and it happens BEFORE this scan — the scan only sees rows
- * whose owner already passed the gate (规划 §8.1 原则 2).
+ * whose owner already passed the gate (原规划 §8.1 原则 2).
  *
  * @module @clue-harness/rag/vector-search
  */

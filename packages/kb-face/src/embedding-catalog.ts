@@ -1,5 +1,5 @@
 /**
- * The embedder catalog (V1 follow-up, 规划 §9.3/§9.5) — the settings page's
+ * The embedder catalog (V1 follow-up, 原规划 §9.3/§9.5) — the settings page's
  * "pick a model" list.
  *
  * The first edition of the page had a free-text Model field, which asked the
@@ -62,7 +62,7 @@ export interface EmbeddingCandidateGroup {
   label: string
   baseUrl: string
   apiKeyEnv: string
-  /** `已配置 / 未配置 / 解析失败` — never a value (规划 §9.4-3). */
+  /** `已配置 / 未配置 / 解析失败` — never a value (原规划 §9.4-3). */
   keyState: 'configured' | 'missing' | 'unresolved' | 'unknown'
   keyDetail: string
   /** True when the key is currently resolvable (the entry can be tried). */

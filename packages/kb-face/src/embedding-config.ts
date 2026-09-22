@@ -1,5 +1,5 @@
 /**
- * The embedding configuration plane (V1, 规划 §9) — one namespace, one
+ * The embedding configuration plane (V1, 原规划 §9) — one namespace, one
  * credential reference, and NO secret in any file of ours.
  *
  * The plan's §9.1 reasoning is the whole design: this configuration contains a
@@ -24,14 +24,14 @@
  * 1. **Resolved per operation** (不变量 11): {@link resolveEmbeddingKey} runs at
  *    the start of every embedding call and caches nothing, so rotating a key
  *    reaches the very next call without restarting the host.
- * 2. **Never echoed** (规划 §9.4-3): every reporting path returns
+ * 2. **Never echoed** (原规划 §9.4-3): every reporting path returns
  *    `已配置 / 未配置 / 解析失败` plus the reference NAME. Nothing in this file
  *    hands a value to a surface; the only value-returning function is
  *    {@link resolveEmbeddingKey}, whose callers are the embedder itself.
- * 3. **Validated where the user is looking** (规划 §9.3):
+ * 3. **Validated where the user is looking** (原规划 §9.3):
  *    {@link validateEmbeddingPatch} names the exact field that failed, because
  *    "保存失败" without a field name is a bug report nobody can act on.
- * 4. **`dim` cannot be typed** (规划 §15.3, recommended and taken): it is
+ * 4. **`dim` cannot be typed** (原规划 §15.3, recommended and taken): it is
  *    measured by the connection test and written only through
  *    {@link recordMeasuredDim}. A hand-typed dimension silently poisons the
  *    version stamp and every cosine after it, so the field is refused rather
@@ -53,7 +53,7 @@ import { embedderVersion } from '@clue-harness/kb'
 import { DEFAULT_FEATURE_WEIGHTS, RETRIEVAL_DEFAULTS, type RerankFeatureWeights } from '@clue-harness/rag'
 
 /**
- * The provider namespace (规划 §9.2/§9.3 A) — with one RECORDED DEVIATION.
+ * The provider namespace (原规划 §9.2/§9.3 A) — with one RECORDED DEVIATION.
  *
  * The plan writes it as `clue.kb.embedding`. A dsh settings namespace is
  * validated against `/^[a-z][a-z0-9-]*$/` (`dsh-settings`: `settingsNamespace`),
@@ -63,7 +63,7 @@ import { DEFAULT_FEATURE_WEIGHTS, RETRIEVAL_DEFAULTS, type RerankFeatureWeights 
  */
 export const EMBEDDING_NAMESPACE = settingsNamespace('clue-kb-embedding')
 
-/** The retrieval-tuning namespace (规划 §9.3 B; same dot→dash deviation as above). */
+/** The retrieval-tuning namespace (原规划 §9.3 B; same dot→dash deviation as above). */
 export const RETRIEVAL_NAMESPACE = settingsNamespace('clue-kb-retrieval')
 
 /** Our plugin's registered name — the SCOPE of the credential record. */
@@ -72,7 +72,7 @@ export const CREDENTIAL_SCOPE = 'clue-kb-face'
 /** The credential store id of the embedding key (dsh: key = `<scope>/<id>`). */
 export const EMBEDDING_CREDENTIAL_ID = 'embedding'
 
-/** The shipped provider defaults (规划 §9.3 A). */
+/** The shipped provider defaults (原规划 §9.3 A). */
 export const DEFAULT_EMBEDDING_CONFIG = {
   enabled: false,
   baseUrl: '',
@@ -91,7 +91,7 @@ export const DEFAULT_EMBEDDING_CONFIG = {
 /** The resolved provider configuration (what the embedder reads). */
 export type EmbeddingConfig = typeof DEFAULT_EMBEDDING_CONFIG
 
-/** The shipped retrieval defaults (规划 §9.3 B). */
+/** The shipped retrieval defaults (原规划 §9.3 B). */
 export const DEFAULT_RETRIEVAL_CONFIG = {
   ...RETRIEVAL_DEFAULTS,
   fusion: RETRIEVAL_DEFAULTS.fusion as 'rrf',
@@ -137,7 +137,7 @@ export const RetrievalSchema = z.object({
   llmRerank: z.boolean().default(RETRIEVAL_DEFAULTS.llmRerank),
   ranklog: z.boolean().default(RETRIEVAL_DEFAULTS.ranklog),
   /**
-   * V3 (规划 §11): which query-writing doctrine the `tool:kb` prompt teaches.
+   * V3 (原规划 §11): which query-writing doctrine the `tool:kb` prompt teaches.
    * `intent` is the plan's target; `keywords` is the pre-V3 text, kept because
    * the A/B has to be able to run both and because a deployment can pin the
    * old behavior while it evaluates.
@@ -267,7 +267,7 @@ export function readRetrievalConfig(ctx: Context): RetrievalConfig {
   }
 }
 
-/** One field-level validation failure (规划 §9.3: 就地指出是哪个字段). */
+/** One field-level validation failure (原规划 §9.3: 就地指出是哪个字段). */
 export interface FieldError {
   field: string
   message: string
@@ -395,7 +395,7 @@ export function splitRetrievalPatch(patch: Record<string, unknown>): {
  * own schema validation), so a rejected save never leaves a half-applied
  * section. The caller's `expectedRevision` is passed through unchanged: a
  * concurrent write from another tab becomes a refusal (dsh's
- * `SettingsConflictError`), never a silent overwrite (规划 §9.2).
+ * `SettingsConflictError`), never a silent overwrite (原规划 §9.2).
  * @param ctx - a context with `ctx.settings`.
  * @param patch - the fields to write.
  * @param expectedRevision - the revision the caller's view was based on.
@@ -449,7 +449,7 @@ export async function writeEmbeddingConfig(
 }
 
 /**
- * Record the dimension the endpoint actually reported (规划 §9.6/§15.3).
+ * Record the dimension the endpoint actually reported (原规划 §9.6/§15.3).
  *
  * The ONLY writer of `dim`. If the measured value differs from the stored one,
  * the returned configuration carries the new value and the caller must tell the
@@ -483,7 +483,7 @@ export function embeddingCredentialRef(config: EmbeddingConfig): CredentialRef |
   return name === '' ? null : credentialRef(name)
 }
 
-/** The key state a SURFACE may show (规划 §9.4-3: never a value). */
+/** The key state a SURFACE may show (原规划 §9.4-3: never a value). */
 export interface KeyStatus {
   state: 'configured' | 'missing' | 'unresolved' | 'unreachable'
   /** Which mechanism supplies it — a name, never a value. */
@@ -605,7 +605,7 @@ export async function unsetEmbeddingKey(ctx: Context, config: EmbeddingConfig = 
   return `密钥库记录 ${CREDENTIAL_SCOPE}/${EMBEDDING_CREDENTIAL_ID}`
 }
 
-/** The value-free summary every surface prints (规划 §9.4-3 / §9.8). */
+/** The value-free summary every surface prints (原规划 §9.4-3 / §9.8). */
 export interface EmbeddingConfigSummary {
   enabled: boolean
   baseUrl: string

@@ -1,5 +1,5 @@
 /**
- * RRF fusion — Reciprocal Rank Fusion over the recall channels (V2, 规划 §7.2).
+ * RRF fusion — Reciprocal Rank Fusion over the recall channels (V2, 原规划 §7.2).
  *
  * Why rank fusion instead of a weighted score sum: the lexical channel's score
  * is a bare sum of field weights (its magnitude drifts with query length and
@@ -10,7 +10,7 @@
  *     score(d) = Σ_c  w_c / (k + rank_c(d))
  *
  * with `k = 60` (the literature default, insensitive at the head) and
- * per-channel weights from the profile table (规划 §7.3).
+ * per-channel weights from the profile table (原规划 §7.3).
  *
  * The property that makes it the right choice here is the one the plan calls
  * out: **it tolerates a missing channel by construction**. With no vector
@@ -22,7 +22,7 @@
  */
 import { normalizePath } from './retrieve.ts'
 
-/** The shipped RRF constant (规划 §9.3 `rrfK` default 60). */
+/** The shipped RRF constant (原规划 §9.3 `rrfK` default 60). */
 export const DEFAULT_RRF_K = 60
 
 /** One recall channel's ranked output. */

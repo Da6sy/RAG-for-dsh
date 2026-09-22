@@ -1,5 +1,5 @@
 /**
- * `clue recall --channel … --rerank …` — the ABLATION harness (V2, 规划 §10).
+ * `clue recall --channel … --rerank …` — the ABLATION harness (V2, 原规划 §10).
  *
  * The plan is explicit that the measuring stick comes before the sorting
  * changes: "评测台先行(改排序之前先造尺子)". This module is that stick for the
@@ -90,10 +90,10 @@ export const ABLATION_MATRIX: AblationConfig[] = [
 /** The baseline every delta is measured against (不变量 9's configuration). */
 export const BASELINE_ID = 'lexical+no-rerank'
 
-/** The classes where a regression is a hard failure (规划 §10 护栏). */
+/** The classes where a regression is a hard failure (原规划 §10 护栏). */
 const GUARDED_KINDS = ['exact', 'entity', 'identifier'] as const
 
-/** The classes the vector channel is supposed to improve (规划 §10 护栏). */
+/** The classes the vector channel is supposed to improve (原规划 §10 护栏). */
 const TARGET_KINDS = ['paraphrase', 'cross-lingual'] as const
 
 /** The guardrail thresholds, in recall@1 points. */
@@ -126,7 +126,7 @@ export interface AblationReport {
   embedder: { id: string; dim: number; semantics: 'none' | 'endpoint' }
   baseline: string
   rows: AblationRow[]
-  /** Caveats the report itself must carry (规划 §10 的诚实要求). */
+  /** Caveats the report itself must carry (原规划 §10 的诚实要求). */
   caveats: string[]
   /** True when every runnable configuration passed its guardrails. */
   ok: boolean

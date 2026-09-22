@@ -1,5 +1,5 @@
 /**
- * The INDEX pipeline — the write side of the vector layer (V0, 规划 §6).
+ * The INDEX pipeline — the write side of the vector layer (V0, 原规划 §6).
  *
  * One pure flow, four honest numbers:
  *
@@ -59,7 +59,7 @@ export interface EmbedUnit {
 }
 
 /**
- * The text of one entry as the vector layer sees it (规划 §3 决策 5).
+ * The text of one entry as the vector layer sees it (原规划 §3 决策 5).
  *
  * Built from `entryTextAfterRedlines`, so an entry's retracted paragraphs
  * contribute NOTHING to its vector (不变量 4: redline 先过滤、后嵌入). Title
@@ -137,7 +137,7 @@ export interface EmbedPlan {
   upToDate: boolean
 }
 
-/** Batching/concurrency/budget knobs (from the settings page, 规划 §9.3). */
+/** Batching/concurrency/budget knobs (from the settings page, 原规划 §9.3). */
 export interface EmbedBuildOptions {
   /** ClueHarness home — where the shared text cache lives. */
   home: string
@@ -153,7 +153,7 @@ export interface EmbedBuildOptions {
   at?: string
 }
 
-/** The shipped pipeline defaults (规划 §9.3 配置项清单). */
+/** The shipped pipeline defaults (原规划 §9.3 配置项清单). */
 export const DEFAULT_BATCH_SIZE = 32
 export const DEFAULT_CONCURRENCY = 1
 export const DEFAULT_MAX_UNITS_PER_BUILD = 2000
@@ -162,7 +162,7 @@ export const DEFAULT_MAX_UNITS_PER_BUILD = 2000
  * Whether one already-written index still describes the corpus and embedder in
  * effect. Membership (keys), order, text (via {@link unitsFingerprint}) and
  * the embedder stamp all have to agree — anything less would let a stale vector
- * keep answering for text that changed (规划 §5.2).
+ * keep answering for text that changed (原规划 §5.2).
  * @param index - the index read from disk (null when absent).
  * @param version - the current `embedderVersion`.
  * @param keys - the unit keys in canonical order.

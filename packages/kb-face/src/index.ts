@@ -316,7 +316,7 @@ declare module '@deepseek-ai/cordis' {
 const KB_KINDS: KbKind[] = ['fact', 'decision', 'snippet', 'map', 'pitfall', 'asset']
 
 /**
- * V3 (规划 §11): the two query-writing styles the A/B compares.
+ * V3 (原规划 §11): the two query-writing styles the A/B compares.
  *
  * `keywords` is what shipped through M9 — it teaches a keyword pile, which the
  * bigram tokenizer likes and an embedding cannot use. `intent` teaches one
@@ -555,7 +555,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
 
   /**
-   * The tool channel's retriever (V0–V2, 规划 §3 决策 4).
+   * The tool channel's retriever (V0–V2, 原规划 §3 决策 4).
    *
    * The plan wires ONLY this channel in the first three milestones: the
    * pre-step injection and the failure-signature gate keep the shipped
@@ -1052,7 +1052,7 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   // ---- 3) prompt guidance (stable section — prefix-safe) ----
   //
-  // V3 (规划 §11): the query guidance moved from "关键词堆" to an INTENT
+  // V3 (原规划 §11): the query guidance moved from "关键词堆" to an INTENT
   // SENTENCE. The old line ("检索词,建议带上关键名词") taught the model to
   // emit keyword piles, which suits bigram matching and starves the embedding
   // of the one thing it is good at: the meaning of a whole question. The

@@ -117,7 +117,7 @@ test('M3c contract: the real web composition boots, serves the shell, our bundle
   assert.ok(found, 'the seeded decision is not listed through the web API')
   assert.equal(found.title, 'web 面组合走 bundle patch')
 
-  // (5) V1: the embedding plane's routes (规划 §9.5/§9.7 路径 B). The page's
+  // (5) V1: the embedding plane's routes (原规划 §9.5/§9.7 路径 B). The page's
   // whole API is exercised here over real HTTP, including the two rules that
   // matter most: a secret travels one way only, and a bad field is named.
   const embedding = await fetch(`${origin}/api/clue-kb/embedding/config?workspace=`)

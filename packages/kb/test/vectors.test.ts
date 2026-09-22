@@ -1,5 +1,5 @@
 /**
- * V0 — the vector layer's storage invariants (规划 §5 / §13).
+ * V0 — the vector layer's storage invariants (原规划 §5 / §13).
  *
  * These tests exist because every one of them is a claim about a boundary that
  * a later refactor would happily cross: "the index is derived", "it carries no

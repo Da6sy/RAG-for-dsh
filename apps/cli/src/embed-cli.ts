@@ -1,6 +1,6 @@
 /**
  * `clue kb embed-config | embed | doctor | query --explain` — the CLI face of
- * the vector layer (V1/V2, 规划 §6/§9.8).
+ * the vector layer (V1/V2, 原规划 §6/§9.8).
  *
  * The plan asks for CLI parity with the settings page (§9.8) and for the cost of
  * an index build to be visible BEFORE it is paid (§6). Both are the same design
@@ -77,7 +77,7 @@ const flag = (args: EmbedArgs, name: string): string | undefined => args.flags.g
 const multi = (args: EmbedArgs, name: string): string[] => args.flags.get(name)?.filter((value) => value !== 'true') ?? []
 const has = (args: EmbedArgs, name: string): boolean => args.flags.has(name)
 
-/** The three states the plan names for a key (规划 §9.4-3). */
+/** The three states the plan names for a key (原规划 §9.4-3). */
 function keyStateLabel(state: KeyStatus['state']): string {
   return state === 'configured' ? '已配置' : state === 'missing' ? '未配置' : state === 'unresolved' ? '解析失败' : '不可用'
 }
@@ -148,7 +148,7 @@ export async function embedConfigShow(host: EmbeddingHost, args: EmbedArgs): Pro
   console.log(`Model:    ${summary.model || '(空)'}`)
   console.log(`维度 dim: ${summary.dim > 0 ? summary.dim : '(未实测 — 用 clue kb embed-config test 实测)'}`)
   // The reference NAME is printed; the value is not reachable from here at all
-  // (规划 §9.4-3): this function never calls the resolver.
+  // (原规划 §9.4-3): this function never calls the resolver.
   console.log(`密钥引用 apiKeyEnv: ${summary.apiKeyEnv || '(空 — 走密钥库记录,或该端点无需鉴权)'}`)
   console.log(`密钥状态: ${keyStateLabel(summary.key.state)} — ${summary.key.detail}${summary.key.writable ? '' : '(只读,被环境变量遮蔽)'}`)
   console.log(`超时 ${summary.timeoutMs}ms · 批量 ${summary.batchSize} · 并发 ${summary.concurrency} · 单次预算 ${summary.maxUnitsPerBuild} · 量化 ${summary.quant}`)
@@ -459,7 +459,7 @@ export async function queryExplainRun(host: EmbeddingHost, context: EmbedContext
   const rerank = rerankFlag === undefined ? tuning.rerank : rerankFlag === 'on'
   const limit = flag(args, 'limit') !== undefined ? Number(flag(args, 'limit')) : 5
   const embedder = channels === 'lexical' ? null : embedderFrom(host)
-  // V5 (规划 §8.4): the model reranker is opt-in per call (`--llm-rerank`) or
+  // V5 (原规划 §8.4): the model reranker is opt-in per call (`--llm-rerank`) or
   // by setting, and its result is printed as a DIFF against the deterministic
   // order rather than replacing it silently.
   const wantLlmRerank = has(args, 'llm-rerank') || tuning.llmRerank
@@ -480,7 +480,7 @@ export async function queryExplainRun(host: EmbeddingHost, context: EmbedContext
       ...(flag(args, 'model') !== undefined ? { model: flag(args, 'model') as string } : {}),
     })
     // Capture the failure reason: `llmRerank` deliberately degrades to the
-    // deterministic order on any error (规划 §8.4), so without this the user
+    // deterministic order on any error (原规划 §8.4), so without this the user
     // would see "未生效" and never learn WHY — a missing credential looks
     // exactly like a timeout from the outside.
     const inner = chatRankPort(chatHost)
@@ -507,7 +507,7 @@ export async function queryExplainRun(host: EmbeddingHost, context: EmbedContext
     rrfK: tuning.rrfK,
     channelWeights: tuning.channelWeights,
     featureWeights: tuning.featureWeights,
-    // 不变量 2 (D 规划 §6): `--explain` 必须解释**线上那一份配置**的每一分。
+    // 不变量 2 (D 原规划 §6): `--explain` 必须解释**线上那一份配置**的每一分。
     // 这些旋钮此前没转发,于是把设置页里的档位改掉之后,explain 打印的仍是默认档位的算式
     // —— 解释与产物不一致,比没有解释更糟。
     lexicalScorer: tuning.lexicalScorer,

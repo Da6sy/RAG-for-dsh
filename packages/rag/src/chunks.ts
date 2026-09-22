@@ -69,7 +69,7 @@ export interface QueryChunksOptions {
   /** Include chunks with zero token matches (default false). */
   includeUnmatched?: boolean
   /**
-   * V4 (规划 §12): the optional vector channel for二级检索. Absent = today's
+   * V4 (原规划 §12): the optional vector channel for二级检索. Absent = today's
    * lexical behavior, unchanged. Present = 词法与向量并联召回 → RRF 融合,
    * which is what closes the "长文局部命中" gap that keyword matching alone
    * cannot (a段 that answers a question in different words is invisible to
@@ -92,7 +92,7 @@ export interface ChunkVectorConfig {
   rrfK?: number
   /** How many chunks each channel recalls before fusion. Default 20. */
   recallDepth?: number
-  /** Rebuild a missing/stale chunk index during the query (规划 §5.3). Default true. */
+  /** Rebuild a missing/stale chunk index during the query (原规划 §5.3). Default true. */
   rebuildOnRead?: boolean
   /** The rebuild budget per call. Default 2000. */
   maxUnitsPerBuild?: number
@@ -438,7 +438,7 @@ export async function queryChunks(
 }
 
 /**
- * Fuse the chunk-level lexical and vector channels with RRF (V4, 规划 §7/§12).
+ * Fuse the chunk-level lexical and vector channels with RRF (V4, 原规划 §7/§12).
  *
  * The two channels are ranked SEPARATELY and merged by rank, exactly like the
  * entry-level pipeline: a chunk that answers the query in different words is
@@ -539,7 +539,7 @@ async function fuseChunkChannels(
  * Same contract as the entry-level index: the ledger is a pure function of the
  * snapshot plus the embedder version, so a missing or foreign-stamped index is
  * repaired by recomputing — and a repair failure degrades the retrieval instead
- * of throwing through it (规划 §5.3 护栏 2).
+ * of throwing through it (原规划 §5.3 护栏 2).
  * @param store - the tier store.
  * @param target - the chunk index target.
  * @param version - the embedder version in effect.

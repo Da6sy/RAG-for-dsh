@@ -1,6 +1,6 @@
 /**
  * `ranklog.jsonl` — the annotation ledger the plan collects instead of
- * training a ranker (V2, 规划 §8.4).
+ * training a ranker (V2, 原规划 §8.4).
  *
  * The decision (拍板 2) was hand-built features, and the LTR road stays closed
  * this round: what ships is the DATA a future ranker would need, recorded at
@@ -8,7 +8,7 @@
  *
  * Three disciplines:
  *
- * - **No secret ever lands here** (规划 §9.4-1 / 不变量 10). A row contains the
+ * - **No secret ever lands here** (原规划 §9.4-1 / 不变量 10). A row contains the
  *   query text, entry ids, feature values and channel ranks — no header, no
  *   url, no key. The append path is the only writer, and it writes a fixed
  *   shape, so there is no field a credential could arrive in.
@@ -62,7 +62,7 @@ export async function readRankLog(kbDir: string, limit?: number): Promise<RankLo
   return limit === undefined ? rows : rows.slice(Math.max(0, rows.length - limit))
 }
 
-/** What a ranklog holds, and how much of it is LABELED (规划 §8.4). */
+/** What a ranklog holds, and how much of it is LABELED (原规划 §8.4). */
 export interface RankLogSummary {
   /** Rows in the ledger. */
   rows: number

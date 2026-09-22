@@ -1,5 +1,5 @@
 /**
- * `HttpEmbedder` — the production adapter (V1, 规划 §4/§9.6).
+ * `HttpEmbedder` — the production adapter (V1, 原规划 §4/§9.6).
  *
  * The engine never opens a socket (不变量 6), so THIS is where the network
  * lives, in the integration layer, using nothing but `fetch` — the plan forbids
@@ -7,17 +7,17 @@
  * OpenAI-compatible `/embeddings` endpoint is reachable with the platform's own
  * HTTP client.
  *
- * What the adapter owns (规划 §4 的端口契约):
+ * What the adapter owns (原规划 §4 的端口契约):
  *
  * - **Batching, timeouts, and one retry** per operation; the engine only calls
  *   `embed(texts)`.
  * - **L2 normalization**, through the engine's own `l2Normalize` so that the
  *   `EMBED_NORM_VERSION` stamp describes what actually happened.
- * - **Error classification** (规划 §9.6) — and, above all, **error text that
+ * - **Error classification** (原规划 §9.6) — and, above all, **error text that
  *   carries no secret**: only the status code and the endpoint's HOST ever
  *   reach a message. No header, no body, no key, no query — an exception
  *   travels to logs, pages and the model, so the classification is a security
- *   boundary, not a nicety (规划 §9.4-2 / 不变量 10).
+ *   boundary, not a nicety (原规划 §9.4-2 / 不变量 10).
  *
  * The `id` and `dim` are GETTERS over the live configuration, because the plan
  * requires a changed key or endpoint to take effect on the next operation
@@ -29,7 +29,7 @@
 import { l2Normalize } from '@clue-harness/kb'
 import type { Embedder } from '@clue-harness/rag'
 
-/** How a call failed — the vocabulary the settings page renders (规划 §9.6). */
+/** How a call failed — the vocabulary the settings page renders (原规划 §9.6). */
 export type EmbedFailureKind =
   | 'unreachable'   // DNS/connect/TLS failed
   | 'timeout'       // the configured timeoutMs elapsed
@@ -240,7 +240,7 @@ export function createHttpEmbedder(options: HttpEmbedderOptions): Embedder & { r
         // a bare "HTTP 400" hides the one sentence that explains the failure
         // (measured: dashscope answers `batch size is invalid, it should not be
         // larger than 10`), while a raw body is not safe to print — it can echo
-        // the request, and the request carried the key (规划 §9.4-2).
+        // the request, and the request carried the key (原规划 §9.4-2).
         const detail = await sanitizedErrorDetail(response, key)
         const suffix = detail === '' ? '' : `: ${detail}`
         if (response.status === 401 || response.status === 403) {
@@ -257,7 +257,7 @@ export function createHttpEmbedder(options: HttpEmbedderOptions): Embedder & { r
   }
 }
 
-/** The outcome of a connection test (规划 §9.6 — the user's only self-check). */
+/** The outcome of a connection test (原规划 §9.6 — the user's only self-check). */
 export interface ConnectionTestResult {
   ok: boolean
   /** The classification, or 'ok'. */
@@ -280,7 +280,7 @@ export interface ConnectionTestResult {
 export const CONNECTION_PROBE_TEXT = '连接测试'
 
 /**
- * Test one embedding endpoint with a single short call (规划 §9.6).
+ * Test one embedding endpoint with a single short call (原规划 §9.6).
  *
  * This is the settings page's「测试连接」and the CLI's `embed-config test`, and
  * its job is to turn every failure mode in the plan's table into ONE actionable
@@ -325,7 +325,7 @@ export async function testConnection(
     if (storedDim !== 0 && storedDim !== dim) {
       // Saving this dimension invalidates every stored vector: the version
       // stamp changes, so the index is rebuilt. Say so BEFORE the save, with
-      // the number of calls it implies (规划 §9.6 / §14).
+      // the number of calls it implies (原规划 §9.6 / §14).
       const batch = Math.max(1, config.batchSize)
       result.rebuildNotice = `实测维度 ${dim} 与已存向量层维度 ${storedDim} 不符:保存后 ${storedUnits} 条向量需重建,预估调用 ${Math.max(1, Math.ceil(storedUnits / batch))} 次(batchSize ${batch};改模型/维度才会作废,只改 url/key 不会)`
     }

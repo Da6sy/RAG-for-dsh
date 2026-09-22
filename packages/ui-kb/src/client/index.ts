@@ -73,7 +73,7 @@ export function apply(ctx: ClientContext): void {
       order: 91,
       label: () => '知识库',
     }, KbSection)
-    // V1 (规划 §9.5): the third page, order 92 — where the embedding provider,
+    // V1 (原规划 §9.5): the third page, order 92 — where the embedding provider,
     // its key, the index's cost and the rerank knobs live. Separate from the KB
     // panel on purpose: it holds a SECRET, and a page that can write a secret
     // must be a page nobody opens by accident.

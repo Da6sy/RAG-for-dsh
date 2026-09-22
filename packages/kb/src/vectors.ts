@@ -1,5 +1,5 @@
 /**
- * The VECTOR layer (V0, 规划 §5): a derived index that lives beside `chunks/`
+ * The VECTOR layer (V0, 原规划 §5): a derived index that lives beside `chunks/`
  * and obeys exactly the same constitution.
  *
  * Four rules, all inherited from the M9 chunk ledger rather than invented here:
@@ -16,16 +16,16 @@
  * 3. **Version is a single source** (不变量 8): the stamp comes from
  *    {@link embedderVersion} in `types.ts`; a mismatch means REBUILD, silently,
  *    exactly like `chunkerVersion` does for chunks.
- * 4. **The cache is content-addressed** (规划 §5.1): `<home>/embed-cache/
+ * 4. **The cache is content-addressed** (原规划 §5.1): `<home>/embed-cache/
  *    <embedderVersion>/<sha256(normalized text)>.bin` is shared across
  *    workspaces and across tiers, so the same text is never paid for twice.
  *    No credential, url or model ever lands in this tree — they live in the
- *    settings document and the credential store (规划 §9).
+ *    settings document and the credential store (原规划 §9).
  *
  * The binary format is deliberately the dumbest thing that works at this
  * scale: a flat little-endian `Float32Array` of `count × dim`, row-major,
  * `idOrder[row]` naming the row. Brute-force cosine over ≤5万 vectors costs
- * 10–30 ms at 512 dims (规划 §5.4), and ANN is an explicit non-goal.
+ * 10–30 ms at 512 dims (原规划 §5.4), and ANN is an explicit non-goal.
  *
  * @module @clue-harness/kb/vectors
  */
@@ -41,7 +41,7 @@ export const VECTOR_FORMAT_VERSION = 1
 /** Which derived index an operation addresses. */
 export type VectorTarget = { kind: 'entries' } | { kind: 'chunks'; docId: string }
 
-/** The storage precision of a vector file. Only fp32 ships (规划 §9.3 `quant`). */
+/** The storage precision of a vector file. Only fp32 ships (原规划 §9.3 `quant`). */
 export type VectorQuant = 'fp32'
 
 /**
@@ -68,7 +68,7 @@ export interface VectorIndexMeta {
    * {@link unitsFingerprint}). It is what makes "条目文本改了" detectable
    * without storing any entry text: a matching key set with changed bodies
    * would otherwise look up to date, and the index would keep serving a vector
-   * of the old text (规划 §5.2: text/title/tags/redline 变化 ⇒ 该条目向量作废).
+   * of the old text (原规划 §5.2: text/title/tags/redline 变化 ⇒ 该条目向量作废).
    */
   unitsHash: string
   builtAt: string
@@ -316,7 +316,7 @@ export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   return dot / (Math.sqrt(na) * Math.sqrt(nb))
 }
 
-// ── the cross-workspace text cache (规划 §5.1) ──────────────────────────────
+// ── the cross-workspace text cache (原规划 §5.1) ──────────────────────────────
 /**
  * Normalize text for the cache key.
  *
@@ -407,7 +407,7 @@ export async function writeCachedVector(home: string, version: string, key: stri
 /**
  * Delete one cache partition, or every partition when no version is named.
  *
- * A diagnostic action (规划 §9.5 诊断区), never an automatic one: clearing the
+ * A diagnostic action (原规划 §9.5 诊断区), never an automatic one: clearing the
  * cache costs real money on the next build, so the caller must confirm it. The
  * vector indexes themselves are untouched — they are already-built artifacts,
  * and deleting them is a different (also explicit) act.

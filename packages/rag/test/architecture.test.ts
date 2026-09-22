@@ -1,5 +1,5 @@
 /**
- * V0–V2 — the architecture invariants of the vector layer (规划 §13).
+ * V0–V2 — the architecture invariants of the vector layer (原规划 §13).
  *
  * Two claims that no amount of unit testing inside the engine can make, because
  * they are claims about the SHAPE of the code rather than about its behavior:

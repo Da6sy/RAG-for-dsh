@@ -1,5 +1,5 @@
 /**
- * V0/V1 — the index pipeline (规划 §5.3/§6, 不变量 1/12).
+ * V0/V1 — the index pipeline (原规划 §5.3/§6, 不变量 1/12).
  *
  * The pipeline is where money is spent, so the tests here are mostly about
  * what it REFUSES to do: call the embedder when the cache already has the

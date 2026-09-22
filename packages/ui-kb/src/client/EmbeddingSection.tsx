@@ -1,5 +1,5 @@
 /**
- * The「知识检索与向量」page (V1, 规划 §9.5) — the third ClueHarness settings
+ * The「知识检索与向量」page (V1, 原规划 §9.5) — the third ClueHarness settings
  * section, and the only place a secret can be entered.
  *
  * The plan's page structure, in its order: 提供者 → 索引与成本 → 检索调优 →

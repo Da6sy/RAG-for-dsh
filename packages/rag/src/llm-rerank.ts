@@ -1,5 +1,5 @@
 /**
- * `llmRerank` — the optional model-based rerank (V5, 规划 §8.4).
+ * `llmRerank` — the optional model-based rerank (V5, 原规划 §8.4).
  *
  * Shipped **off by default**, and deliberately so. The plan's whole ranking
  * decision (拍板 2) was hand-built features: deterministic, explainable,
@@ -164,7 +164,7 @@ export async function llmRerank(
     now?: () => number
     /**
      * Called with the reason when the rerank could not be applied. The caller
-     * keeps its deterministic order either way (规划 §8.4 超时降级), but "it
+     * keeps its deterministic order either way (原规划 §8.4 超时降级), but "it
      * didn't run" and "it ran and broke" look identical from outside — and a
      * user debugging a missing credential deserves to know which one happened.
      */

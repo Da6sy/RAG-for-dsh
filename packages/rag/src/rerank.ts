@@ -1,12 +1,12 @@
 /**
- * Deterministic feature reranking (V2, 规划 §8).
+ * Deterministic feature reranking (V2, 原规划 §8).
  *
  * The second stage of retrieval: the lexical recall keeps doing what it always
  * did (hard-zero gate, redline-filtered tokens, status filtering), and this
  * module reorders what it recalled — plus whatever the vector channel added —
  * by an explicit, inspectable linear score.
  *
- * Three properties are the whole point (规划 §8.1):
+ * Three properties are the whole point (原规划 §8.1):
  *
  * 1. **Deterministic.** Hand-built features, fixed weights, no model call, no
  *    sampling. The same query over the same library gives the same order
@@ -14,7 +14,7 @@
  * 2. **Filtering stays filtering.** Status, tier, the needs-review flag and
  *    redlines remain MULTIPLIERS and annotations here, exactly as they were in
  *    `scoreEntry`. Reranking can never resurrect something the first level
- *    filtered, and it can never promote a discarded entry (规划 §8.1 原则 2).
+ *    filtered, and it can never promote a discarded entry (原规划 §8.1 原则 2).
  * 3. **Explainable.** Each hit carries `features`, `contributions`, `factors`
  *    and a human line per term, so every surface (CLI `--explain`, the panel,
  *    tool output) can answer "why is this ranked first" without a second
@@ -57,7 +57,7 @@ export { CHANNEL_PROFILES, resolveProfile } from './profiles.ts'
 import type { ChannelProfile } from './profiles.ts'
 export type { ChannelProfile }
 
-/** The feature weights (规划 §8.2 初值; every one of them is tunable). */
+/** The feature weights (原规划 §8.2 初值; every one of them is tunable). */
 export interface RerankFeatureWeights {
   bm25ish: number
   exactPhrase: number
@@ -118,7 +118,7 @@ export const RERANK_REVIEW_FACTOR = 0.7
  */
 export { BM25_B, BM25_K1 } from '@clue-harness/kb'
 
-/** The freshness half-life in days (规划 §8.2 `freshness`). */
+/** The freshness half-life in days (原规划 §8.2 `freshness`). */
 export const FRESHNESS_HALF_LIFE_DAYS = 30
 
 /** One document's corpus statistics input (`key` is the entryId). */
@@ -199,7 +199,7 @@ export interface RerankContext {
   stats: CorpusStats
   /** Files changed in this work unit (normalized); empty disables the feature. */
   changedFiles?: ReadonlySet<string>
-  /** Whether the profile lets binding overlap count (规划 §7.3). */
+  /** Whether the profile lets binding overlap count (原规划 §7.3). */
   bindingWeightEnabled?: boolean
   /** entryId → window score (the signal ledger's contribution). */
   signalScores?: ReadonlyMap<string, number>
@@ -367,7 +367,7 @@ function normalizePhrase(text: string): string {
  * Whether the query appears verbatim in the entry.
  *
  * Full-query match wins; otherwise any whitespace-separated segment of at
- * least 4 characters counts as a 关键名词 hit (规划 §8.2: "查询整串/关键名词
+ * least 4 characters counts as a 关键名词 hit (原规划 §8.2: "查询整串/关键名词
  * 逐字命中"). The 4-character floor is what keeps single common bigrams from
  * claiming a phrase bonus.
  * @param haystack - the entry's title + tags + redline-filtered text, normalized.

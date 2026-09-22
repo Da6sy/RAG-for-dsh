@@ -531,7 +531,7 @@ export const kbApi = {
       targetBody(target, { id, drafts, ...(reason !== undefined ? { reason } : {}) }),
     ),
 
-  // ── V1: the embedding plane (规划 §9.5) ─────────────────────────────────
+  // ── V1: the embedding plane (原规划 §9.5) ─────────────────────────────────
   /**
    * V1 follow-up: probe the providers this composition already names and enable
    * the first one that answers an embeddings call. The user re-types nothing.
@@ -643,7 +643,7 @@ export interface EmbeddingProviderPayload {
   quant: string
 }
 
-/** V1: the key's state, as a surface may show it (规划 §9.4-3). */
+/** V1: the key's state, as a surface may show it (原规划 §9.4-3). */
 export interface KeyStatusPayload {
   state: 'configured' | 'missing' | 'unresolved' | 'unreachable'
   detail: string

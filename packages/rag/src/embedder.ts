@@ -1,5 +1,5 @@
 /**
- * The Embedder PORT and its deterministic fallback (V0, 规划 §4).
+ * The Embedder PORT and its deterministic fallback (V0, 原规划 §4).
  *
  * **Dependency inversion, not a wrapper.** The engine (`kb`/`rag`) may never
  * import a dsh package and may never open a socket, so the thing that actually
@@ -30,7 +30,7 @@ export interface Embedder {
   readonly id: string
   /**
    * The REAL dimension. For `HttpEmbedder` this is measured by the connection
-   * test, never hand-typed (规划 §9.6): a wrong dimension silently poisons
+   * test, never hand-typed (原规划 §9.6): a wrong dimension silently poisons
    * the version stamp and every cosine after it.
    */
   readonly dim: number
@@ -82,7 +82,7 @@ function hashToken(token: string): { index: number; sign: number } {
 }
 
 /**
- * The deterministic fallback embedder (规划 §3 决策 1 / §4).
+ * The deterministic fallback embedder (原规划 §3 决策 1 / §4).
  *
  * Hashed bag-of-tokens: every token from the product's own {@link tokenize}
  * (ASCII words + CJK bigrams) lands in one bucket with a fixed sign. Two texts

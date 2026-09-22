@@ -1,5 +1,5 @@
 /**
- * `clue recall --prompt-ab` — the query-doctrine A/B (V3, 规划 §11).
+ * `clue recall --prompt-ab` — the query-doctrine A/B (V3, 原规划 §11).
  *
  * §11 calls the prompt change "零代码成本、收益最高的一处改动,但必须评测后再改".
  * This module is the "评测" half. It asks the CONFIGURED CHAT MODEL to write

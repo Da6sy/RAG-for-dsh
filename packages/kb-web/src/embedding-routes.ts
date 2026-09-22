@@ -1,5 +1,5 @@
 /**
- * The embedding configuration routes (V1, 规划 §9.5/§9.7 路径 B).
+ * The embedding configuration routes (V1, 原规划 §9.5/§9.7 路径 B).
  *
  * §9.7 offered two ways to wire the settings page and marked the research item
  * that decides between them. This is **path B**, and the reason is a verified
