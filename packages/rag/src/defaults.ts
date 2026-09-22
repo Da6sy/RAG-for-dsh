@@ -80,6 +80,15 @@ export const RETRIEVAL_DEFAULTS = {
    */
   channelWeightMode: 'fusion' as 'fusion' | 'quota',
   /**
+   * F1 (落地计划 §2-6): `raw` (today) | `rank` | `minmax` — how the cosine is put
+   * on `bm25ish`'s ruler. Default `raw`: the plan's record shows rank-normalizing
+   * by default cost cosqa 0.2558 → 0.1739, so it ships off until an A/B says
+   * otherwise.
+   */
+  semanticNormalization: 'raw' as 'raw' | 'rank' | 'minmax',
+  /** F1's dispersion gate threshold on RAW cosines; `0` = only the channel-state gate. */
+  semanticGateMinSpread: 0,
+  /**
    * F4② (落地计划 §2-4): how BM25 reads a field's term frequency — `presence`
    * (shipped: a token counts once) or `count` (the real frequency). It moves the
    * length basis with it (distinct tokens vs total tokens), because the plan

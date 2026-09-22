@@ -251,8 +251,34 @@ export interface RerankContext {
   missingFeatureMode?: 'zero' | 'absent'
   /** F4②: presence (shipped) or real counts — must match how `stats` was built. */
   termFrequency?: TermFrequency
+  /**
+   * F1: the candidate-set lookups `rank`/`minmax` normalization needs. Filled by
+   * {@link rerankAll} (which is the only place that sees the whole set); injected
+   * explicitly by tests.
+   */
+  semanticRanks?: { rank: ReadonlyMap<string, number>; minmax: ReadonlyMap<string, number> }
   /** F4①: subword expansion — must match how the index and the stats were built. */
   identifierSubtokens?: boolean
+  /**
+   * F1 (`docs/落地计划-剩余工程.md` §2-6): how the cosine is put on the same
+   * ruler as `bm25ish`.
+   *
+   * `raw` (default, = today) keeps the uncalibrated absolute; `rank` maps each
+   * candidate's cosine to its normalized rank inside the candidate set (robust to
+   * outliers); `minmax` stretches [min,max] to [0,1]. The plan's measured warning
+   * is on the record: switching to rank normalization as a DEFAULT once dropped
+   * cosqa from 0.2558 to 0.1739, because rank mapping AMPLIFIES a channel that
+   * has no discrimination — which is exactly why the gate below exists and why
+   * nothing here ships on by default.
+   */
+  semanticNormalization?: 'raw' | 'rank' | 'minmax'
+  /**
+   * F1's dispersion gate: when the semantic scores in the candidate set do not
+   * separate (or the channel is degraded/absent), the semantic feature is turned
+   * OFF for the whole query and the explanation says why — an undiscriminating
+   * channel must not silently contribute noise.
+   */
+  semanticGate?: { gated: boolean; reason: string }
   /** D4: the number of candidates the semantic channel recalled (rank normalizer). */
   semanticPoolSize?: number
   /** D4: the number of candidates in the fused window (rank normalizer). */
@@ -411,9 +437,22 @@ export function rerankOne(candidate: RerankCandidate, context: RerankContext, bm
   // D2: put the cosine on the same scale as everything else. The floor/ceil come
   // from the embedder family's calibration (a setting), never from the candidate
   // set — a per-candidate-set scaling would just be D1's problem again.
-  const semantic = (context.semanticScale ?? 'raw') === 'calibrated'
+  const semanticScaled = (context.semanticScale ?? 'raw') === 'calibrated'
     ? Math.max(0, Math.min(1, (semanticRaw - (context.semanticFloor ?? 0.3)) / Math.max(1e-9, (context.semanticCeil ?? 0.8) - (context.semanticFloor ?? 0.3))))
     : semanticRaw
+  // F1: put the cosine on the same ruler, then apply the gate. `rank`/`minmax`
+  // need the SET (they are relative), so `rerankAll` precomputes the lookup and
+  // `rerankOne` stays a pure function of one candidate plus that lookup.
+  const semanticNormalized = (() => {
+    const mode = context.semanticNormalization ?? 'raw'
+    if (mode === 'raw' || !semanticPresent) return semanticScaled
+    const lookup = context.semanticRanks
+    if (lookup === undefined) return semanticScaled
+    if (mode === 'rank') return lookup.rank.get(String(entry.id)) ?? 0
+    return lookup.minmax.get(String(entry.id)) ?? 0
+  })()
+  const semanticGated = context.semanticGate?.gated === true
+  const semantic = semanticGated ? 0 : semanticNormalized
   // D4: rank as a feature. `1 − (rank−1)/(N−1)` maps the channel's own order
   // onto 0–1; a single-candidate pool is 1 by definition. This cannot replace
   // D1/D2 (the plan's worked example: rank normalization alone still loses),
@@ -519,6 +558,11 @@ export function rerankOne(candidate: RerankCandidate, context: RerankContext, bm
     if (weight === 0) continue
     explanation.push(`${label[key] ?? key} 未参与(该通道未召回,不计 0 分)`)
   }
+  // F1: a GATED channel says so in the same breath — "silently zero" and
+  // "switched off for a stated reason" must not look alike.
+  if (semanticGated && weights.semantic !== 0) {
+    explanation.push(`语义相似度 未参与(${context.semanticGate?.reason ?? '门控'})`)
+  }
   explanation.push(`词法召回分 ${candidate.lexicalScore}(保留,不参与精排)`)
   if (factors.statusFactor !== 1) explanation.push(`状态 ${entry.status} ×${factors.statusFactor}`)
   if (factors.tierFactor !== 1) explanation.push(`全局层 ×${factors.tierFactor}`)
@@ -577,9 +621,32 @@ export function rerankAll(candidates: readonly RerankCandidate[], context: Reran
    * position in that array, which IS the fusion order (the caller fuses before
    * it calls us, and 不变量 1 keeps that order untouched).
    */
+  /**
+   * F1: the candidate-set lookups `rank`/`minmax` need, computed ONCE per query.
+   * Only candidates the semantic channel actually recalled take part — a missing
+   * value must not drag the scale (D3's rule, applied to normalization).
+   */
+  const semanticLookup = (() => {
+    const entries = candidates
+      .map((candidate) => ({ id: String(candidate.entry.id), value: candidate.semantic }))
+      .filter((row): row is { id: string; value: number } => typeof row.value === 'number')
+    const rank = new Map<string, number>()
+    const minmax = new Map<string, number>()
+    if (entries.length === 0) return { rank, minmax }
+    const sorted = [...entries].sort((a, b) => b.value - a.value || a.id.localeCompare(b.id))
+    sorted.forEach((row, index) => {
+      rank.set(row.id, entries.length <= 1 ? 1 : Math.max(0, 1 - index / (entries.length - 1)))
+    })
+    const values = entries.map((row) => row.value)
+    const min = Math.min(...values)
+    const max = Math.max(...values)
+    for (const row of entries) minmax.set(row.id, max - min <= 1e-9 ? 1 : (row.value - min) / (max - min))
+    return { rank, minmax }
+  })()
   const semanticPoolSize = candidates.filter((candidate) => candidate.semanticRank !== undefined).length
   const fusedContext: RerankContext = {
     ...context,
+    semanticRanks: context.semanticRanks ?? semanticLookup,
     semanticPoolSize: context.semanticPoolSize ?? semanticPoolSize,
     fusedPoolSize: context.fusedPoolSize ?? candidates.length,
   }

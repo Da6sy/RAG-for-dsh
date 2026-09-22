@@ -182,6 +182,14 @@ export interface HybridConfig {
   identifierSubtokens?: boolean
   /** F3: what `channelWeights` means — `fusion` (today) or `quota`. */
   channelWeightMode?: 'fusion' | 'quota'
+  /** F1: `raw` (today) | `rank` | `minmax` — see RerankContext.semanticNormalization. */
+  semanticNormalization?: 'raw' | 'rank' | 'minmax'
+  /**
+   * F1's dispersion threshold, measured on the RAW cosines of the window: below
+   * it the semantic feature is switched off for the whole query with a reason.
+   * `0` (default) = no gate beyond the channel-state one.
+   */
+  semanticGateMinSpread?: number
   /** The embedder in effect (absent = lexical only, honestly annotated). */
   embedder?: Embedder
   /** ClueHarness home — where the shared embed cache and rebuild writes live. */
@@ -849,6 +857,34 @@ export function createHybridRetriever(
           annotations: annotationsFor(member.entry),
         })
       }
+      /**
+       * F1's gate, decided from two facts the reranker cannot see:
+       *
+       * 1. the vector channel's own state (degraded / absent / ability-gated ⇒
+       *    nothing to normalize), and
+       * 2. how much the window's RAW cosines actually separate. A channel whose
+       *    scores are all the same carries no ordering information, and rank
+       *    normalization would turn that flatness into a confident-looking
+       *    1.0/0.0 ladder — the measured way F1 once cost cosqa 0.2558 → 0.1739.
+       */
+      const semanticValues = [...semanticById.values()]
+      const sortedSemantic = [...semanticValues].sort((a, b) => b - a)
+      const semanticSpread = sortedSemantic.length < 2
+        ? 0
+        : (sortedSemantic[0] as number) - (sortedSemantic[Math.floor(sortedSemantic.length / 2)] as number)
+      const semanticGate: { gated: boolean; reason: string } = (() => {
+        if (semanticValues.length === 0) {
+          return { gated: true, reason: `语义通道本次未召回任何候选(${state.status})` }
+        }
+        const minSpread = config.semanticGateMinSpread ?? 0
+        if (minSpread > 0 && semanticSpread < minSpread) {
+          return {
+            gated: true,
+            reason: `语义分在该候选集内几乎不区分(最高−中位 = ${semanticSpread.toFixed(3)} < 阈值 ${minSpread})`,
+          }
+        }
+        return { gated: false, reason: '' }
+      })()
       const results = rerankAll(candidates, {
         // `exactPhrase` is a LEXICAL feature: it must see the whole query,
         // identifiers included (that is what makes a path hit decisive).
@@ -876,6 +912,8 @@ export function createHybridRetriever(
         ...(config.missingFeatureMode !== undefined ? { missingFeatureMode: config.missingFeatureMode } : {}),
         termFrequency,
         ...(identifierSubtokens ? { identifierSubtokens: true } : {}),
+        ...(config.semanticNormalization !== undefined ? { semanticNormalization: config.semanticNormalization } : {}),
+        semanticGate,
         profile,
       })
       for (const result of results) {

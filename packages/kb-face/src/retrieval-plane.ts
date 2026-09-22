@@ -212,6 +212,8 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
       // vocabulary is "absent", so the translation lives here and nowhere else.
       ...(tuning.maxVectorOnly > 0 ? { maxVectorOnly: tuning.maxVectorOnly } : {}),
       channelWeightMode: tuning.channelWeightMode,
+      semanticNormalization: tuning.semanticNormalization,
+      semanticGateMinSpread: tuning.semanticGateMinSpread,
       trustThreshold: stores.project.config.trustThreshold,
       ...(useVector ? { embedder: liveEmbedder() } : {}),
       ...(home !== undefined ? { home } : {}),

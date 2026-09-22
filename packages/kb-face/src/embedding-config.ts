@@ -173,6 +173,10 @@ export const RetrievalSchema = z.object({
   maxVectorOnly: z.natural().default(RETRIEVAL_DEFAULTS.maxVectorOnly),
   /** F3 (落地计划 §2-5): 通道权重的含义 —— `fusion`(今天) 或 `quota`(A 案)。 */
   channelWeightMode: z.union([z.const('fusion'), z.const('quota')]).default(RETRIEVAL_DEFAULTS.channelWeightMode),
+  /** F1 (落地计划 §2-6): 语义特征归一化档位;默认 raw(今天)。 */
+  semanticNormalization: z.union([z.const('raw'), z.const('rank'), z.const('minmax')]).default(RETRIEVAL_DEFAULTS.semanticNormalization),
+  /** F1 的离散度门控阈值(在原始余弦上量);0 = 只保留"通道不可用"这一道门。 */
+  semanticGateMinSpread: z.number().default(RETRIEVAL_DEFAULTS.semanticGateMinSpread),
   /** D3: `zero` (today) folds "not recalled" into 0; `absent` keeps the tri-state. */
   missingFeatureMode: z.union([z.const('zero'), z.const('absent')]).default(RETRIEVAL_DEFAULTS.missingFeatureMode),
   featureWeights: z.object({

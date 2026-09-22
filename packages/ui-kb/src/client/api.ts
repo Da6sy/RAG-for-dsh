@@ -681,6 +681,10 @@ export interface RetrievalTuningPayload {
   maxVectorOnly: number
   /** F3: what channelWeights means — `fusion` (today) or `quota` (case A). */
   channelWeightMode: 'fusion' | 'quota'
+  /** F1: semantic feature normalization — `raw` (today) | `rank` | `minmax`. */
+  semanticNormalization: 'raw' | 'rank' | 'minmax'
+  /** F1: dispersion gate threshold on raw cosines (0 = off). */
+  semanticGateMinSpread: number
 }
 
 /** V1: one derived index's health. */

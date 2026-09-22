@@ -135,10 +135,14 @@ export function EmbeddingSection(): JSX.Element {
     maxVectorOnly: string
     /** F3: 通道权重的含义。 */
     channelWeightMode: string
+    /** F1: 语义归一化档位。 */
+    semanticNormalization: string
+    /** F1: 离散度门控阈值。 */
+    semanticGateMinSpread: string
   }>({
     rerank: true, ranklog: true, llmRerank: false, lexical: '1', vector: '1', weights: {},
     lexicalNormalization: 'auto', semanticScale: 'auto', semanticFloor: '0.3', semanticCeil: '0.8', missingFeatureMode: 'zero', termFrequency: 'presence', identifierSubtokens: false,
-    maxVectorOnly: '0', channelWeightMode: 'fusion',
+    maxVectorOnly: '0', channelWeightMode: 'fusion', semanticNormalization: 'raw', semanticGateMinSpread: '0',
   })
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [keyInput, setKeyInput] = useState('')
@@ -180,6 +184,8 @@ export function EmbeddingSection(): JSX.Element {
         identifierSubtokens: payload.retrieval.identifierSubtokens,
         maxVectorOnly: String(payload.retrieval.maxVectorOnly),
         channelWeightMode: payload.retrieval.channelWeightMode,
+        semanticNormalization: payload.retrieval.semanticNormalization,
+        semanticGateMinSpread: String(payload.retrieval.semanticGateMinSpread),
       })
       setBudgetDraft({
         batchSize: String(payload.config.batchSize),
@@ -310,6 +316,8 @@ export function EmbeddingSection(): JSX.Element {
     || tuningDraft.identifierSubtokens !== retrieval.identifierSubtokens
     || Number(tuningDraft.maxVectorOnly) !== retrieval.maxVectorOnly
     || tuningDraft.channelWeightMode !== retrieval.channelWeightMode
+    || tuningDraft.semanticNormalization !== retrieval.semanticNormalization
+    || Number(tuningDraft.semanticGateMinSpread) !== retrieval.semanticGateMinSpread
 
   const staleCount = vector.indexes.filter((index) => index.stale || index.unreadable).length
 
@@ -700,6 +708,28 @@ export function EmbeddingSection(): JSX.Element {
                   <option value="absent">absent(未参与,--explain 会写明)</option>
                 </select>
               </div>
+              <div className="clue-field" title="raw = 原始余弦(今天);rank/minmax = 在候选集内归一化(会放大没有区分力的通道,先 A/B 再翻)">
+                <span className="clue-field-label">语义归一化</span>
+                <select
+                  className="clue-input"
+                  value={tuningDraft.semanticNormalization}
+                  disabled={busy || !data.available}
+                  onChange={(event: { target: { value: string } }) => setTuningDraft((previous) => ({ ...previous, semanticNormalization: event.target.value }))}
+                >
+                  <option value="raw">raw(原始余弦,今天)</option>
+                  <option value="rank">rank(候选集内名次)</option>
+                  <option value="minmax">minmax(候选集内极差)</option>
+                </select>
+              </div>
+              <div className="clue-field" title="在原始余弦上量：候选集内(最高−中位)低于该值时,整条查询的语义特征停用并在 explain 写明原因。0 = 只保留通道不可用这一道门">
+                <span className="clue-field-label">离散度门控阈值</span>
+                <Input
+                  className="clue-input"
+                  value={tuningDraft.semanticGateMinSpread}
+                  disabled={busy || !data.available}
+                  onChange={(event: { target: { value: string } }) => setTuningDraft((previous) => ({ ...previous, semanticGateMinSpread: event.target.value }))}
+                />
+              </div>
               <div className="clue-field">
                 <span className="clue-field-label">词频口径</span>
                 <select
@@ -771,6 +801,8 @@ export function EmbeddingSection(): JSX.Element {
                 identifierSubtokens: tuningDraft.identifierSubtokens,
                 maxVectorOnly: Number(tuningDraft.maxVectorOnly),
                 channelWeightMode: tuningDraft.channelWeightMode,
+                semanticNormalization: tuningDraft.semanticNormalization,
+                semanticGateMinSpread: Number(tuningDraft.semanticGateMinSpread),
                 ...(Object.keys(weights).length > 0 ? { featureWeights: weights } : {}),
               }, 'retrieval')
             }}

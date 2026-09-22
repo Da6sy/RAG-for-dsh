@@ -130,6 +130,9 @@ const knobs = {
   ...(args['identifier-subtokens'] !== undefined ? { identifierSubtokens: args['identifier-subtokens'] !== 'false' } : {}),
   // F3: fusion (today) or quota (case A, the weights become a recall quota).
   ...(args['channel-weight-mode'] !== undefined ? { channelWeightMode: String(args['channel-weight-mode']) } : {}),
+  // F1: semantic normalization + the dispersion gate (both off by default).
+  ...(args['semantic-normalization'] !== undefined ? { semanticNormalization: String(args['semantic-normalization']) } : {}),
+  ...(args['semantic-gate-min-spread'] !== undefined ? { semanticGateMinSpread: Number(args['semantic-gate-min-spread']) } : {}),
   ...(args['semantic-floor'] !== undefined ? { semanticFloor: Number(args['semantic-floor']) } : {}),
   ...(args['semantic-ceil'] !== undefined ? { semanticCeil: Number(args['semantic-ceil']) } : {}),
   // D4's weights are the two rank features; they ship at 0, so an A/B has to be
