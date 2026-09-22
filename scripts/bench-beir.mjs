@@ -472,7 +472,7 @@ try {
         ? ['D1/D2 为 auto:hybrid 行按通道用 absolute+calibrated,lexical 行保持 candidates+raw(落地计划 §2-2)']
         : []),
       ...(knobs.lexicalNormalization === 'absolute' || knobs.lexicalNormalization === undefined || knobs.lexicalNormalization === 'auto'
-        ? ['D1 的 scale_q 目前取**召回池**内正分的 p90(池 <3 条时退化为最大值):这是语料级分位数的近似,报告里的 absolute 数字按"近似"读']
+        ? ['D1 的 scale_q:有倒排索引时取**语料级** p90(R1 之后),没有索引(扫描路径)时退化为召回池 p90 —— 报告里 hybrid 行用的是语料级,扫描行按"近似"读']
         : []),
       ...(knobs.semanticScale === 'calibrated' || knobs.semanticScale === undefined || knobs.semanticScale === 'auto'
         ? [`D2 的 floor/ceil = ${knobs.semanticFloor ?? RETRIEVAL_DEFAULTS.semanticFloor}/${knobs.semanticCeil ?? RETRIEVAL_DEFAULTS.semanticCeil},是**嵌入器家族的两点标定**,不是按本语料调的`]

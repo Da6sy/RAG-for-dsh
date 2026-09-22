@@ -67,6 +67,7 @@ export {
   forgetLexicalIndex,
   lexicalCandidates,
   lexicalIndexDir,
+  lexicalRawQuantile,
   lexicalStatsFor,
   lexicalStatsFrom,
   loadLexicalIndex,

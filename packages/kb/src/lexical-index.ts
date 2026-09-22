@@ -50,6 +50,7 @@ import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promi
 import path from 'node:path'
 import {
   bm25CountFields,
+  bm25fScoreFrom,
   type Bm25FieldWeights,
   type LexicalStats,
   type PrecomputedFields,
@@ -684,6 +685,49 @@ export function lexicalCandidates(
  * forget that the postings' `tf` triple is (title, tag, text) in THAT order.
  */
 export const LEXICAL_FIELD_ORDER: readonly (keyof Bm25FieldWeights)[] = ['title', 'tag', 'text']
+
+/**
+ * The CORPUS-LEVEL quantile of the raw BM25 scores a query's tokens produce.
+ *
+ * This is the value D1's `absolute` scale wants (`scale_q`): "how strong is a
+ * typical lexical match for THIS query ACROSS THE CORPUS", not "how strong is
+ * the best one in the recall window". Until R1 the reranker could only reach the
+ * pool, so it used the pool's p90 and the reports carried an "approximation"
+ * caveat; with an index the same quantile is exact at the cost of one pass over
+ * the postings (which the indexed query path already pays anyway).
+ *
+ * Only entries containing at least one query token take part: everything else
+ * scores zero by arithmetic, and dragging zeros into the quantile would make the
+ * scale a statement about the corpus size instead of about the query.
+ * @param index - the loaded index.
+ * @param queryTokens - the query's tokens.
+ * @param weights - field weights.
+ * @param options - term-frequency mode, tokenizer mode and the quantile.
+ * @returns the quantile of positive raw scores (0 when nothing matches).
+ */
+export function lexicalRawQuantile(
+  index: LexicalIndex,
+  queryTokens: readonly string[],
+  weights: Bm25FieldWeights,
+  options: {
+    termFrequency?: TermFrequency
+    identifierSubtokens?: boolean
+    /** The quantile to take (0.9 = p90, the plan's initial value). */
+    quantile?: number
+  } = {},
+): number {
+  const termFrequency = options.termFrequency ?? 'presence'
+  const stats = lexicalStatsFor(index, termFrequency)
+  const raws: number[] = []
+  for (const candidate of lexicalCandidates(index, queryTokens, termFrequency)) {
+    const scored = bm25fScoreFrom(candidate.fields, queryTokens, stats, weights, termFrequency)
+    if (scored.score > 0) raws.push(scored.score)
+  }
+  if (raws.length === 0) return 0
+  raws.sort((a, b) => a - b)
+  const q = Math.min(1, Math.max(0, options.quantile ?? 0.9))
+  return raws[Math.min(raws.length - 1, Math.floor(raws.length * q))] as number
+}
 
 /**
  * Merge the indexes of several tiers into ONE (R1: a query spans tiers).

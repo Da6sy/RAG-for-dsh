@@ -22,7 +22,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { openGlobalStore, openProjectStore, type KbStore } from '../src/store.ts'
-import { bm25fScoreFrom, buildLexicalStats, type LexicalStats } from '../src/bm25.ts'
+import { bm25fScoreFrom, buildLexicalStats, precomputedFrom, type LexicalStats } from '../src/bm25.ts'
 import { entryTextAfterRedlines, queryKb, scoreEntry } from '../src/query.ts'
 import { tokenize } from '../src/tokenize.ts'
 import { DEFAULT_WEIGHTS } from '../src/query.ts'
@@ -32,6 +32,8 @@ import {
   forgetLexicalIndex,
   lexicalCandidates,
   lexicalIndexDir,
+  lexicalRawQuantile,
+  lexicalStatsFor,
   lexicalStatsFrom,
   loadLexicalIndex,
   mergeLexicalIndexes,
@@ -317,4 +319,41 @@ test('F4① 端到端:开子词切分后,查 "sort" 能命中含 "_process_and_s
     '开着子词切分时,索引路径与扫描路径必须逐条一致',
   )
   void stale
+})
+
+// ── R1 解锁:D1 的 scale_q 从"召回池近似"升级为"语料级分位" ───────────────
+test('R1 scale_q:lexicalRawQuantile 等于"逐条打分后的语料级 p90"(不是池内近似)', async (t) => {
+  const { store } = await world(t)
+  await store.add({ kind: 'note', title: '分片', text: '分片。', tags: ['kb'] })
+  await store.add({ kind: 'note', title: '分片 重建 分片 重建 分片', text: '分片重建的正文,分片与重建各说一遍。', tags: ['kb'] })
+  const entries = await store.list()
+  const built = await buildLexicalIndex({ storeDir: store.dir, entries })
+  const tokens = tokenize('分片 重建')
+  const weights = { title: 3, tag: 2, text: 1 }
+
+  // 基线:把每一条都按索引口径打一遍分,自己取 p90 —— 这就是"语料级"的定义。
+  const stats = lexicalStatsFor(built.index, 'presence')
+  const all = entries
+    .map((entry) => bm25fScoreFrom(
+      precomputedFrom({ title: entry.title, tags: entry.tags, text: entryTextAfterRedlines(entry) }, 'presence'),
+      tokens,
+      stats,
+      weights,
+      'presence',
+    ).score)
+    .filter((score) => score > 0)
+    .sort((a, b) => a - b)
+  const expected = all[Math.min(all.length - 1, Math.floor(all.length * 0.9))]
+  const actual = lexicalRawQuantile(built.index, tokens, weights, { quantile: 0.9 })
+  assert.ok(all.length >= 3, 'fixture 要有足够正分样本,否则退化路径掩盖等价性')
+  assert.equal(actual, expected, '语料级 p90 必须等于逐条打分后的同一个分位')
+
+  // 反过来:它在"语料级 ≠ 池级"时确实不同 —— 用一个人为缩小的池做对照。
+  const pool = lexicalCandidates(built.index, tokens).slice(0, 2)
+  const poolRaws = pool
+    .map((candidate) => bm25fScoreFrom(candidate.fields, tokens, stats, weights, 'presence').score)
+    .filter((score) => score > 0)
+    .sort((a, b) => a - b)
+  const poolP90 = poolRaws[Math.min(poolRaws.length - 1, Math.floor(poolRaws.length * 0.9))]
+  assert.notEqual(poolP90, expected, '池内 p90 与语料级 p90 在本 fixture 上应当不同(否则这条测试证明不了升级)')
 })

@@ -257,6 +257,13 @@ export interface RerankContext {
    * explicitly by tests.
    */
   semanticRanks?: { rank: ReadonlyMap<string, number>; minmax: ReadonlyMap<string, number> }
+  /**
+   * D1's `scale_q`: the saturation scale `bm25ish = raw/(raw + scale_q)` divides
+   * by. Absent ⇒ the recall pool's p90 (the documented approximation); the
+   * indexed path supplies the CORPUS-level quantile instead, which is what the
+   * plan asked for once R1 made it cheap.
+   */
+  scaleQ?: number
   /** F4①: subword expansion — must match how the index and the stats were built. */
   identifierSubtokens?: boolean
   /**
@@ -605,12 +612,15 @@ export function rerankAll(candidates: readonly RerankCandidate[], context: Reran
    * the max (nothing to estimate from) and the caller should treat the value as
    * approximate.
    */
-  const scaleQ = (() => {
+  const poolScaleQ = (() => {
     const positive = raws.filter((raw) => raw > 0).sort((a, b) => a - b)
     if (positive.length === 0) return 0
     if (positive.length < 3) return positive[positive.length - 1] as number
     return positive[Math.min(positive.length - 1, Math.floor(positive.length * 0.9))] as number
   })()
+  // R1: a caller that can compute the corpus-level quantile (it has the inverted
+  // index) passes it in; everyone else keeps the pool approximation.
+  const scaleQ = context.scaleQ !== undefined && context.scaleQ > 0 ? context.scaleQ : poolScaleQ
   const lexicalMode = context.lexicalNormalization ?? 'candidates'
   /**
    * D4: the pool sizes the rank features normalize against.

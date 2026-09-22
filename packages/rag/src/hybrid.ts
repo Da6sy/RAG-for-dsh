@@ -65,6 +65,7 @@ import {
 import { normalizeQuery, resolveProfile, type ChannelProfile, type NormalizedQuery } from './profiles.ts'
 import { RETRIEVAL_DEFAULTS, resolveLexicalNormalization, resolveSemanticScale } from './defaults.ts'
 import {
+  lexicalRawQuantile,
   lexicalStatsFor,
   lexicalStatsFrom,
   mergeLexicalIndexes,
@@ -867,6 +868,19 @@ export function createHybridRetriever(
        *    normalization would turn that flatness into a confident-looking
        *    1.0/0.0 ladder — the measured way F1 once cost cosqa 0.2558 → 0.1739.
        */
+      /**
+       * R1's most under-rated unlock: D1's `scale_q` can now be the CORPUS-level
+       * quantile instead of the recall pool's — the index answers it in one pass
+       * over the postings, which the lexical channel has already paid for. The
+       * bench reports can then drop their "approximation" caveat.
+       */
+      const corpusScaleQ = mergedIndex === null
+        ? undefined
+        : lexicalRawQuantile(mergedIndex, queryTokens, weights, {
+          termFrequency,
+          identifierSubtokens,
+          quantile: 0.9,
+        })
       const semanticValues = [...semanticById.values()]
       const sortedSemantic = [...semanticValues].sort((a, b) => b - a)
       const semanticSpread = sortedSemantic.length < 2
@@ -913,6 +927,7 @@ export function createHybridRetriever(
         termFrequency,
         ...(identifierSubtokens ? { identifierSubtokens: true } : {}),
         ...(config.semanticNormalization !== undefined ? { semanticNormalization: config.semanticNormalization } : {}),
+        ...(corpusScaleQ !== undefined && corpusScaleQ > 0 ? { scaleQ: corpusScaleQ } : {}),
         semanticGate,
         profile,
       })
