@@ -185,6 +185,14 @@ export interface HybridConfig {
   /** Per-call ranklog sink (V2: 攒 LTR 标注). Absent = no log written. */
   onRank?: (line: RankLogLine) => Promise<void> | void
   /**
+   * 落地计划 §2-7: a ranklog sink that THROWS must not vanish.
+   *
+   * The normal exit used to swallow it in an empty `catch {}`, so a broken sink
+   * (a read-only directory, a full disk) produced no row and no complaint —
+   * indistinguishable from "the model never searched".
+   */
+  onRankError?: (error: unknown) => void
+  /**
    * V5 (规划 §8.4): the optional model reranker, default OFF. It runs AFTER the
    * deterministic rerank and its result is reported as a DIFF against it — the
    * deterministic order is never discarded silently, because the whole point of
@@ -472,6 +480,45 @@ export function createHybridRetriever(
     const limit = options.limit ?? topK
     const now = config.now ?? new Date()
     const at = now.toISOString()
+    /**
+     * 落地计划 §2-7 — ONE emitter, called by EVERY exit.
+     *
+     * Measured gap: the pure-lexical delegation (`channels: 'lexical'`,
+     * `rerank: false`) and the empty-token early return both left the function
+     * before the single `config.onRank` call, so those retrievals wrote no row
+     * at all. That is not a logging nuisance: the tool channel's adoption-rate
+     * denominator is built from surfaced rows, and a configuration that logs
+     * nothing looks like a model that never searched.
+     */
+    const emitRank = async (
+      rows: readonly QueryHit[],
+      emittedChannels: RecallChannels,
+      emittedRerank: boolean,
+      vectorStatus: VectorChannelState['status'],
+    ): Promise<void> => {
+      if (config.onRank === undefined) return
+      try {
+        await config.onRank({
+          at,
+          profile: profile.name,
+          channels: emittedChannels,
+          rerank: emittedRerank,
+          query,
+          candidates: rows.map((hit) => ({
+            id: String(hit.entry.id),
+            score: hit.score,
+            lexicalScore: hit.explain?.lexicalScore ?? 0,
+            semantic: hit.explain?.semantic ?? null,
+            features: hit.explain?.features ?? {},
+          })),
+          vector: vectorStatus,
+        })
+      } catch (error) {
+        // The sink's own throw reaches the caller's reporter; it is never
+        // swallowed here (the plane also catches its own writes and counts them).
+        config.onRankError?.(error)
+      }
+    }
     // V3 (§7.3): the profile decides what each channel SEES. Lexical always
     // gets the whole query (paths and identifiers are its gold), the semantic
     // channel gets the prose — and for `gate` the identifiers are taken out of
@@ -489,6 +536,7 @@ export function createHybridRetriever(
       const annotated = channelStateNote === null
         ? hits
         : hits.map((hit) => ({ ...hit, annotations: [...hit.annotations, channelStateNote] }))
+      await emitRank(annotated, effectiveChannels, false, 'disabled')
       return {
         hits: annotated,
         vector: { status: 'disabled', note: channelStateNote ?? '本次只走词法通道(--channel lexical --rerank off)' },
@@ -502,6 +550,7 @@ export function createHybridRetriever(
       }
     }
     if (queryTokens.length === 0) {
+      await emitRank([], effectiveChannels, rerankEnabled, effectiveChannels === 'vector' ? 'used' : 'disabled')
       return {
         hits: [],
         vector: { status: effectiveChannels === 'vector' ? 'used' : 'disabled', note: '空查询' },
@@ -847,27 +896,9 @@ export function createHybridRetriever(
       final.push(notes.length === 0 ? enriched : { ...enriched, annotations: [...enriched.annotations, ...notes] })
     }
 
-    if (config.onRank !== undefined) {
-      try {
-        await config.onRank({
-          at,
-          profile: profile.name,
-          channels: effectiveChannels,
-          rerank: rerankEnabled,
-          query,
-          candidates: final.map((hit) => ({
-            id: String(hit.entry.id),
-            score: hit.score,
-            lexicalScore: hit.explain?.lexicalScore ?? 0,
-            semantic: hit.explain?.semantic ?? null,
-            features: hit.explain?.features ?? {},
-          })),
-          vector: state.status,
-        })
-      } catch {
-        // A ranklog failure must never fail a retrieval (plan §5.3 护栏 2).
-      }
-    }
+    // A ranklog failure must never fail a retrieval (plan §5.3 护栏 2) — but it
+    // must be REPORTABLE, which is what `emitRank`'s catch does.
+    await emitRank(final, effectiveChannels, rerankEnabled, state.status)
 
     return {
       hits: final,

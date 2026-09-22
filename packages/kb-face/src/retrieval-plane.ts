@@ -29,6 +29,7 @@ import {
   appendRankLog,
   createHybridRetriever,
   ensureLexicalIndexes,
+  ranklogFile,
   type ChunkVectorConfig,
   type VectorChannelState,
 } from '@clue-harness/rag'
@@ -92,6 +93,14 @@ export interface PlaneStatus {
   key: KeyStatus
   /** The `embedderVersion` in effect ('' when not ready). */
   embedderVersion: string
+  /**
+   * 落地计划 §2-7: WHERE rows go and whether writing has ever failed.
+   *
+   * This field exists because of a false alarm: a report read "8 rows, all
+   * pre-step" as "the tool path never logs" without ever naming the file it
+   * counted. A count without a source cannot be falsified.
+   */
+  ranklog: { enabled: boolean; file: string; failures: number; lastError: string | null }
 }
 
 /** What the plane needs from its host. */
@@ -197,6 +206,14 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
       ...(useVector ? { embedder: liveEmbedder() } : {}),
       ...(home !== undefined ? { home } : {}),
       ...(tuning.ranklog && home !== undefined ? {
+        // 落地计划 §2-7: a write failure names its TARGET FILE and is counted,
+        // because "the log is empty" and "the log could not be written" are
+        // different facts and only one of them is the product's problem.
+        onRankError: (error: unknown) => {
+          ranklogFailures += 1
+          lastRanklogError = error instanceof Error ? error.message : String(error)
+          warn(`ranklog sink 抛错(不影响检索) — 目标文件 ${lastRanklogFile}: ${lastRanklogError}`)
+        },
         onRank: async (line: {
           at: string
           profile: string
@@ -209,10 +226,14 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
           // The ranklog carries ids, features and the query — never a secret
           // (规划 §9.4-1). A write failure is reported, never thrown: the log
           // is annotation data, not the product's job (规划 §5.3 护栏 2).
+          const file = ranklogFile(stores.project.dir)
+          lastRanklogFile = file
           try {
             await appendRankLog(stores.project.dir, line)
           } catch (error) {
-            warn(`ranklog 写入失败(不影响检索): ${error instanceof Error ? error.message : String(error)}`)
+            ranklogFailures += 1
+            lastRanklogError = error instanceof Error ? error.message : String(error)
+            warn(`ranklog 写入失败(不影响检索) — 目标文件 ${file}: ${lastRanklogError}`)
           }
         },
       } : {}),
@@ -233,6 +254,11 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
     }
   }
 
+  /** 落地计划 §2-7: ranklog write failures, counted and named (never just a warn). */
+  let ranklogFailures = 0
+  let lastRanklogFile = ''
+  let lastRanklogError: string | null = null
+
   const status = async (): Promise<PlaneStatus> => {
     const embedding = readEmbeddingConfig(ctx)
     const ready = embeddingReady(embedding)
@@ -243,6 +269,12 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
       note: embeddingReadinessNote(embedding),
       key: await embeddingKeyStatus(ctx, embedding),
       embedderVersion: ready ? embedderVersion({ modelId: embedding.model, dim: embedding.dim }) : '',
+      ranklog: {
+        enabled: readRetrievalConfig(ctx).ranklog && options.home !== undefined,
+        file: lastRanklogFile,
+        failures: ranklogFailures,
+        lastError: lastRanklogError,
+      },
     }
   }
 

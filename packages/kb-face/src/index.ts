@@ -561,7 +561,10 @@ export function apply(ctx: Context, config: Config = {}): void {
     // shared embed cache and the ranklog in the tier's home even when a
     // composition passes no explicit one.
     home: resolved.home ?? clueHome(),
-    onWarn: (message) => { console.warn(`clue-kb: ${message}`) },
+    // 落地计划 §2-7: the same channel the rest of this file warns through, so a
+        // ranklog failure shows up in the host log/diagnostics instead of a bare
+        // console line nobody collects.
+        onWarn: (message) => { ctx.logger.warn(`clue-kb: ${message}`) },
   })
   const retrieveFor = async (
     root: string,

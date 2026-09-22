@@ -253,3 +253,58 @@ test('过滤仍归过滤: 被 discarded 的条目不会因语义相似被召回'
   const result = await createHybridRetriever(store, global, { channels: 'hybrid', embedder, home, rebuildOnRead: false, topK: 5 }).retrieveDetailed('键盘 可达性')
   assert.equal(result.hits.some((hit) => String(hit.entry.id) === String(doomed.id)), false)
 })
+
+// ── 落地计划 §2-7: ranklog 在每一个出口都要落一行,且 sink 异常可见 ──────────
+//
+// 这一节的存在理由是一份误报:某份报告读到「8 行全是 pre-step」,判定"工具通道
+// 从来不写 ranklog"。复核发现那 8 行的时间戳早于 ranklog 这套代码,真正的缺陷是
+// 另外两条**静默出口**——它们连一行都不写,而写盘失败又被一个空 catch 吞掉。
+// 三条断言分别钉住这三处。
+type RankLine = { channels: string; rerank: boolean; candidates: unknown[]; vector: string }
+
+test('§2-7 回滚档(纯词法委派)也必须写 ranklog —— 此前一行都不写', async (t) => {
+  const { store, global } = await world(t)
+  const lines: RankLine[] = []
+  const retriever = createHybridRetriever(store, global, {
+    channels: 'lexical',
+    rerank: false,
+    topK: 5,
+    onRank: (line) => { lines.push(line as unknown as RankLine) },
+  })
+  const hits = await retriever.retrieveDetailed('键盘 焦点', { limit: 5, noTouch: true })
+  assert.ok(hits.hits.length > 0, '这轮要真的召回,否则测不到"有结果却不写日志"')
+  assert.equal(lines.length, 1, '委派出口必须写且只写一行')
+  assert.equal(lines[0]?.channels, 'lexical')
+  assert.equal(lines[0]?.rerank, false)
+})
+
+test('§2-7 空 token 查询也要写一行(candidates 为空,但"问过"是事实)', async (t) => {
+  const { store, global } = await world(t)
+  const lines: RankLine[] = []
+  const retriever = createHybridRetriever(store, global, {
+    channels: 'lexical',
+    rerank: true,
+    topK: 5,
+    onRank: (line) => { lines.push(line as unknown as RankLine) },
+  })
+  const detailed = await retriever.retrieveDetailed('。', { limit: 5, noTouch: true })
+  assert.equal(detailed.hits.length, 0, '标点没有 token,召回必然为空')
+  assert.equal(lines.length, 1, '空查询同样是一次检索,必须留痕')
+  assert.equal((lines[0]?.candidates ?? [null]).length, 0)
+})
+
+test('§2-7 sink 自己抛错必须被 onRankError 看到,而不是被空 catch 吞掉', async (t) => {
+  const { store, global } = await world(t)
+  const errors: unknown[] = []
+  const retriever = createHybridRetriever(store, global, {
+    channels: 'lexical',
+    rerank: true,
+    topK: 5,
+    onRank: () => { throw new Error('sink 坏了') },
+    onRankError: (error) => { errors.push(error) },
+  })
+  const detailed = await retriever.retrieveDetailed('键盘 焦点', { limit: 5, noTouch: true })
+  assert.ok(detailed.hits.length > 0, 'sink 坏不得影响检索结果(护栏 2)')
+  assert.equal(errors.length, 1, 'sink 的异常必须可见')
+  assert.match(String((errors[0] as Error).message), /sink 坏了/)
+})
