@@ -64,6 +64,22 @@ export const RETRIEVAL_DEFAULTS = {
   /** D3: how a feature whose channel did not recall the candidate is treated. */
   missingFeatureMode: 'zero' as 'zero' | 'absent',
   /**
+   * F2 (落地计划 §2-5): how many candidates that ONLY the vector channel
+   * recalled may enter the window. `0` = no quota (today).
+   */
+  maxVectorOnly: 0,
+  /**
+   * F3 (落地计划 §2-5/§5-2, recommended case A): what `channelWeights` MEANS.
+   *
+   * `fusion` (default, = today) puts the weights into the RRF sum, where measured
+   * behavior shows they are INERT once the reranker runs (changing the vector
+   * weight from 1 to 0 changed no result, because the semantic signal reaches the
+   * ranking as a rerank FEATURE, not through fusion). `quota` moves the same
+   * numbers to the recall layer — how much of the window vector-only candidates
+   * may take — which is a knob that can actually be measured and asserted.
+   */
+  channelWeightMode: 'fusion' as 'fusion' | 'quota',
+  /**
    * F4② (落地计划 §2-4): how BM25 reads a field's term frequency — `presence`
    * (shipped: a token counts once) or `count` (the real frequency). It moves the
    * length basis with it (distinct tokens vs total tokens), because the plan

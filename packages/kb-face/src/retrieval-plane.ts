@@ -208,6 +208,10 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
       missingFeatureMode: tuning.missingFeatureMode,
       termFrequency: tuning.termFrequency,
       identifierSubtokens: tuning.identifierSubtokens,
+      // `0` means "no quota" in the settings vocabulary; the engine's own
+      // vocabulary is "absent", so the translation lives here and nowhere else.
+      ...(tuning.maxVectorOnly > 0 ? { maxVectorOnly: tuning.maxVectorOnly } : {}),
+      channelWeightMode: tuning.channelWeightMode,
       trustThreshold: stores.project.config.trustThreshold,
       ...(useVector ? { embedder: liveEmbedder() } : {}),
       ...(home !== undefined ? { home } : {}),

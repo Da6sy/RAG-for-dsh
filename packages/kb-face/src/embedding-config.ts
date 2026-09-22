@@ -169,6 +169,10 @@ export const RetrievalSchema = z.object({
   termFrequency: z.union([z.const('presence'), z.const('count')]).default(RETRIEVAL_DEFAULTS.termFrequency),
   /** F4① (落地计划 §2-3): subword expansion of identifiers; default off. */
   identifierSubtokens: z.boolean().default(RETRIEVAL_DEFAULTS.identifierSubtokens),
+  /** F2 (落地计划 §2-5): 向量独有候选的配额上限;0 = 不限(今天)。 */
+  maxVectorOnly: z.natural().default(RETRIEVAL_DEFAULTS.maxVectorOnly),
+  /** F3 (落地计划 §2-5): 通道权重的含义 —— `fusion`(今天) 或 `quota`(A 案)。 */
+  channelWeightMode: z.union([z.const('fusion'), z.const('quota')]).default(RETRIEVAL_DEFAULTS.channelWeightMode),
   /** D3: `zero` (today) folds "not recalled" into 0; `absent` keeps the tri-state. */
   missingFeatureMode: z.union([z.const('zero'), z.const('absent')]).default(RETRIEVAL_DEFAULTS.missingFeatureMode),
   featureWeights: z.object({

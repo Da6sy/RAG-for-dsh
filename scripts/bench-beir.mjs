@@ -128,6 +128,8 @@ const knobs = {
   ...(args['term-frequency'] !== undefined ? { termFrequency: String(args['term-frequency']) } : {}),
   // F4①: subword expansion of identifiers (default off).
   ...(args['identifier-subtokens'] !== undefined ? { identifierSubtokens: args['identifier-subtokens'] !== 'false' } : {}),
+  // F3: fusion (today) or quota (case A, the weights become a recall quota).
+  ...(args['channel-weight-mode'] !== undefined ? { channelWeightMode: String(args['channel-weight-mode']) } : {}),
   ...(args['semantic-floor'] !== undefined ? { semanticFloor: Number(args['semantic-floor']) } : {}),
   ...(args['semantic-ceil'] !== undefined ? { semanticCeil: Number(args['semantic-ceil']) } : {}),
   // D4's weights are the two rank features; they ship at 0, so an A/B has to be

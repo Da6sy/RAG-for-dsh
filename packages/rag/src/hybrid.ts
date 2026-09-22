@@ -180,6 +180,8 @@ export interface HybridConfig {
    * together (the policy layer rebuilds when the mode changes).
    */
   identifierSubtokens?: boolean
+  /** F3: what `channelWeights` means — `fusion` (today) or `quota`. */
+  channelWeightMode?: 'fusion' | 'quota'
   /** The embedder in effect (absent = lexical only, honestly annotated). */
   embedder?: Embedder
   /** ClueHarness home — where the shared embed cache and rebuild writes live. */
@@ -343,6 +345,7 @@ export function createHybridRetriever(
   const rrfK = config.rrfK ?? RETRIEVAL_DEFAULTS.rrfK
   const lexWeight = config.channelWeights?.lexical ?? profile.lexicalWeight
   const vecWeight = config.channelWeights?.vector ?? profile.semanticWeight
+  const channelWeightMode = config.channelWeightMode ?? RETRIEVAL_DEFAULTS.channelWeightMode
   /**
    * F1: a no-ability embedder may not enter fusion.
    *
@@ -741,22 +744,45 @@ export function createHybridRetriever(
     }
 
     // ── RRF fusion ────────────────────────────────────────────────────────
+    const fusionLexWeight = channelWeightMode === 'quota' ? 1 : lexWeight
+    const fusionVecWeight = channelWeightMode === 'quota' ? 1 : vecWeight
     const fusedCandidates = effectiveChannels === 'vector'
-      ? rrfFuse([{ name: 'vector', weight: vecWeight, ranked: vectorRanked }], rrfK)
+      ? rrfFuse([{ name: 'vector', weight: fusionVecWeight, ranked: vectorRanked }], rrfK)
       : rrfFuse([
-        { name: 'lexical', weight: lexWeight, ranked: lexicalRanked },
-        { name: 'vector', weight: vecWeight, ranked: vectorRanked },
+        { name: 'lexical', weight: fusionLexWeight, ranked: lexicalRanked },
+        { name: 'vector', weight: fusionVecWeight, ranked: vectorRanked },
       ], rrfK)
     // F2: apply the vector-only quota BEFORE the window slice, keeping the
     // fusion order (the quota decides who gets IN, never the order among them).
-    const capped = config.maxVectorOnly === undefined
+    /**
+     * F3 (A 案): in `quota` mode the same weights decide how much of the window
+     * vector-only candidates may occupy, and the RRF sum uses equal weights —
+     * the knob then has ONE meaning instead of a second one nobody can observe.
+     */
+    const quota = channelWeightMode === 'quota' && rerankEnabled
+      ? (() => {
+        const total = vecWeight + lexWeight
+        if (total <= 0 || vecWeight <= 0) return 0
+        return Math.max(1, Math.round(rerankCandidates * (vecWeight / total)))
+      })()
+      : undefined
+    /**
+     * `0` means "no quota" in BOTH vocabularies (settings and engine) — one
+     * meaning for one number. "Admit no vector-only candidate at all" is said
+     * with `channelWeightMode: 'quota'` + `channelWeights.vector: 0`, which is a
+     * statement about the channel rather than about a count.
+     */
+    const effectiveQuota = config.maxVectorOnly !== undefined && config.maxVectorOnly > 0
+      ? config.maxVectorOnly
+      : quota
+    const capped = effectiveQuota === undefined
       ? fusedCandidates
       : (() => {
         const kept: FusedCandidate[] = []
         let vectorOnly = 0
         for (const row of fusedCandidates) {
           if (row.ranks.lexical === undefined) {
-            if (vectorOnly >= (config.maxVectorOnly as number)) continue
+            if (vectorOnly >= effectiveQuota) continue
             vectorOnly += 1
           }
           kept.push(row)

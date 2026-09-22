@@ -131,9 +131,14 @@ export function EmbeddingSection(): JSX.Element {
     termFrequency: string
     /** F4①: 标识符子词切分(默认关)。 */
     identifierSubtokens: boolean
+    /** F2: 向量独有候选配额(0 = 不限)。 */
+    maxVectorOnly: string
+    /** F3: 通道权重的含义。 */
+    channelWeightMode: string
   }>({
     rerank: true, ranklog: true, llmRerank: false, lexical: '1', vector: '1', weights: {},
     lexicalNormalization: 'auto', semanticScale: 'auto', semanticFloor: '0.3', semanticCeil: '0.8', missingFeatureMode: 'zero', termFrequency: 'presence', identifierSubtokens: false,
+    maxVectorOnly: '0', channelWeightMode: 'fusion',
   })
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [keyInput, setKeyInput] = useState('')
@@ -173,6 +178,8 @@ export function EmbeddingSection(): JSX.Element {
         missingFeatureMode: payload.retrieval.missingFeatureMode,
         termFrequency: payload.retrieval.termFrequency,
         identifierSubtokens: payload.retrieval.identifierSubtokens,
+        maxVectorOnly: String(payload.retrieval.maxVectorOnly),
+        channelWeightMode: payload.retrieval.channelWeightMode,
       })
       setBudgetDraft({
         batchSize: String(payload.config.batchSize),
@@ -301,6 +308,8 @@ export function EmbeddingSection(): JSX.Element {
     || tuningDraft.missingFeatureMode !== retrieval.missingFeatureMode
     || tuningDraft.termFrequency !== retrieval.termFrequency
     || tuningDraft.identifierSubtokens !== retrieval.identifierSubtokens
+    || Number(tuningDraft.maxVectorOnly) !== retrieval.maxVectorOnly
+    || tuningDraft.channelWeightMode !== retrieval.channelWeightMode
 
   const staleCount = vector.indexes.filter((index) => index.stale || index.unreadable).length
 
@@ -583,6 +592,27 @@ export function EmbeddingSection(): JSX.Element {
               onChange={(event: { target: { value: string } }) => setTuningDraft((previous) => ({ ...previous, lexical: event.target.value }))}
             />
           </div>
+          <div className="clue-field" title="通道权重的含义：fusion = 进 RRF 融合分（精排开启时实测无效）；quota = 改为向量独有候选的召回配额">
+            <span className="clue-field-label">通道权重含义</span>
+            <select
+              className="clue-input"
+              value={tuningDraft.channelWeightMode}
+              disabled={busy || !data.available}
+              onChange={(event: { target: { value: string } }) => setTuningDraft((previous) => ({ ...previous, channelWeightMode: event.target.value }))}
+            >
+              <option value="fusion">fusion(进融合分,今天)</option>
+              <option value="quota">quota(改成召回配额,可验证)</option>
+            </select>
+          </div>
+          <div className="clue-field" title="0 = 不限；大于 0 时限制窗口内只被向量召回的候选条数">
+            <span className="clue-field-label">向量独有配额</span>
+            <Input
+              className="clue-input"
+              value={tuningDraft.maxVectorOnly}
+              disabled={busy || !data.available}
+              onChange={(event: { target: { value: string } }) => setTuningDraft((previous) => ({ ...previous, maxVectorOnly: event.target.value }))}
+            />
+          </div>
           <div className="clue-field">
             <span className="clue-field-label">语义权重</span>
             <Input
@@ -739,6 +769,8 @@ export function EmbeddingSection(): JSX.Element {
                 missingFeatureMode: tuningDraft.missingFeatureMode,
                 termFrequency: tuningDraft.termFrequency,
                 identifierSubtokens: tuningDraft.identifierSubtokens,
+                maxVectorOnly: Number(tuningDraft.maxVectorOnly),
+                channelWeightMode: tuningDraft.channelWeightMode,
                 ...(Object.keys(weights).length > 0 ? { featureWeights: weights } : {}),
               }, 'retrieval')
             }}

@@ -677,6 +677,10 @@ export interface RetrievalTuningPayload {
   termFrequency: 'presence' | 'count'
   /** F4①: subword expansion of identifiers (default off). */
   identifierSubtokens: boolean
+  /** F2: cap on vector-only candidates (0 = no quota). */
+  maxVectorOnly: number
+  /** F3: what channelWeights means — `fusion` (today) or `quota` (case A). */
+  channelWeightMode: 'fusion' | 'quota'
 }
 
 /** V1: one derived index's health. */
