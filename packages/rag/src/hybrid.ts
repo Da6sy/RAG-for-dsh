@@ -64,6 +64,12 @@ import {
 } from './rerank.ts'
 import { normalizeQuery, resolveProfile, type ChannelProfile, type NormalizedQuery } from './profiles.ts'
 import { RETRIEVAL_DEFAULTS, resolveLexicalNormalization, resolveSemanticScale } from './defaults.ts'
+import {
+  lexicalStatsFrom,
+  mergeLexicalIndexes,
+  queryKb,
+  type LexicalIndex,
+} from '@clue-harness/kb'
 import { llmRerank as runLlmRerank, type LlmRankPort, type LlmRerankOutcome } from './llm-rerank.ts'
 
 /** Which recall channels participate. */
@@ -148,6 +154,18 @@ export interface HybridConfig {
    * not recall the candidate is treated. `zero` (default) is today.
    */
   missingFeatureMode?: 'zero' | 'absent'
+  /**
+   * R1 (落地计划 §2-1): validated inverted indexes (project tier first).
+   *
+   * With them, the retriever stops materializing the corpus: the lexical channel
+   * is answered by `queryKb`'s indexed path, the corpus statistics come from the
+   * index, and only the entries that can actually be returned are loaded. The
+   * plan's rule applies unchanged — a missing/stale/corrupt index is a
+   * DEGRADATION, so the caller passes nothing and the scan path runs as before.
+   */
+  lexicalIndexes?: readonly LexicalIndex[]
+  /** R1: how the index step went, so the result can say whether the corpus was scanned. */
+  lexicalIndexNote?: string
   /** The embedder in effect (absent = lexical only, honestly annotated). */
   embedder?: Embedder
   /** ClueHarness home — where the shared embed cache and rebuild writes live. */
@@ -195,6 +213,12 @@ export interface RankLogLine {
 
 /** The full answer of one hybrid retrieval (the CLI's `--explain` uses it). */
 export interface HybridRetrieval {
+  /**
+   * R1: whether the first level answered from the inverted index or by scanning
+   * the corpus, plus the reason when it scanned. A degradation that cannot be
+   * read is indistinguishable from a performance regression.
+   */
+  lexicalIndex: { used: boolean; note: string }
   hits: QueryHit[]
   vector: VectorChannelState
   profile: ChannelProfile
@@ -268,6 +292,20 @@ function degradationNote(state: VectorChannelState): string | null {
  * @param config - channels, profile, fusion, rerank and rebuild knobs.
  * @returns a `RagRetriever` whose `retrieve` returns reranked hits with their breakdown.
  */
+/**
+ * R1: the index state every retrieval result carries.
+ * @param config - the retriever configuration.
+ * @returns `used` plus the note to print.
+ */
+function lexicalIndexState(config: HybridConfig): { used: boolean; note: string } {
+  const used = (config.lexicalIndexes?.length ?? 0) > 0
+  return {
+    used,
+    note: config.lexicalIndexNote
+      ?? (used ? '词法索引可用(本次未扫描全库)' : '未提供词法索引,本次扫描全库'),
+  }
+}
+
 export function createHybridRetriever(
   project: KbStore | null,
   global: KbStore | null,
@@ -456,6 +494,7 @@ export function createHybridRetriever(
         rerank: false,
         recalled: { lexical: hits.length, vector: 0 },
         fused: hits.length,
+        lexicalIndex: lexicalIndexState(config),
         normalized,
       }
     }
@@ -468,46 +507,101 @@ export function createHybridRetriever(
         rerank: rerankEnabled,
         recalled: { lexical: 0, vector: 0 },
         fused: 0,
+        lexicalIndex: lexicalIndexState(config),
         normalized,
       }
     }
 
-    const members = await corpus({
-      ...(options.includeExpired !== undefined ? { includeExpired: options.includeExpired } : {}),
-      ...(options.includeGlobal !== undefined ? { includeGlobal: options.includeGlobal } : {}),
-      ...(options.kinds !== undefined ? { kinds: options.kinds } : {}),
-    })
-    const byId = new Map(members.map((member) => [String(member.entry.id), member]))
     const weights: RetrievalWeights = { title: 3, tag: 2, text: 1, ...(config.weights ?? {}) }
     const lexicalScorer: LexicalScorer = config.lexicalScorer ?? RETRIEVAL_DEFAULTS.lexicalScorer
+    /**
+     * R1: with an index, the corpus is never materialized.
+     *
+     * The measured reason (nfcorpus, 3.6k entries): `store.list()` alone costs
+     * ~1.25s per query (every entry file read and parsed) and the stats pass
+     * another ~0.21s — for a question that will return five rows. So the indexed
+     * path takes the corpus statistics from the index, asks `queryKb` for the
+     * lexical channel (which loads only the entries it returns), and loads the
+     * remaining window entries by id.
+     */
+    const mergedIndex = lexicalScorer === 'bm25' && (config.lexicalIndexes?.length ?? 0) > 0
+      ? mergeLexicalIndexes(config.lexicalIndexes as readonly LexicalIndex[])
+      : null
+    const members = mergedIndex === null
+      ? await corpus({
+        ...(options.includeExpired !== undefined ? { includeExpired: options.includeExpired } : {}),
+        ...(options.includeGlobal !== undefined ? { includeGlobal: options.includeGlobal } : {}),
+        ...(options.kinds !== undefined ? { kinds: options.kinds } : {}),
+      })
+      : []
+    const byId = new Map(members.map((member) => [String(member.entry.id), member]))
+    /** Load one entry by id (indexed path): the tier comes from the index, with the other tier as a fallback. */
+    const loadById = async (key: string): Promise<CorpusEntry | null> => {
+      const cached = byId.get(key)
+      if (cached !== undefined) return cached
+      const facts = mergedIndex?.meta.entries[key]
+      const preferred = facts?.tier === 'global' ? global : project
+      const other = facts?.tier === 'global' ? project : global
+      const entry = (preferred === null ? null : await preferred.get(key as never))
+        ?? (other === null ? null : await other.get(key as never))
+      if (entry === null) return null
+      const member: CorpusEntry = { entry, store: (entry.tier === 'global' ? global : project) as KbStore }
+      byId.set(key, member)
+      return member
+    }
     // One stats pass per retrieval serves BOTH levels: the lexical channel's
     // BM25F and the reranker's `bm25ish` feature normalize the same numbers.
-    const corpusStats = lexicalScorer === 'bm25' || rerankEnabled
-      ? buildLexicalStats(members.map((member) => ({
-        title: member.entry.title,
-        tags: member.entry.tags,
-        text: entryTextAfterRedlines(member.entry),
-      })))
-      : undefined
+    const corpusStats = mergedIndex !== null
+      ? lexicalStatsFrom(mergedIndex)
+      : (lexicalScorer === 'bm25' || rerankEnabled
+        ? buildLexicalStats(members.map((member) => ({
+          title: member.entry.title,
+          tags: member.entry.tags,
+          text: entryTextAfterRedlines(member.entry),
+        })))
+        : undefined)
 
     // ── lexical channel ────────────────────────────────────────────────────
-    const lexical = effectiveChannels === 'vector'
-      ? []
-      : members
-        .map((member) => ({
-          member,
-          ...scoreEntry(member.entry, queryTokens, weights, {
-            scorer: lexicalScorer,
-            ...(corpusStats !== undefined ? { stats: corpusStats } : {}),
-          }),
+    type LexicalRow = { id: string; score: number; matched: string[]; tier: KbEntry['tier'] }
+    let lexical: LexicalRow[] = []
+    if (effectiveChannels !== 'vector') {
+      if (mergedIndex !== null) {
+        // The engine's own indexed path: same filters, same scores, and it
+        // loads entries only for the rows it returns.
+        const hits = await queryKb(project, global, {
+          text: normalized.lexical,
+          limit: recallDepth,
+          noTouch: true,
+          lexicalIndexes: config.lexicalIndexes as readonly LexicalIndex[],
+          ...(options.includeExpired !== undefined ? { includeExpired: options.includeExpired } : {}),
+          ...(options.includeGlobal !== undefined ? { includeGlobal: options.includeGlobal } : {}),
+          ...(options.kinds !== undefined ? { kinds: options.kinds } : {}),
+        })
+        lexical = hits.map((hit) => ({
+          id: String(hit.entry.id),
+          score: hit.score,
+          matched: hit.matched,
+          tier: hit.entry.tier,
         }))
-        .filter((row) => row.score > 0 && row.matched.length > 0)
-        .sort((a, b) =>
-          b.score - a.score
-          || (a.member.entry.tier === b.member.entry.tier ? 0 : a.member.entry.tier === 'project' ? -1 : 1)
-          || String(a.member.entry.id).localeCompare(String(b.member.entry.id)))
-    const lexicalRanked = rollUpToKeys(lexical.slice(0, recallDepth).map((row) => ({ key: String(row.member.entry.id) })))
-    const lexicalById = new Map(lexical.map((row) => [String(row.member.entry.id), row]))
+      } else {
+        lexical = members
+          .map((member) => ({
+            id: String(member.entry.id),
+            tier: member.entry.tier,
+            ...scoreEntry(member.entry, queryTokens, weights, {
+              scorer: lexicalScorer,
+              ...(corpusStats !== undefined ? { stats: corpusStats } : {}),
+            }),
+          }))
+          .filter((row) => row.score > 0 && row.matched.length > 0)
+          .sort((a, b) =>
+            b.score - a.score
+            || (a.tier === b.tier ? 0 : a.tier === 'project' ? -1 : 1)
+            || a.id.localeCompare(b.id))
+      }
+    }
+    const lexicalRanked = rollUpToKeys(lexical.slice(0, recallDepth).map((row) => ({ key: row.id })))
+    const lexicalById = new Map(lexical.map((row) => [row.id, row]))
 
     // ── vector channel ────────────────────────────────────────────────────
     let state: VectorChannelState
@@ -544,7 +638,7 @@ export function createHybridRetriever(
         for (const row of merged) {
           // A key whose entry is gone (or filtered out) cannot be recalled:
           // a stale row must never resurrect deleted knowledge.
-          if (!byId.has(row.hit.key)) continue
+          if (!(mergedIndex?.meta.entries[row.hit.key] !== undefined || byId.has(row.hit.key))) continue
           if (!semanticById.has(row.hit.key)) semanticById.set(row.hit.key, row.hit.score)
         }
         vectorRanked = [...semanticById.entries()]
@@ -593,6 +687,14 @@ export function createHybridRetriever(
         return kept
       })()
     const fused = capped.slice(0, rerankCandidates)
+    if (mergedIndex !== null) {
+      // Only now is it known which entries can possibly matter: the fused
+      // window (plus the lexical rows whose `matched`/score the explanation
+      // quotes). Everything else stays on disk.
+      for (const key of new Set([...lexicalRanked.slice(0, recallDepth), ...fused.map((row) => row.key), ...vectorRanked.slice(0, recallDepth)])) {
+        await loadById(key)
+      }
+    }
 
     // ── deterministic rerank (or the fused order, honestly labeled) ───────
     const note = degradationNote(state)
@@ -772,6 +874,7 @@ export function createHybridRetriever(
       rerank: rerankEnabled,
       recalled: { lexical: lexical.length, vector: vectorRanked.length },
       fused: fusedCandidates.length,
+      lexicalIndex: lexicalIndexState(config),
       normalized,
       ...(config.llmRerank === true ? { llmRerank: llmOutcome ?? null } : {}),
     }
