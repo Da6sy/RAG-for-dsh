@@ -359,3 +359,38 @@ test('R1 scale_q:lexicalRawQuantile 等于"逐条打分后的语料级 p90"(不�
     '语料级 p90 必须等于逐条打分后的同一个分位',
   )
 })
+
+// ── 落地计划 §9: 绑定目标的改绑出口(此前只能创建时设一次) ──────────────────
+test('§9 setBindings:改绑写哈希与履历;新路径不存在则拒绝(不制造漂移)', async (t) => {
+  const { store } = await world(t)
+  // 用库自己的锚点解析绝对路径(项目根可能是 realpath 后的形态,不要自己拼);
+  // 注意中心化布局**从不往工作区写**,所以项目根要测试自己建。
+  await mkdir(String(store.projectRoot), { recursive: true })
+  await writeFile(store.bindingPath({ path: '设计.md', contentHash: '' }), '# 设计\n', 'utf8')
+  await writeFile(store.bindingPath({ path: '开发记录.md', contentHash: '' }), '# 记录\n', 'utf8')
+  const entry = await store.add({
+    kind: 'decision',
+    title: '绑定改绑',
+    text: '正文与绑定无关。',
+    bindings: ['设计.md'],
+  })
+  assert.equal(entry.bindings.length, 1)
+
+  const rebound = await store.setBindings(entry.id, ['开发记录.md'], '原文已合并进开发记录')
+  assert.equal(rebound.bindings[0]?.path, '开发记录.md')
+  assert.equal(rebound.bindings[0]?.contentHash.length, 64, '新路径要现算哈希(不是抄旧的)')
+  const history = rebound.history.at(-1)
+  assert.equal(history?.change, 'rebind')
+  assert.match(String(history?.reason), /设计\.md → 开发记录\.md/)
+
+  // 不存在的路径必须拒绝:否则下一次 checkBindings 会凭空报漂移
+  await assert.rejects(
+    () => store.setBindings(entry.id, ['不存在.md'], '误操作'),
+    /绑定文件不存在/,
+  )
+  // 理由必填
+  await assert.rejects(() => store.setBindings(entry.id, [], '   '), /必须写明理由/)
+  // 清空绑定是合法操作
+  const cleared = await store.setBindings(entry.id, [], '锚点不再需要')
+  assert.deepEqual(cleared.bindings, [])
+})

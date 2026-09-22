@@ -378,6 +378,75 @@ export class KbStore {
   }
 
   /**
+   * Replace an entry's WHOLE binding set, with the hash recomputed for each new
+   * path (落地计划 §9: 12 条条目的 bindings 指向已删文档,而此前没有任何办法改绑).
+   *
+   * Why this method exists at all: `add` sets bindings once and `reverify
+   * --accept` only re-hashes the paths already there — it even REFUSES when the
+   * file is gone ("不能接受一个消失的文件为新基准"). So an entry anchored to a
+   * document that has since been consolidated into another file was stuck: the
+   * only way out was to add a duplicate entry, which is exactly the "double
+   * truth" the binding mechanism exists to prevent.
+   *
+   * M6 discipline, unchanged: this is a HUMAN act with a recorded why. Every new
+   * path must exist (fail loud — binding to a file that is not there would
+   * manufacture drift on the next check), the change lands in `history` as
+   * `rebind`, and `clearReview` is the caller's explicit decision to treat the
+   * rebinding as the re-verification (otherwise a ⚑ stays where it was).
+   * @param id - the entry to rebind.
+   * @param paths - the new project-relative binding set (empty clears them).
+   * @param reason - audit trail text (why the anchor moved).
+   * @param options - `at` clock, and `clearReview` to also clear a ⚑.
+   * @returns the updated entry.
+   * @throws when the entry is missing, the tier is global, or a path has no file.
+   */
+  async setBindings(
+    id: KbEntryId,
+    paths: readonly string[],
+    reason: string,
+    options: { at?: string; clearReview?: boolean } = {},
+  ): Promise<KbEntry> {
+    const at = options.at ?? new Date().toISOString()
+    let entry = await this.get(id)
+    if (entry === null) throw new Error(`kb rebind: 条目不存在 ${id}`)
+    if (entry.tier === 'global' && paths.length > 0) {
+      throw new Error('kb rebind: 全局库条目不能绑定项目文件')
+    }
+    if (reason.trim() === '') throw new Error('kb rebind: 必须写明理由(改绑进履历)')
+    const bindings: SourceBinding[] = []
+    for (const rel of paths) {
+      const normalized = rel.replace(/\\/g, '/').replace(/^\/+/, '')
+      const abs = this.bindingPath({ path: normalized, contentHash: '' })
+      try {
+        bindings.push({ path: normalized, contentHash: await sha256File(abs) })
+      } catch {
+        throw new Error(`kb rebind: 绑定文件不存在 ${normalized}(先确认路径,再改绑)`)
+      }
+    }
+    const before = entry.bindings.map((binding) => binding.path).join(', ')
+    const after = bindings.map((binding) => binding.path).join(', ')
+    if (before === after) {
+      // A no-op rebind still records the why: the human's judgement is the fact,
+      // and "I checked and the anchor is right" is worth having in the ledger.
+      entry = {
+        ...entry,
+        bindings,
+        history: [...entry.history, { at, change: 'rebind' as const, from: entry.status, to: null, reason: `${reason}(绑定未变: ${after === '' ? '无' : after})` }],
+      }
+    } else {
+      entry = {
+        ...entry,
+        bindings,
+        history: [...entry.history, { at, change: 'rebind' as const, from: entry.status, to: null, reason: `${reason}(绑定: ${before === '' ? '无' : before} → ${after === '' ? '无' : after})` }],
+      }
+    }
+    if (options.clearReview === true && entry.needsReview) {
+      entry = clearNeedsReview(entry, `人工改绑视为重新核验: ${reason}`, at)
+    }
+    return this.save(entry)
+  }
+
+  /**
    * Replace an entry's text with an audited history event (M6: the approval
    * center's "AI 润色" adoption path — a human adopts a rewritten draft and
    * the ledger records that the body changed and why). Title/tags/status/

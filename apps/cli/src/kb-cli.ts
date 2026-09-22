@@ -20,6 +20,7 @@
  *   clue kb chunks <docId> [--query q] [--limit n]  (M9-2: 二级检索/浏览分片)
  *   clue kb detail <entryId> [--query q]            (M9-2: 按条目下钻原文段,纯读)
  *   clue kb redline <id> (--chars a-b | --lines a-b) --reason r   (M9-4: 人工划除)
+ *   clue kb rebind <id> --bind <路径>… --reason r [--clear-review]  (改绑目标文件)
  *   clue kb split <id> --into <drafts.json>         (M9-4: 人工拆分 → superseded)
  *   clue kb status
  *
@@ -96,6 +97,10 @@ const USAGE = `用法: clue kb <命令> [选项]
   detail    <entryId> [--query q] [--limit n] [--global]
                                      按条目下钻原文段(纯读取:不记信号、不改状态)
   redline   <id> (--chars a-b | --lines a-b) --reason <原因> [--global]
+  rebind    <id> --bind <项目相对路径>… --reason <为什么> [--clear-review] [--global]
+                                     改绑条目的绑定文件(此前只能创建时设一次):
+                                     新路径必须存在、理由进履历;--clear-review 把改绑
+                                     当作重新核验,顺带清掉 ⚑
                                      人工划除:该段同时退出显示与评分;占比 >40% 自动入队审批提案
   split     <id> --into <草稿.json> [--reason r] [--global]
                                      人工拆分:原条目 → superseded(终态),新条目从 candidate 起步,
@@ -384,6 +389,25 @@ export async function kbMain(argv: string[]): Promise<number> {  const args = pa
         if (id === undefined) throw new Error('reverify 需要条目 id')
         const entry = await (await store()).reverify(KbEntryId(id), has(args, 'accept'))
         console.log(`重验完成: ${entryLine(entry)}${entry.needsReview ? `(仍需复核: ${entry.reviewReason})` : ''}`)
+        return 0
+      }
+      case 'rebind': {
+        // 落地计划 §9: 绑定的**目标**此前没有任何办法改 —— `add` 只在创建时设一次,
+        // `reverify --accept` 只重算已有路径的哈希(文件没了还会直接拒绝)。于是"知识
+        // 锚在一份已被合并/删除的文档上"就卡死了,只能再加一条重复条目 —— 而重复条目
+        // 正是绑定机制要防的"双真相"。这条命令就是那个缺失的出口:人是唯一的执行者,
+        // 理由进履历,新路径必须真实存在。
+        const id = args.positional[0]
+        const reason = flag(args, 'reason')
+        if (id === undefined || reason === undefined) {
+          throw new Error('rebind 需要 <id> --reason <为什么>,并给 --bind <项目相对路径>(可多次;不给即清空绑定)')
+        }
+        const paths = multi(args, 'bind')
+        const addressed = await store()
+        const entry = await addressed.setBindings(KbEntryId(id), paths, reason, { clearReview: has(args, 'clear-review') })
+        console.log(`已改绑: ${entryLine(entry)}`)
+        console.log(`  绑定 ${entry.bindings.length} 个: ${entry.bindings.map((binding) => `${binding.path}@${binding.contentHash.slice(0, 8)}`).join(', ') || '(无)'}`)
+        console.log(`  履历已记 rebind(理由: ${reason})${entry.needsReview ? ` · 仍待复核: ${entry.reviewReason}` : ''}`)
         return 0
       }
       case 'signal': {
