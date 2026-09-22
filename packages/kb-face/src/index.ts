@@ -54,6 +54,7 @@
  * @module @clue-harness/kb-face
  */
 import path from 'node:path'
+import { scheduleGeneralizationScan, type JobStarter } from './generalize-schedule.ts'
 import { readFile } from 'node:fs/promises'
 import { clueHome } from '@clue-harness/util'
 import type { Context } from '@deepseek-ai/cordis'
@@ -1203,11 +1204,18 @@ export function apply(ctx: Context, config: Config = {}): void {
       // must never fail the turn.
       if (resolved.generalizationScan
         && report.recorded.some((record) => record.source === 'evidence' && record.polarity === 'positive')) {
-        try {
-          await suggestGeneralizations({ home: resolved.home })
-        } catch (error) {
-          ctx.logger.warn(`kb: 泛化扫描失败(已忽略): ${error instanceof Error ? error.message : String(error)}`)
-        }
+        // §9 of the 落地计划: this used to `await` the whole cross-project walk
+        // before the turn could end. It is speculative work (it only QUEUES a
+        // proposal for a human), so it goes to a background job when the
+        // composition has a registry, and stays inline when it does not — the
+        // turn's outcome never depends on the scan either way.
+        await scheduleGeneralizationScan({
+          scan: async () => { await suggestGeneralizations({ home: resolved.home }) },
+          jobs: ctx.get('jobs') as unknown as JobStarter | undefined,
+          owner: agent,
+          label: '跨项目泛化扫描(kb)',
+          warn: (message) => { ctx.logger.warn(`kb: ${message}`) },
+        })
       }
       return
     }
