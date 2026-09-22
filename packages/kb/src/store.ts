@@ -1291,11 +1291,11 @@ export async function migrateWorkspaceKbsToCentral(options: MigrateOptions = {})
           ...(Array.isArray(custom?.pathPrefixes) ? { pathPrefixes: custom.pathPrefixes.map(String) } : {}),
         }
         if (settings.extensions === undefined && settings.pathPrefixes === undefined) {
-          report.push({ root, kind: 'surface', from: surfaceFrom, to: target, moved: false, reason: '文件里没有有效数组，保留原位待人工处理' })
+          report.push({ root, kind: 'surface', from: surfaceFrom, to: target, moved: false, reason: 'the file holds no valid array — left in place for a human to handle' })
         } else {
           await setRenderSurface(key, settings, home)
           await rm(surfaceFrom, { force: true })
-          report.push({ root, kind: 'surface', from: surfaceFrom, to: target, moved: true, reason: '渲染面配置已并入工作区记录' })
+          report.push({ root, kind: 'surface', from: surfaceFrom, to: target, moved: true, reason: 'render surface config merged into the workspace record' })
         }
       }
     }
@@ -1304,7 +1304,7 @@ export async function migrateWorkspaceKbsToCentral(options: MigrateOptions = {})
       if (leftovers !== null && leftovers.length === 0) {
         await rm(clueDir, { recursive: true, force: true })
       } else if (leftovers !== null) {
-        report.push({ root, kind: 'leftover', from: clueDir, moved: false, reason: `.clue/ 仍有其他内容(${leftovers.join(', ')})，未删除` })
+        report.push({ root, kind: 'leftover', from: clueDir, moved: false, reason: `.clue/ still holds other content (${leftovers.join(', ')}), not deleted` })
       }
     }
   }
