@@ -14,6 +14,7 @@
  *
  * @module @clue-harness/scripts/demo-web
  */
+import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -203,13 +204,37 @@ try {
   const rows = page.locator('.clue-row')
   await rows.first().waitFor({ state: 'visible', timeout: 10_000 })
   const trustedRow = page.locator('.clue-row', { hasText: '绝对定位按钮掉出 Tab 顺序' })
-  const trustedPill = trustedRow.locator('.clue-pill-ok')
+  // Assert the pill's TEXT, not a local class: the rows use dsh's `Pill`
+  // primitive now (the page adopted the shell's components), so a selector like
+  // `.clue-pill-ok` can never match again — and a demo that waits for markup the
+  // product no longer emits reads as "the feature broke".
+  const trustedPill = trustedRow.getByText('可信', { exact: true }).first()
   await trustedPill.waitFor({ state: 'visible', timeout: 10_000 })
   log('知识库面板: 刚批准的条目现在带「可信」pill')
   await trustedRow.click()
   const dossier = page.locator('.clue-card', { hasText: '信号账本' }).first()
   await dossier.waitFor({ state: 'visible', timeout: 10_000 })
   log(`档案页: 履历/信号账本可见(${(await dossier.locator('.clue-dim').first().textContent())?.trim().slice(0, 60)}…)`)
+
+  // (5b) M9.1 遗留: 条目**正文**的划除此前只有 CLI(`clue kb redline --chars`),
+  // 面板里没有入口。这条路是"人权入口":理由必填、范围半开、actor 记为 web,
+  // 模型侧没有任何工具能到达。这里只验证入口与"理由必填"的就地约束(写路径由
+  // kb-web 的 /entry/redline 路由测试覆盖)。
+  const redlineEntryRow = page.locator('.clue-row', { hasText: '绝对定位按钮掉出 Tab 顺序' })
+  await redlineEntryRow.click()
+  const redlineButton = page.getByRole('button', { name: '划除正文…' }).first()
+  await redlineButton.waitFor({ state: 'visible', timeout: 10_000 })
+  await redlineButton.click()
+  const rangeInputs = page.locator('.clue-range-input')
+  assert.equal(await rangeInputs.count(), 2, '划除范围要有起/止两个输入框')
+  await page.locator('input[placeholder="起"]').first().fill('1')
+  await page.locator('input[placeholder="止"]').first().fill('5')
+  const confirmRedline = page.getByRole('button', { name: '确认划除' }).first()
+  assert.equal(await confirmRedline.isDisabled(), true, '没写原因时"确认划除"必须不可点(理由是账本的一部分)')
+  await page.locator('input[placeholder^="为什么这段不成立"]').first().fill('演示:这段已不成立')
+  assert.equal(await confirmRedline.isDisabled(), false, '范围与原因都给齐后主操作可点')
+  await page.getByRole('button', { name: '取消' }).first().click()
+  log('档案页: 「划除正文」入口可见,且原因未填时主操作禁用(M9.1 遗留项)')
 
   // switch to the drifted entry — the reverify bar must show
   await page.locator('.clue-row', { hasText: '主题色约定' }).click()

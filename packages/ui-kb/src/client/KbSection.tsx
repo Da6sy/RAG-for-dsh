@@ -78,6 +78,48 @@ function EntryDossier({ dossier, target, busy, onReverify, onPromote, onRetire, 
   const [promoteReason, setPromoteReason] = useState('')
   const [retireReason, setRetireReason] = useState('')
   const [retireOpen, setRetireOpen] = useState(false)
+  /**
+   * M9.1 遗留: 条目**正文**的划除此前只有 CLI(`clue kb redline --chars a-b`)。
+   * The route (`POST /entry/redline`) has always been the human's; what was
+   * missing was the panel button, so a reader who spotted a wrong sentence in the
+   * dossier had to leave the page to retract it.
+   */
+  const [redlineOpen, setRedlineOpen] = useState(false)
+  const [redlineFrom, setRedlineFrom] = useState('')
+  const [redlineTo, setRedlineTo] = useState('')
+  const [redlineReason, setRedlineReason] = useState('')
+  const redlineRange = (): [number, number] | null => {
+    const from = Number(redlineFrom)
+    const to = Number(redlineTo)
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from) return null
+    return [from, to]
+  }
+  const submitRedline = async (): Promise<void> => {
+    const chars = redlineRange()
+    if (chars === null) {
+      onError('划除范围要从 1 开始、且 起 ≤ 止(半开区间 [起,止],与 CLI 的 --chars a-b 一致)。')
+      return
+    }
+    if (redlineReason.trim() === '') {
+      onError('划除必须写明原因(它是账本的一部分)。')
+      return
+    }
+    try {
+      const result = await kbApi.redline(target, entry.id, { chars }, redlineReason.trim())
+      onError(null)
+      setRedlineOpen(false)
+      setRedlineFrom('')
+      setRedlineTo('')
+      setRedlineReason('')
+      window.alert(
+        `已划除正文 ${(result.ratio * 100).toFixed(0)}%。\n显示与评分同时生效(划除段既不展示也不参与召回)。`
+        + (result.proposal === null ? '' : `\n该条目已自动入队一条审批提案:${result.proposal.reason}\n(系统提议,人执行。)`),
+      )
+      await onChanged()
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error))
+    }
+  }
   return (
     <div className="clue-card">
       <div className="clue-card-head">
@@ -170,6 +212,51 @@ function EntryDossier({ dossier, target, busy, onReverify, onPromote, onRetire, 
               <li key={binding.path} className="clue-mono">{binding.path} <span className="clue-dim">@{binding.contentHash.slice(0, 8)}</span></li>
             ))}
           </ul>
+        </div>
+      )}
+      {/* M9-4 5a 的人权入口:条目**正文**的划除。理由必填、范围半开、服务端把
+          actor 记为 web;模型侧没有任何工具能到达这条路。 */}
+      {entry.text.trim() !== '' && (
+        <div className="clue-actions" style={{ marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {!redlineOpen && (
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => { setRedlineOpen(true) }}>
+              划除正文…
+            </Button>
+          )}
+          {redlineOpen && (
+            <>
+              <span className="clue-dim">字符范围(1 起,半开 [起,止])</span>
+              <Input
+                className="clue-range-input"
+                placeholder="起"
+                value={redlineFrom}
+                onChange={event => { setRedlineFrom(event.target.value) }}
+              />
+              <Input
+                className="clue-range-input"
+                placeholder="止"
+                value={redlineTo}
+                onChange={event => { setRedlineTo(event.target.value) }}
+              />
+              <Input
+                className="clue-search"
+                placeholder="为什么这段不成立(必填,进履历)…"
+                value={redlineReason}
+                onChange={event => { setRedlineReason(event.target.value) }}
+              />
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={busy || redlineReason.trim() === '' || redlineRange() === null}
+                onClick={() => { void submitRedline() }}
+              >
+                确认划除
+              </Button>
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => { setRedlineOpen(false) }}>
+                取消
+              </Button>
+            </>
+          )}
         </div>
       )}
       {/* M9-5: 原文/分片浏览 + 人权按钮(划除/拆分)。这两件事只有人能做——

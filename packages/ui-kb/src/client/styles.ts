@@ -111,6 +111,8 @@ body {
 .clue-input:focus-visible, .clue-select:focus-visible, .clue-polish-text:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, var(--dsw-static-deepseek-500)); outline-offset: 1px; }
 .clue-inline-form { display: flex; flex: 1 1 100%; flex-wrap: wrap; gap: 8px; align-items: center; }
 .clue-search { flex: 1 1 200px; min-width: 120px; max-width: 320px; }
+/* 划除范围的两个小输入框:窄而并排,和 dsh 的行内表单同一个形态。 */
+.clue-range-input { flex: 0 0 72px; width: 72px; }
 
 /* ── badges: dsh's row tag ─────────────────────────────────────────────── */
 .clue-pill {
