@@ -296,18 +296,29 @@ export async function testConnection(
   options: HttpEmbedderOptions,
   storedDim = 0,
   storedUnits = 0,
+  lang: 'zh' | 'en' = 'zh',
 ): Promise<ConnectionTestResult> {
+  const en = lang === 'en'
   const config = options.getConfig()
   const host = endpointHost(config.baseUrl)
-  if (config.baseUrl.trim() === '') return { ok: false, status: 'unreachable', message: 'baseUrl 未填写' }
-  if (config.model.trim() === '') return { ok: false, status: 'unreachable', message: 'model 未填写' }
+  if (config.baseUrl.trim() === '') {
+    return { ok: false, status: 'unreachable', message: en ? 'baseUrl is empty' : 'baseUrl 未填写' }
+  }
+  if (config.model.trim() === '') {
+    return { ok: false, status: 'unreachable', message: en ? 'model is empty' : 'model 未填写' }
+  }
   const embedder = createHttpEmbedder(options)
   const started = Date.now()
   try {
     const [vector] = await embedder.embed([CONNECTION_PROBE_TEXT])
     const latencyMs = Date.now() - started
     if (vector === undefined || vector.length === 0) {
-      return { ok: false, status: 'empty', message: `端点 ${host} 返回了空向量`, latencyMs }
+      return {
+        ok: false,
+        status: 'empty',
+        message: en ? `endpoint ${host} returned an empty vector` : `端点 ${host} 返回了空向量`,
+        latencyMs,
+      }
     }
     let norm = 0
     for (const value of vector) norm += value * value
@@ -316,7 +327,9 @@ export async function testConnection(
     const result: ConnectionTestResult = {
       ok: true,
       status: 'ok',
-      message: `连接成功: ${host} · 维度 ${dim} · 延迟 ${latencyMs}ms · 归一化模长 ${norm.toFixed(4)}`,
+      message: en
+        ? `connection ok: ${host} · dim ${dim} · latency ${latencyMs}ms · normalized norm ${norm.toFixed(4)}`
+        : `连接成功: ${host} · 维度 ${dim} · 延迟 ${latencyMs}ms · 归一化模长 ${norm.toFixed(4)}`,
       dim,
       latencyMs,
       norm,
@@ -327,7 +340,9 @@ export async function testConnection(
       // stamp changes, so the index is rebuilt. Say so BEFORE the save, with
       // the number of calls it implies (原规划 §9.6 / §14).
       const batch = Math.max(1, config.batchSize)
-      result.rebuildNotice = `实测维度 ${dim} 与已存向量层维度 ${storedDim} 不符:保存后 ${storedUnits} 条向量需重建,预估调用 ${Math.max(1, Math.ceil(storedUnits / batch))} 次(batchSize ${batch};改模型/维度才会作废,只改 url/key 不会)`
+      result.rebuildNotice = en
+        ? `measured dim ${dim} differs from the stored vector layer's ${storedDim}: saving rebuilds ${storedUnits} vectors, about ${Math.max(1, Math.ceil(storedUnits / batch))} call(s) (batchSize ${batch}; only a model/dim change invalidates, a url/key change does not)`
+        : `实测维度 ${dim} 与已存向量层维度 ${storedDim} 不符:保存后 ${storedUnits} 条向量需重建,预估调用 ${Math.max(1, Math.ceil(storedUnits / batch))} 次(batchSize ${batch};改模型/维度才会作废,只改 url/key 不会)`
     }
     return result
   } catch (error) {

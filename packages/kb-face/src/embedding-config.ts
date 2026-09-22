@@ -300,50 +300,97 @@ function isHttpUrl(value: string): boolean {
  * @param resolved - the configuration the patch would produce (merged).
  * @returns the failures, empty when the patch is acceptable.
  */
-export function validateEmbeddingPatch(patch: Record<string, unknown>, resolved: EmbeddingConfig): FieldError[] {
+export function validateEmbeddingPatch(
+  patch: Record<string, unknown>,
+  resolved: EmbeddingConfig,
+  lang: 'zh' | 'en' = 'zh',
+): FieldError[] {
+  const en = lang === 'en'
   const errors: FieldError[] = []
   if ('dim' in patch) {
-    errors.push({ field: 'dim', message: 'dim 由「测试连接」实测写入,不接受手填(手填错维度会污染版本号与所有向量)' })
+    errors.push({
+      field: 'dim',
+      message: en
+        ? 'dim is written by "test connection" from a real measurement; typing it by hand would poison the version stamp and every stored vector'
+        : 'dim 由「测试连接」实测写入,不接受手填(手填错维度会污染版本号与所有向量)',
+    })
   }
   if ('baseUrl' in patch) {
     const value = String(patch.baseUrl ?? '').trim()
-    if (value !== '' && !isHttpUrl(value)) errors.push({ field: 'baseUrl', message: 'baseUrl 必须是 http(s) 开头的完整地址(适配器自己拼 /embeddings)' })
+    if (value !== '' && !isHttpUrl(value)) {
+      errors.push({
+        field: 'baseUrl',
+        message: en
+          ? 'baseUrl must be a full http(s) URL (the adapter appends /embeddings itself)'
+          : 'baseUrl 必须是 http(s) 开头的完整地址(适配器自己拼 /embeddings)',
+      })
+    }
   }
   if ('apiKeyEnv' in patch) {
     const value = String(patch.apiKeyEnv ?? '').trim()
     if (value !== '' && !isCredentialRefName(value)) {
-      errors.push({ field: 'apiKeyEnv', message: 'apiKeyEnv 必须是环境变量名(POSIX 标识符,如 SILICONFLOW_API_KEY);留空表示该端点无需鉴权或改用密钥库' })
+      errors.push({
+        field: 'apiKeyEnv',
+        message: en
+          ? 'apiKeyEnv must be an environment variable name (a POSIX identifier such as SILICONFLOW_API_KEY); leave it empty when the endpoint needs no auth or uses the credential store'
+          : 'apiKeyEnv 必须是环境变量名(POSIX 标识符,如 SILICONFLOW_API_KEY);留空表示该端点无需鉴权或改用密钥库',
+      })
     }
   }
   if ('headers' in patch && patch.headers !== null && typeof patch.headers === 'object') {
     for (const name of Object.keys(patch.headers as Record<string, unknown>)) {
       if (SECRET_HEADER.test(name)) {
-        errors.push({ field: `headers.${name}`, message: '密钥只能走 apiKeyEnv 引用或密钥库,不得写进明文 headers' })
+        errors.push({
+          field: `headers.${name}`,
+          message: en
+            ? 'a key travels through the apiKeyEnv reference or the credential store, never inside plaintext headers'
+            : '密钥只能走 apiKeyEnv 引用或密钥库,不得写进明文 headers',
+        })
       }
     }
   }
   if ('quant' in patch && patch.quant !== 'fp32') {
-    errors.push({ field: 'quant', message: 'int8 需评测通过才允许启用(规划的默认仍是 fp32)' })
+    errors.push({
+      field: 'quant',
+      message: en
+        ? 'int8 may only be enabled after an evaluation passes (fp32 is still the shipped default)'
+        : 'int8 需评测通过才允许启用(规划的默认仍是 fp32)',
+    })
   }
   if ('timeoutMs' in patch) {
     const value = Number(patch.timeoutMs)
-    if (!Number.isFinite(value) || value < 1000 || value > 120000) errors.push({ field: 'timeoutMs', message: 'timeoutMs 需在 1000–120000 之间' })
+    if (!Number.isFinite(value) || value < 1000 || value > 120000) {
+      errors.push({ field: 'timeoutMs', message: en ? 'timeoutMs must be between 1000 and 120000' : 'timeoutMs 需在 1000–120000 之间' })
+    }
   }
   if ('batchSize' in patch) {
     const value = Number(patch.batchSize)
-    if (!Number.isInteger(value) || value < 1 || value > 256) errors.push({ field: 'batchSize', message: 'batchSize 需在 1–256 之间' })
+    if (!Number.isInteger(value) || value < 1 || value > 256) {
+      errors.push({ field: 'batchSize', message: en ? 'batchSize must be between 1 and 256' : 'batchSize 需在 1–256 之间' })
+    }
   }
   if ('concurrency' in patch) {
     const value = Number(patch.concurrency)
-    if (!Number.isInteger(value) || value < 1 || value > 4) errors.push({ field: 'concurrency', message: 'concurrency 需在 1–4 之间' })
+    if (!Number.isInteger(value) || value < 1 || value > 4) {
+      errors.push({ field: 'concurrency', message: en ? 'concurrency must be between 1 and 4' : 'concurrency 需在 1–4 之间' })
+    }
   }
   if ('maxUnitsPerBuild' in patch) {
     const value = Number(patch.maxUnitsPerBuild)
-    if (!Number.isInteger(value) || value < 1) errors.push({ field: 'maxUnitsPerBuild', message: 'maxUnitsPerBuild 需为 ≥1 的整数(预算护栏)' })
+    if (!Number.isInteger(value) || value < 1) {
+      errors.push({
+        field: 'maxUnitsPerBuild',
+        message: en ? 'maxUnitsPerBuild must be an integer ≥ 1 (the budget guardrail)' : 'maxUnitsPerBuild 需为 ≥1 的整数(预算护栏)',
+      })
+    }
   }
   if (resolved.enabled) {
-    if (String(resolved.baseUrl).trim() === '') errors.push({ field: 'baseUrl', message: '启用嵌入时 baseUrl 必填' })
-    if (String(resolved.model).trim() === '') errors.push({ field: 'model', message: '启用嵌入时 model 必填' })
+    if (String(resolved.baseUrl).trim() === '') {
+      errors.push({ field: 'baseUrl', message: en ? 'baseUrl is required when embedding is enabled' : '启用嵌入时 baseUrl 必填' })
+    }
+    if (String(resolved.model).trim() === '') {
+      errors.push({ field: 'model', message: en ? 'model is required when embedding is enabled' : '启用嵌入时 model 必填' })
+    }
   }
   return errors
 }
@@ -407,12 +454,13 @@ export async function writeEmbeddingConfig(
   ctx: Context,
   patch: Record<string, unknown>,
   expectedRevision?: number,
+  lang: 'zh' | 'en' = 'zh',
 ): Promise<ConfigWriteResult> {
   const settings = ctx.get('settings')
   if (settings === undefined) throw new Error('embedding config: cannot write, this context has no settings service (the host never mounted the settings document)')
   const { retrievalPatch, embeddingPatch } = splitRetrievalPatch(patch)
   const merged = { ...readEmbeddingConfig(ctx), ...embeddingPatch } as EmbeddingConfig
-  const errors = validateEmbeddingPatch(embeddingPatch, merged)
+  const errors = validateEmbeddingPatch(embeddingPatch, merged, lang)
   if (errors.length > 0) return { ok: false, errors, config: readEmbeddingConfig(ctx), retrieval: readRetrievalConfig(ctx) }
   // Both sections are validated BEFORE either is written: a patch that is half
   // acceptable must not leave the document half updated (規劃 §9.2).

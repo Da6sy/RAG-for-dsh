@@ -189,7 +189,9 @@ export async function embedConfigSet(host: EmbeddingHost, args: EmbedArgs): Prom
   if (Object.keys(patch).length === 0) {
     throw new Error('embed-config: set requires at least one field (--base-url/--model/--api-key-env/--enable/--disable/--timeout-ms/--batch-size/--concurrency/--max-units/--header)')
   }
-  const result = await writeEmbeddingConfig(host.ctx, patch)
+  // `'en'`: this is the console surface; the same field errors are also shown by
+  // the settings page (Chinese), so the caller picks the language.
+  const result = await writeEmbeddingConfig(host.ctx, patch, undefined, 'en')
   if (!result.ok) {
     for (const error of result.errors) console.error(`✗ ${error.field}: ${error.message}`)
     return 2
@@ -285,6 +287,7 @@ export async function embedConfigTest(host: EmbeddingHost, context: EmbedContext
     },
     stored?.meta.dim ?? 0,
     stored?.meta.count ?? 0,
+    'en',
   )
   if (!result.ok) {
     console.error(`✗ ${result.status}: ${result.message}`)
