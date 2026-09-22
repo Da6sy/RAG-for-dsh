@@ -152,32 +152,36 @@ try {
   log(`主题令牌: --dsw-static-deepseek-500 = ${accent}(clue teal 覆盖生效)`)
   await page.screenshot({ path: path.join(assetsDir, 'm3c-shell.png') })
 
-  // (2b) the session-side drawer: one conversation's OWN workspace library.
-  // Defensive by design: the step needs a live session, which means driving
-  // dsh's New-Session flow; if that chrome moves, the gate must say so loudly
-  // rather than silently stop covering the feature.
-  try {
+  // (2b) 会话抽屉(M9.1)——为什么这里只验"契约"而不点开:
+  //
+  // 查到底了(2026-09-22):dsh 的 `ConversationRoot` 在**空白会话**里整段不渲染会话头
+  // ——`hideChrome = useSession(s => s.blank) && composerPhase === "blank"`,头部容器
+  // 加 `display:none` 且 `children: !hideChrome && …`。动作行(我们注册的
+  // `conversation.session.header.actions` 席位)连**挂载都没有**,所以"新建会话后立刻
+  // 找按钮"必然找不到;发过第一条消息之后它才存在。这不是我们注册的问题:该席位的
+  // 标准 kit 本来就带 `sessionId`,dsh 自己的 `ui-jobs` 也只传 `locale`。
+  //
+  // 本演示不调用真实模型(不花钱、不依赖 key),所以拿不到"有消息的会话";于是这里
+  // 断言**可验证的那一半**——空白会话下会话头被抑制、抽屉按钮不在 DOM 里——并把
+  // 另一半记为覆盖缺口,大声说出来而不是静默跳过。
+  {
     const newSession = page.getByRole('button', { name: /新建会话|New session|New Session/ }).first()
     await newSession.click({ timeout: 8_000 })
     await page.getByRole('option', { name: /靶场演示项目/ }).first().waitFor({ state: 'visible', timeout: 8_000 })
       .catch(async () => { await page.getByText('靶场演示项目', { exact: true }).first().click({ timeout: 8_000 }) })
     await page.waitForTimeout(1_500)
-    const kbButton = page.getByRole('button', { name: /打开本会话工作区/ }).first()
-    await kbButton.waitFor({ state: 'visible', timeout: 10_000 })
-    await kbButton.click()
-    const drawer = page.locator('.clue-drawer')
-    await drawer.waitFor({ state: 'visible', timeout: 10_000 })
-    const drawerText = (await drawer.textContent()) ?? ''
-    if (!drawerText.includes('绝对定位按钮掉出 Tab 顺序')) throw new Error(`抽屉没有本会话工作区的知识: ${drawerText.slice(0, 120)}`)
-    const pendingTab = drawer.getByRole('tab', { name: /待批/ })
-    await pendingTab.click()
-    await drawer.getByText('提升为可信', { substring: true }).first().waitFor({ state: 'visible', timeout: 8_000 })
-    log('会话抽屉: 本会话工作区知识可见,待批页可直接审批')
-    await page.screenshot({ path: path.join(assetsDir, 'm9-session-drawer.png') })
-    await drawer.getByRole('button', { name: '关闭知识库抽屉' }).click()
-    await drawer.waitFor({ state: 'hidden', timeout: 8_000 })
-  } catch (error) {
-    log(`会话抽屉: 未能驱动(侧边栏新建会话流程变了?)——${String(error).slice(0, 120)}`)
+    const blank = await page.evaluate(() => {
+      const header = document.querySelector('[class*="headerHidden"]')
+      return {
+        headerHidden: header !== null,
+        headerAriaHidden: header?.getAttribute('aria-hidden') === 'true',
+        drawerButtons: document.querySelectorAll('.clue-kbbtn-mark').length,
+      }
+    })
+    assert.equal(blank.headerHidden, true, '空白会话下 dsh 应当隐藏会话头(契约)')
+    assert.equal(blank.drawerButtons, 0, '会话头不渲染时,抽屉按钮自然不在 DOM 里')
+    log('会话抽屉: 空白会话不渲染会话头(dsh 契约已核),按钮随之不存在')
+    log('会话抽屉: 「有消息的会话里按钮可见/可开」未覆盖 —— 需要一次真实模型调用或预置会话,记为缺口')
   }
 
   // (3) open settings → the approvals section

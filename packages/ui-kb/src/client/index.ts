@@ -97,6 +97,21 @@ export function apply(ctx: ClientContext): void {
   // dsh's own title/tabs/utilities stay exactly where they are. It resolves
   // the session's workspace host-side (registry session accounting), which is
   // the only honest answer to "which library is this conversation working in".
+  /**
+   * M9.1 的席位时机 — 结论(2026-09-22,查到底了):
+   *
+   * 这个按钮"看不见"**不是**我们的注册问题,而是 dsh 的会话头在**空白会话**里
+   * 整段不渲染:`ConversationRoot` 里 `hideChrome = useSession(s => s.blank) &&
+   * composerPhase === "blank"`,头部容器加 `display:none` 且 `children: !hideChrome && …`
+   * —— 动作行(也就是本席位)连挂载都没有(`dsh-client-ui-conversation` 的
+   * `ConversationRoot`)。所以"新建会话 → 立刻找按钮"必然找不到;发过第一条消息之后
+   * 它就在了。
+   *
+   * 另:该席位的标准 kit 本来就带 `sessionId`(`standardProps: [..., sessionId, ...]`,
+   * 见 dsh 的席位目录),所以 `SessionKbAction({ sessionId })` 不需要注册 `inject`;
+   * dsh 自己的 `ui-jobs` 也只传 `locale`。这里曾经按"缺 inject"改过一版,已回退 ——
+   * 记录在此,免得下次再查一遍。
+   */
   ctx.slots.inject('conversation.session.header.actions', function* registerDrawerAction() {
     yield ctx.slots.register({
       name: 'conversation.session.header.actions',
