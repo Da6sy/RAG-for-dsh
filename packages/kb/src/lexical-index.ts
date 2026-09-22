@@ -56,7 +56,7 @@ import {
   type TermFrequency,
 } from './bm25.ts'
 import { entryTextAfterRedlines } from './redline.ts'
-import { tokenizeCounts } from './tokenize.ts'
+import { tokenizeCounts, type TokenizeOptions } from './tokenize.ts'
 import { lexicalIndexVersion, type KbEntry, type KbKind, type KbStatus, type KbTier } from './types.ts'
 
 /** The directory name the derived index lives under (beside `entries/`, `docs/`). */
@@ -107,6 +107,15 @@ export interface LexicalIndexMeta {
   entries: Record<string, LexicalEntryFacts>
   /** Hash over every entry's projection, for on-demand verification. */
   fingerprint: string
+  /**
+   * F4①: the TOKENIZER MODE the postings were built with.
+   *
+   * This is not a tuning value — it is part of what a posting MEANS. An index
+   * built without subword expansion does not contain `process` for
+   * `_process_and_sort`, so a query that expands identifiers would silently miss
+   * entries. A mismatch is therefore `stale`, never "close enough".
+   */
+  tokenize: { identifierSubtokens: boolean }
 }
 
 /** One posting: the entry plus its per-field term counts. */
@@ -170,16 +179,16 @@ function fieldsOf(entry: KbEntry): { title: string; tag: string; text: string } 
 }
 
 /** One entry's per-field token counts (the raw material of both the postings and the lengths). */
-function countFields(entry: KbEntry): {
+function countFields(entry: KbEntry, tokenizeOptions: TokenizeOptions): {
   maps: [Map<string, number>, Map<string, number>, Map<string, number>]
   distinct: FieldTriple
   total: FieldTriple
 } {
   const fields = fieldsOf(entry)
   const maps: [Map<string, number>, Map<string, number>, Map<string, number>] = [
-    tokenizeCounts(fields.title),
-    tokenizeCounts(fields.tag),
-    tokenizeCounts(fields.text),
+    tokenizeCounts(fields.title, tokenizeOptions),
+    tokenizeCounts(fields.tag, tokenizeOptions),
+    tokenizeCounts(fields.text, tokenizeOptions),
   ]
   const distinct: FieldTriple = [0, 0, 0]
   const total: FieldTriple = [0, 0, 0]
@@ -214,6 +223,8 @@ export interface BuildLexicalIndexInput {
   budget?: LexicalIndexBudget
   /** Write the files (tests and the dry-run path pass `false`). */
   persist?: boolean
+  /** F4①: build the postings WITH identifier subtokens (default off = today). */
+  identifierSubtokens?: boolean
 }
 
 /**
@@ -259,7 +270,7 @@ export async function buildLexicalIndex(
       reason = `建索引超过时间预算 ${budget.maxMillis}ms,已停止(退回扫描路径)`
       break
     }
-    const { maps, distinct, total } = countFields(entry)
+    const { maps, distinct, total } = countFields(entry, { identifierSubtokens: input.identifierSubtokens === true })
     const dl: FieldTriple = distinct
     titleSum += dl[0]
     tagSum += dl[1]
@@ -320,6 +331,7 @@ export async function buildLexicalIndex(
     avgTotal: [count === 0 ? 0 : titleTotal / count, count === 0 ? 0 : tagTotal / count, count === 0 ? 0 : textTotal / count],
     entries,
     fingerprint: overBudget ? '' : fingerprintLexicalEntries(indexed),
+    tokenize: { identifierSubtokens: input.identifierSubtokens === true },
   }
   const flat: Record<string, LexicalPosting[]> = {}
   for (const [token, list] of postings) flat[token] = list.sort((a, b) => a.id.localeCompare(b.id))
@@ -366,6 +378,7 @@ function emptyMeta(builtAt: string): LexicalIndexMeta {
     avgTotal: [0, 0, 0],
     entries: {},
     fingerprint: '',
+    tokenize: { identifierSubtokens: false },
   }
 }
 
@@ -428,6 +441,11 @@ interface CacheRow {
 }
 const CACHE = new Map<string, CacheRow>()
 
+/** The cache key includes the tokenizer mode (two modes are two different indexes). */
+function cacheKeyOf(dir: string, identifierSubtokens: boolean): string {
+  return `${dir}\u0000${identifierSubtokens ? 'sub' : 'plain'}`
+}
+
 /** The cheap stamp of an `entries/` directory. */
 async function entriesStamp(storeDir: string): Promise<{ stamp: string; count: number } | null> {
   try {
@@ -451,7 +469,13 @@ async function entriesStamp(storeDir: string): Promise<{ stamp: string; count: n
  */
 export async function loadLexicalIndex(
   storeDir: string,
-  options: { budget?: LexicalIndexBudget; useCache?: boolean; maxEntries?: number } = {},
+  options: {
+    budget?: LexicalIndexBudget
+    useCache?: boolean
+    maxEntries?: number
+    /** F4①: the tokenizer mode the CALLER will query with (must match the index). */
+    identifierSubtokens?: boolean
+  } = {},
 ): Promise<LexicalIndexLoad> {
   const dir = lexicalIndexDir(storeDir)
   // `maxEntries` is accepted at the top level as well as inside `budget`: the
@@ -478,7 +502,8 @@ export async function loadLexicalIndex(
     }
   }
 
-  const cached = options.useCache === false ? undefined : CACHE.get(dir)
+  const cacheKey = cacheKeyOf(dir, options.identifierSubtokens === true)
+  const cached = options.useCache === false ? undefined : CACHE.get(cacheKey)
   if (cached !== undefined && cached.stamp === current.stamp) {
     return { index: cached.index, status: 'current', note: '索引可用(目录自上次检查以来未变动)', dir }
   }
@@ -494,6 +519,15 @@ export async function loadLexicalIndex(
       note: exists
         ? '词法索引损坏(文件在读/解析时失败) — 本次退回全库扫描,查询路径会重建'
         : '词法索引尚未建立 — 本次退回全库扫描,查询路径会建立',
+      dir,
+    }
+  }
+  if (files.meta.tokenize?.identifierSubtokens !== (options.identifierSubtokens === true)) {
+    // Different TOKENIZER, different postings: not "close enough" but wrong.
+    return {
+      index: null,
+      status: 'stale',
+      note: `词法索引的分词口径不符(索引 ${files.meta.tokenize?.identifierSubtokens === true ? '开' : '关'}了子词切分,本次${options.identifierSubtokens === true ? '开' : '关'}) — 本次退回全库扫描,查询路径会重建`,
       dir,
     }
   }
@@ -530,14 +564,20 @@ export async function loadLexicalIndex(
   }
 
   const index: LexicalIndex = { dir, meta: files.meta, postings: files.postings }
-  CACHE.set(dir, { stamp: current.stamp, index })
+  // The stamp must also reflect WHICH mode was validated, or a switch of mode
+  // inside one process would hit the other mode's entry.
+  CACHE.set(cacheKey, { stamp: current.stamp, index })
   return { index, status: 'current', note: '索引可用', dir }
 }
 
 /** Drop the in-process cache (tests and explicit rebuilds). */
 export function forgetLexicalIndex(storeDir?: string): void {
-  if (storeDir === undefined) CACHE.clear()
-  else CACHE.delete(lexicalIndexDir(storeDir))
+  if (storeDir === undefined) {
+    CACHE.clear()
+    return
+  }
+  const dir = lexicalIndexDir(storeDir)
+  for (const key of [...CACHE.keys()]) if (key.startsWith(dir)) CACHE.delete(key)
 }
 
 /**
@@ -692,6 +732,9 @@ export function mergeLexicalIndexes(indexes: readonly LexicalIndex[]): LexicalIn
       avgTotal: [avgTotal[0] / count, avgTotal[1] / count, avgTotal[2] / count],
       entries,
       fingerprint: '',
+      // Two indexes may only be merged when they mean the same thing; the
+      // policy layer guarantees it, and this keeps the merged record honest.
+      tokenize: { identifierSubtokens: (indexes[0] as LexicalIndex).meta.tokenize?.identifierSubtokens === true },
     },
     postings,
   }

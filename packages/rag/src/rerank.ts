@@ -251,6 +251,8 @@ export interface RerankContext {
   missingFeatureMode?: 'zero' | 'absent'
   /** F4②: presence (shipped) or real counts — must match how `stats` was built. */
   termFrequency?: TermFrequency
+  /** F4①: subword expansion — must match how the index and the stats were built. */
+  identifierSubtokens?: boolean
   /** D4: the number of candidates the semantic channel recalled (rank normalizer). */
   semanticPoolSize?: number
   /** D4: the number of candidates in the fused window (rank normalizer). */
@@ -298,27 +300,29 @@ export function bm25Raw(
   stats: CorpusStats,
   fieldWeights: RetrievalWeights,
   termFrequency: TermFrequency = 'presence',
+  identifierSubtokens = false,
 ): number {
   // Delegated to the engine's BM25F: the formula has ONE implementation
   // (`packages/kb/src/bm25.ts`), and this feature is now literally "the first
   // level's score, normalized" rather than a parallel term-weighting scheme.
   const fields = { title: entry.title, tags: entry.tags, text: entryTextAfterRedlines(entry) }
-  return (termFrequency === 'count'
-    // The count form carries real frequencies AND total-token lengths, so the
-    // feature that mirrors the first level mirrors it under either mode.
-    ? bm25fScoreFrom({
-      lengths: (() => {
-        const counts = bm25CountFields(fields)
-        const total = (map: ReadonlyMap<string, number>): number => {
-          let sum = 0
-          for (const value of map.values()) sum += value
-          return sum
-        }
-        return { title: total(counts.title), tag: total(counts.tag), text: total(counts.text) }
-      })(),
-      counts: bm25CountFields(fields),
-    }, queryTokens, stats, fieldWeights, 'count')
-    : bm25fScore(bm25Fields(fields), queryTokens, stats, fieldWeights)).score
+  const tokenizeOptions = { identifierSubtokens }
+  if (termFrequency !== 'count') {
+    return bm25fScore(bm25Fields(fields, tokenizeOptions), queryTokens, stats, fieldWeights).score
+  }
+  // The count form carries real frequencies AND total-token lengths, so the
+  // feature that mirrors the first level mirrors it under either mode. The
+  // engine's own `precomputedFrom` is the single source of that pairing.
+  const counts = bm25CountFields(fields, tokenizeOptions)
+  const total = (map: ReadonlyMap<string, number>): number => {
+    let sum = 0
+    for (const value of map.values()) sum += value
+    return sum
+  }
+  return bm25fScoreFrom({
+    lengths: { title: total(counts.title), tag: total(counts.tag), text: total(counts.text) },
+    counts,
+  }, queryTokens, stats, fieldWeights, 'count').score
 }
 
 /** Collapse whitespace and case for verbatim phrase matching. */
@@ -379,7 +383,14 @@ export function rerankOne(candidate: RerankCandidate, context: RerankContext, bm
   const now = context.now ?? new Date()
   const entry = candidate.entry
 
-  const raw = bm25Raw(entry, context.queryTokens, context.stats, fieldWeights, context.termFrequency ?? 'presence')
+  const raw = bm25Raw(
+    entry,
+    context.queryTokens,
+    context.stats,
+    fieldWeights,
+    context.termFrequency ?? 'presence',
+    context.identifierSubtokens === true,
+  )
   const lexicalMode = context.lexicalNormalization ?? 'candidates'
   const bm25ish = lexicalMode === 'absolute'
     // D1: corpus-level saturation. `bm25Normalizer` carries the POOL scale in
@@ -530,7 +541,14 @@ export function rerankOne(candidate: RerankCandidate, context: RerankContext, bm
  */
 export function rerankAll(candidates: readonly RerankCandidate[], context: RerankContext): RerankResult[] {
   const fieldWeights = context.fieldWeights ?? DEFAULT_WEIGHTS
-  const raws = candidates.map((candidate) => bm25Raw(candidate.entry, context.queryTokens, context.stats, fieldWeights, context.termFrequency ?? 'presence'))
+  const raws = candidates.map((candidate) => bm25Raw(
+    candidate.entry,
+    context.queryTokens,
+    context.stats,
+    fieldWeights,
+    context.termFrequency ?? 'presence',
+    context.identifierSubtokens === true,
+  ))
   let best = 0
   for (const raw of raws) best = Math.max(best, raw)
   /**

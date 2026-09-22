@@ -272,3 +272,49 @@ test('F4② 词频口径:count 档真的改变分数,且索引路径与扫描路
     'count 档:索引路径也必须 == 扫描路径 —— 索引里存的是真词频与总词数,两条路必须同源',
   )
 })
+
+
+// ── F4① 子词切分(落地计划 §2-3):整串保留,子词另加,两侧同时展开 ──────────
+test('F4① 切分表:整串永远保留,子词另加,长度不足 2 的片段丢弃', async () => {
+  const { identifierSubtokens } = await import('../src/tokenize.ts')
+  assert.deepEqual(identifierSubtokens('_process_and_sort'), ['and', 'process', 'sort'])
+  assert.deepEqual(identifierSubtokens('HTTPServer'), ['http', 'server'])
+  assert.deepEqual(identifierSubtokens('utf8decode'), ['decode', 'utf'])
+  assert.deepEqual(identifierSubtokens('a_b'), [], '单字符片段不足 tokenizer 的 2 字下限')
+  assert.deepEqual(identifierSubtokens('plainword'), [], '没有边界就是它自己,不产生"子词"')
+  const tokens = tokenize('_process_and_sort', { identifierSubtokens: true })
+  assert.ok(tokens.includes('_process_and_sort'), '整串必须保留(代码检索要能整体命中标识符)')
+  assert.ok(tokens.includes('sort'), '子词也要进 token 集合')
+})
+
+test('F4① 端到端:开子词切分后,查 "sort" 能命中含 "_process_and_sort" 的条目;两路仍逐条一致', async (t) => {
+  const { store } = await world(t)
+  forgetLexicalIndex()
+  await store.add({ kind: 'note', title: '排序实现', text: '实现见 _process_and_sort 这个函数,它对分片重建后的序列排序。', tags: ['code'] })
+  const entries = await store.list()
+
+  const bare = await queryKb(store, null, { text: 'sort', limit: 5, noTouch: true })
+  assert.equal(bare.length, 0, '未开子词切分时,"sort" 匹配不到 _process_and_sort(这正是被量的那个缺口)')
+
+  const expanded = await queryKb(store, null, { text: 'sort', limit: 5, noTouch: true, identifierSubtokens: true })
+  assert.ok(expanded.length > 0, '开了子词切分之后必须能命中')
+
+  // 索引必须按同一口径建立:用旧口径的索引去查新口径 = 静默漏召回,所以要重建。
+  const stale = await buildLexicalIndex({ storeDir: store.dir, entries })
+  forgetLexicalIndex(store.dir)
+  const mismatched = await loadLexicalIndex(store.dir, { useCache: false, identifierSubtokens: true })
+  assert.equal(mismatched.index, null, '分词口径不符的索引不得被使用')
+  assert.equal(mismatched.status, 'stale')
+  assert.match(mismatched.note, /分词口径不符/)
+
+  const built = await buildLexicalIndex({ storeDir: store.dir, entries, identifierSubtokens: true })
+  assert.equal(built.index.meta.tokenize.identifierSubtokens, true)
+  forgetLexicalIndex(store.dir)
+  const indexed = await queryKb(store, null, { text: 'sort', limit: 5, noTouch: true, identifierSubtokens: true, lexicalIndexes: [built.index] })
+  assert.deepEqual(
+    indexed.map((hit) => [String(hit.entry.id), hit.score, hit.matched.join(',')]),
+    expanded.map((hit) => [String(hit.entry.id), hit.score, hit.matched.join(',')]),
+    '开着子词切分时,索引路径与扫描路径必须逐条一致',
+  )
+  void stale
+})

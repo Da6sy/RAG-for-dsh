@@ -167,6 +167,8 @@ export const RetrievalSchema = z.object({
    * frequencies, with the length basis moving with them.
    */
   termFrequency: z.union([z.const('presence'), z.const('count')]).default(RETRIEVAL_DEFAULTS.termFrequency),
+  /** F4① (落地计划 §2-3): subword expansion of identifiers; default off. */
+  identifierSubtokens: z.boolean().default(RETRIEVAL_DEFAULTS.identifierSubtokens),
   /** D3: `zero` (today) folds "not recalled" into 0; `absent` keeps the tri-state. */
   missingFeatureMode: z.union([z.const('zero'), z.const('absent')]).default(RETRIEVAL_DEFAULTS.missingFeatureMode),
   featureWeights: z.object({

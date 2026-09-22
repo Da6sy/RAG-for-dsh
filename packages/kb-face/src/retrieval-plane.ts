@@ -180,7 +180,11 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
     const indexMode = (process.env.CLUE_LEXICAL_INDEX ?? '').toLowerCase()
     const lexical = indexMode === 'off' || indexMode === 'scan'
       ? { indexes: [], status: 'missing' as const, note: '词法索引被显式关闭(CLUE_LEXICAL_INDEX=off),本次扫描全库' }
-      : await ensureLexicalIndexes([stores.project, stores.global])
+      : await ensureLexicalIndexes([stores.project, stores.global], {
+        // F4①: the tokenizer mode is part of what an index MEANS, so a switch
+        // rebuilds rather than answering from postings that lack the subtokens.
+        identifierSubtokens: tuning.identifierSubtokens,
+      })
     if (process.env.CLUE_LEXICAL_INDEX_DEBUG === '1') {
       warn(`[r1-debug] 索引候选=${lexical.indexes.length} 状态=${lexical.status} 备注=${lexical.note}`)
     }
@@ -203,6 +207,7 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
       semanticCeil: tuning.semanticCeil,
       missingFeatureMode: tuning.missingFeatureMode,
       termFrequency: tuning.termFrequency,
+      identifierSubtokens: tuning.identifierSubtokens,
       trustThreshold: stores.project.config.trustThreshold,
       ...(useVector ? { embedder: liveEmbedder() } : {}),
       ...(home !== undefined ? { home } : {}),

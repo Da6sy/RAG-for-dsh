@@ -46,6 +46,11 @@ export interface QueryOptions {
    * measured them as one variable; the statistics follow automatically.
    */
   termFrequency?: TermFrequency
+  /**
+   * F4① (`docs/落地计划-剩余工程.md` §2-3): expand identifiers into subtokens on
+   * BOTH sides (query text and entry fields). Default off = today.
+   */
+  identifierSubtokens?: boolean
   /** Query text. */
   text: string
   kinds?: KbKind[]
@@ -185,6 +190,8 @@ export function scoreEntry(
     fields?: PrecomputedFields
     /** F4②: presence (today) or real counts; the stats must match (see buildLexicalStats). */
     termFrequency?: TermFrequency
+    /** F4①: subword expansion of identifiers (see QueryOptions). */
+    identifierSubtokens?: boolean
   } = {},
 ): { score: number; matched: string[] } {
   const scorer: LexicalScorer = options.scorer ?? 'weights'
@@ -206,13 +213,14 @@ export function scoreEntry(
     // caller that forgot them gets the old behavior rather than a wrong score.
     const fields = { title: entry.title, tags: entry.tags, text: entryTextAfterRedlines(entry) }
     const mode = options.termFrequency ?? 'presence'
+    const tokenizeOptions = { identifierSubtokens: options.identifierSubtokens === true }
     if (options.stats === undefined) {
-      const stats = buildLexicalStats([fields], mode)
-      const scored = bm25fScoreFrom(precomputedFrom(fields, mode), queryTokens, stats, weights, mode)
+      const stats = buildLexicalStats([fields], mode, tokenizeOptions)
+      const scored = bm25fScoreFrom(precomputedFrom(fields, mode, tokenizeOptions), queryTokens, stats, weights, mode)
       raw = scored.score
       matched = scored.matched
     } else {
-      const scored = bm25fScoreFrom(precomputedFrom(fields, mode), queryTokens, options.stats, weights, mode)
+      const scored = bm25fScoreFrom(precomputedFrom(fields, mode, tokenizeOptions), queryTokens, options.stats, weights, mode)
       raw = scored.score
       matched = scored.matched
     }
@@ -351,7 +359,8 @@ export async function queryKb(
   global: KbStore | null,
   options: QueryOptions,
 ): Promise<QueryHit[]> {
-  const queryTokens = tokenize(options.text)
+  const tokenizeOptions = { identifierSubtokens: options.identifierSubtokens === true }
+  const queryTokens = tokenize(options.text, tokenizeOptions)
   if (queryTokens.length === 0) return []
   const limit = options.limit ?? 8
   const weights: RetrievalWeights = { ...DEFAULT_WEIGHTS, ...options.weights }
@@ -444,7 +453,7 @@ export async function queryKb(
       title: entry.title,
       tags: entry.tags,
       text: entryTextAfterRedlines(entry),
-    })), termFrequency)
+    })), termFrequency, tokenizeOptions)
     : undefined
 
   const hits: QueryHit[] = []
@@ -452,6 +461,7 @@ export async function queryKb(
     const { score, matched } = scoreEntry(entry, queryTokens, weights, {
       scorer,
       termFrequency,
+      ...(options.identifierSubtokens === true ? { identifierSubtokens: true } : {}),
       ...(stats !== undefined ? { stats } : {}),
     })
     if (score === 0 || matched.length === 0) continue

@@ -70,6 +70,14 @@ export const RETRIEVAL_DEFAULTS = {
    * measured them as ONE variable; the statistics follow from the same switch.
    */
   termFrequency: 'presence' as 'presence' | 'count',
+  /**
+   * F4① (落地计划 §2-3): expand identifiers into subtokens on both sides
+   * (`_process_and_sort` also indexes `process`/`and`/`sort`). Default OFF —
+   * the plan's discipline: add the switch, keep today's behavior, flip after an
+   * A/B (measured cost of not having it: −0.0307 on cosqa's lexical tier, and
+   * zero on prose corpora).
+   */
+  identifierSubtokens: false,
 } as const
 
 /** The type of the table (so a schema can be typed from it). */

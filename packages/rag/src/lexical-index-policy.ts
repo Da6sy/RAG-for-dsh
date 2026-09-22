@@ -72,6 +72,8 @@ export async function ensureLexicalIndexes(
     now?: () => number
     /** Skip the rebuild step (read-only surfaces, and the A/B harness). */
     noBuild?: boolean
+    /** F4①: the tokenizer mode the caller will query with. */
+    identifierSubtokens?: boolean
   } = {},
 ): Promise<LexicalIndexSelection> {
   const now = options.now ?? (() => Date.now())
@@ -97,6 +99,7 @@ export async function ensureLexicalIndexes(
     const loaded = await loadLexicalIndex(store.dir, {
       ...(options.maxEntries !== undefined ? { maxEntries: options.maxEntries } : {}),
       ...(options.maxMillis !== undefined ? { budget: { maxMillis: options.maxMillis } } : {}),
+      ...(options.identifierSubtokens !== undefined ? { identifierSubtokens: options.identifierSubtokens } : {}),
     })
     if (loaded.index !== null) {
       indexes.push(loaded.index)
@@ -118,6 +121,7 @@ export async function ensureLexicalIndexes(
         storeDir: store.dir,
         entries: await store.list(),
         ...(options.maxEntries !== undefined ? { budget: { maxEntries: options.maxEntries } } : {}),
+        ...(options.identifierSubtokens === true ? { identifierSubtokens: true } : {}),
       })
       if (!built.report.overBudget && built.index.meta.entryCount > 0) {
         indexes.push(built.index)

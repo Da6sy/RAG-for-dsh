@@ -129,9 +129,11 @@ export function EmbeddingSection(): JSX.Element {
     missingFeatureMode: string
     /** F4②: 词频口径(presence 是今天,count 是真词频)。 */
     termFrequency: string
+    /** F4①: 标识符子词切分(默认关)。 */
+    identifierSubtokens: boolean
   }>({
     rerank: true, ranklog: true, llmRerank: false, lexical: '1', vector: '1', weights: {},
-    lexicalNormalization: 'auto', semanticScale: 'auto', semanticFloor: '0.3', semanticCeil: '0.8', missingFeatureMode: 'zero', termFrequency: 'presence',
+    lexicalNormalization: 'auto', semanticScale: 'auto', semanticFloor: '0.3', semanticCeil: '0.8', missingFeatureMode: 'zero', termFrequency: 'presence', identifierSubtokens: false,
   })
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [keyInput, setKeyInput] = useState('')
@@ -170,6 +172,7 @@ export function EmbeddingSection(): JSX.Element {
         semanticCeil: String(payload.retrieval.semanticCeil),
         missingFeatureMode: payload.retrieval.missingFeatureMode,
         termFrequency: payload.retrieval.termFrequency,
+        identifierSubtokens: payload.retrieval.identifierSubtokens,
       })
       setBudgetDraft({
         batchSize: String(payload.config.batchSize),
@@ -297,6 +300,7 @@ export function EmbeddingSection(): JSX.Element {
     || Number(tuningDraft.semanticCeil) !== retrieval.semanticCeil
     || tuningDraft.missingFeatureMode !== retrieval.missingFeatureMode
     || tuningDraft.termFrequency !== retrieval.termFrequency
+    || tuningDraft.identifierSubtokens !== retrieval.identifierSubtokens
 
   const staleCount = vector.indexes.filter((index) => index.stale || index.unreadable).length
 
@@ -678,6 +682,15 @@ export function EmbeddingSection(): JSX.Element {
                   <option value="count">count(真词频,长度口径同为总词数)</option>
                 </select>
               </div>
+              <label className="clue-field-inline" title="把 _process_and_sort 同时切成 process/and/sort 建索引;整串仍然可命中">
+                <input
+                  type="checkbox"
+                  checked={tuningDraft.identifierSubtokens}
+                  disabled={busy || !data.available}
+                  onChange={(event) => setTuningDraft((previous) => ({ ...previous, identifierSubtokens: event.target.checked }))}
+                />
+                <span className="clue-field-label">标识符子词切分</span>
+              </label>
               <div className="clue-field">
                 <span className="clue-field-label">标定 floor / ceil</span>
                 <span className="clue-field-inline" style={{ gap: 8 }}>
@@ -725,6 +738,7 @@ export function EmbeddingSection(): JSX.Element {
                 semanticCeil: Number(tuningDraft.semanticCeil),
                 missingFeatureMode: tuningDraft.missingFeatureMode,
                 termFrequency: tuningDraft.termFrequency,
+                identifierSubtokens: tuningDraft.identifierSubtokens,
                 ...(Object.keys(weights).length > 0 ? { featureWeights: weights } : {}),
               }, 'retrieval')
             }}

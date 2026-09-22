@@ -126,6 +126,8 @@ const knobs = {
   ...(args['missing-mode'] !== undefined ? { missingFeatureMode: String(args['missing-mode']) } : {}),
   // F4②: presence (shipped) vs count (real term frequencies).
   ...(args['term-frequency'] !== undefined ? { termFrequency: String(args['term-frequency']) } : {}),
+  // F4①: subword expansion of identifiers (default off).
+  ...(args['identifier-subtokens'] !== undefined ? { identifierSubtokens: args['identifier-subtokens'] !== 'false' } : {}),
   ...(args['semantic-floor'] !== undefined ? { semanticFloor: Number(args['semantic-floor']) } : {}),
   ...(args['semantic-ceil'] !== undefined ? { semanticCeil: Number(args['semantic-ceil']) } : {}),
   // D4's weights are the two rank features; they ship at 0, so an A/B has to be

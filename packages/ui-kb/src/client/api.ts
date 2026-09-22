@@ -675,6 +675,8 @@ export interface RetrievalTuningPayload {
   missingFeatureMode: 'zero' | 'absent'
   /** F4②: `presence` (shipped) or `count` (real term frequencies). */
   termFrequency: 'presence' | 'count'
+  /** F4①: subword expansion of identifiers (default off). */
+  identifierSubtokens: boolean
 }
 
 /** V1: one derived index's health. */

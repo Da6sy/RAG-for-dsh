@@ -57,7 +57,7 @@ export {
   type StatsDoc,
   type TermFrequency,
 } from './bm25.ts'
-export { tokenize, tokenizeCounts } from './tokenize.ts'
+export { identifierSubtokens, tokenize, tokenizeCounts, type TokenizeOptions } from './tokenize.ts'
 export {
   buildLexicalIndex,
   DEFAULT_LEXICAL_BUDGET,

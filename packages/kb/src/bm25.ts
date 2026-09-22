@@ -23,7 +23,7 @@
  *
  * @module @clue-harness/kb/bm25
  */
-import { tokenize, tokenizeCounts } from './tokenize.ts'
+import { tokenizeCounts, type TokenizeOptions } from './tokenize.ts'
 
 /**
  * The BM25 saturation constant. THE only literal of its kind in the repo
@@ -96,11 +96,14 @@ export interface StatsDoc {
  * @param entry - title/tags plus the already-filtered body.
  * @returns the three token SETS (presence, not term frequency — see {@link bm25fScore}).
  */
-export function bm25Fields(entry: { title: string; tags: readonly string[]; text: string }): Bm25Fields {
+export function bm25Fields(
+  entry: { title: string; tags: readonly string[]; text: string },
+  options: TokenizeOptions = {},
+): Bm25Fields {
   return {
-    title: [...tokenizeCounts(entry.title).keys()],
-    tag: [...tokenizeCounts(entry.tags.join(' ')).keys()],
-    text: [...tokenizeCounts(entry.text).keys()],
+    title: [...tokenizeCounts(entry.title, options).keys()],
+    tag: [...tokenizeCounts(entry.tags.join(' '), options).keys()],
+    text: [...tokenizeCounts(entry.text, options).keys()],
   }
 }
 
@@ -109,11 +112,14 @@ export function bm25Fields(entry: { title: string; tags: readonly string[]; text
  * @param entry - title/tags plus the already-redline-filtered body.
  * @returns one token → count map per field.
  */
-export function bm25CountFields(entry: { title: string; tags: readonly string[]; text: string }): Bm25CountFields {
+export function bm25CountFields(
+  entry: { title: string; tags: readonly string[]; text: string },
+  options: TokenizeOptions = {},
+): Bm25CountFields {
   return {
-    title: tokenizeCounts(entry.title),
-    tag: tokenizeCounts(entry.tags.join(' ')),
-    text: tokenizeCounts(entry.text),
+    title: tokenizeCounts(entry.title, options),
+    tag: tokenizeCounts(entry.tags.join(' '), options),
+    text: tokenizeCounts(entry.text, options),
   }
 }
 
@@ -126,13 +132,17 @@ export function bm25CountFields(entry: { title: string; tags: readonly string[];
  * @param docs - the corpus (both tiers).
  * @returns the statistics.
  */
-export function buildLexicalStats(docs: readonly StatsDoc[], termFrequency: TermFrequency = 'presence'): LexicalStats {
+export function buildLexicalStats(
+  docs: readonly StatsDoc[],
+  termFrequency: TermFrequency = 'presence',
+  tokenizeOptions: TokenizeOptions = {},
+): LexicalStats {
   const df = new Map<string, number>()
   let titleSum = 0
   let tagSum = 0
   let textSum = 0
   for (const doc of docs) {
-    const fields = bm25CountFields(doc)
+    const fields = bm25CountFields(doc, tokenizeOptions)
     // The averages must use the SAME length notion the scorer divides by —
     // otherwise the length norm compares a distinct-token length against a
     // total-token average (the plan's "长度口径要一起定").
@@ -273,8 +283,9 @@ export function bm25fScore(
 export function precomputedFrom(
   entry: { title: string; tags: readonly string[]; text: string },
   termFrequency: TermFrequency = 'presence',
+  tokenizeOptions: TokenizeOptions = {},
 ): PrecomputedFields {
-  const counts = bm25CountFields(entry)
+  const counts = bm25CountFields(entry, tokenizeOptions)
   const lengthOf = (map: ReadonlyMap<string, number>): number =>
     termFrequency === 'count' ? totalCount(map) : map.size
   return {

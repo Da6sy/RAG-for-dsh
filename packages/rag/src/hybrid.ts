@@ -174,6 +174,12 @@ export interface HybridConfig {
    * statistics, the `bm25ish` feature and the delegated path all follow it.
    */
   termFrequency?: TermFrequency
+  /**
+   * F4① (`docs/落地计划-剩余工程.md` §2-3): expand identifiers into subtokens on
+   * both sides. Default off = today; it must reach the INDEX and the query
+   * together (the policy layer rebuilds when the mode changes).
+   */
+  identifierSubtokens?: boolean
   /** The embedder in effect (absent = lexical only, honestly annotated). */
   embedder?: Embedder
   /** ClueHarness home — where the shared embed cache and rebuild writes live. */
@@ -378,6 +384,7 @@ export function createHybridRetriever(
     // reproduce pre-R2 behavior (R2 of docs/开发记录.md).
     ...(config.lexicalScorer !== undefined ? { lexicalScorer: config.lexicalScorer } : {}),
     ...(config.termFrequency !== undefined ? { termFrequency: config.termFrequency } : {}),
+    ...(config.identifierSubtokens !== undefined ? { identifierSubtokens: config.identifierSubtokens } : {}),
     // R1: the delegated rollback path gets the SAME index, so turning reranking
     // off stays a quality switch rather than becoming a performance cliff.
     ...(config.lexicalIndexes !== undefined ? { lexicalIndexes: config.lexicalIndexes } : {}),
@@ -489,6 +496,8 @@ export function createHybridRetriever(
     const limit = options.limit ?? topK
     const now = config.now ?? new Date()
     const at = now.toISOString()
+    /** F4①: one read, used by the query tokenizer, the stats and the scoring paths. */
+    const identifierSubtokens = config.identifierSubtokens === true
     /**
      * 落地计划 §2-7 — ONE emitter, called by EVERY exit.
      *
@@ -534,7 +543,9 @@ export function createHybridRetriever(
     // it, because embedding a path dilutes the vector and can even make two
     // unrelated files look alike.
     const normalized = normalizeQuery(profile, query)
-    const queryTokens = tokenize(normalized.lexical)
+    // F4①: the QUERY side expands exactly like the fields do, or a subtoken the
+    // index contains could never be asked for.
+    const queryTokens = tokenize(normalized.lexical, { identifierSubtokens })
 
     // The rollback path, delegated (不变量 9).
     if (lexicalOnly) {
@@ -620,7 +631,7 @@ export function createHybridRetriever(
           title: member.entry.title,
           tags: member.entry.tags,
           text: entryTextAfterRedlines(member.entry),
-        })), termFrequency)
+        })), termFrequency, { identifierSubtokens })
         : undefined)
 
     // ── lexical channel ────────────────────────────────────────────────────
@@ -635,6 +646,7 @@ export function createHybridRetriever(
           limit: recallDepth,
           noTouch: true,
           termFrequency,
+          ...(identifierSubtokens ? { identifierSubtokens: true } : {}),
           lexicalIndexes: config.lexicalIndexes as readonly LexicalIndex[],
           ...(options.includeExpired !== undefined ? { includeExpired: options.includeExpired } : {}),
           ...(options.includeGlobal !== undefined ? { includeGlobal: options.includeGlobal } : {}),
@@ -654,6 +666,7 @@ export function createHybridRetriever(
             ...scoreEntry(member.entry, queryTokens, weights, {
               scorer: lexicalScorer,
               termFrequency,
+              ...(identifierSubtokens ? { identifierSubtokens: true } : {}),
               ...(corpusStats !== undefined ? { stats: corpusStats } : {}),
             }),
           }))
@@ -836,6 +849,7 @@ export function createHybridRetriever(
         ...(config.semanticCeil !== undefined ? { semanticCeil: config.semanticCeil } : {}),
         ...(config.missingFeatureMode !== undefined ? { missingFeatureMode: config.missingFeatureMode } : {}),
         termFrequency,
+        ...(identifierSubtokens ? { identifierSubtokens: true } : {}),
         profile,
       })
       for (const result of results) {
