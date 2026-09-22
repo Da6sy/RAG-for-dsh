@@ -89,7 +89,7 @@ export async function scheduleGeneralizationScan(options: {
       return { via: 'sync', ok: true }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      warn(`泛化扫描失败(已忽略,不影响本轮): ${message}`)
+      warn(`generalization scan failed (ignored; this turn is unaffected): ${message}`)
       return { via: 'sync', ok: false, error: message }
     }
   }
@@ -97,16 +97,16 @@ export async function scheduleGeneralizationScan(options: {
   try {
     const jobId = options.jobs.start({
       kind: GENERALIZE_JOB_KIND,
-      label: options.label ?? '跨项目泛化扫描',
+      label: options.label ?? 'cross-project generalization scan',
       ...(options.owner !== undefined ? { owner: options.owner } : {}),
       run: () => {
         let cancelled = false
         let note = ''
         const done = options.scan().then(
-          () => ({ status: cancelled ? ('killed' as const) : ('completed' as const), ...(cancelled ? { detail: '取消请求已记录(扫描不可中断,已跑完)' } : {}) }),
+          () => ({ status: cancelled ? ('killed' as const) : ('completed' as const), ...(cancelled ? { detail: 'cancellation recorded (the scan is not interruptible; it ran to completion)' } : {}) }),
           (error: unknown) => {
             const message = error instanceof Error ? error.message : String(error)
-            warn(`泛化扫描失败(已忽略,不影响本轮): ${message}`)
+            warn(`generalization scan failed (ignored; this turn is unaffected): ${message}`)
             return { status: 'failed' as const, detail: message }
           },
         )
@@ -116,7 +116,7 @@ export async function scheduleGeneralizationScan(options: {
             note = reason ?? ''
           },
           done,
-          readOutput: () => (cancelled ? `已请求取消${note === '' ? '' : `: ${note}`}\n` : ''),
+          readOutput: () => (cancelled ? `cancellation requested${note === '' ? '' : `: ${note}`}\n` : ''),
         }
       },
     })
@@ -125,13 +125,13 @@ export async function scheduleGeneralizationScan(options: {
     // A registry that refuses (no attached controller for this owner, a
     // duplicate registration) must not lose the scan: fall back to inline.
     const message = error instanceof Error ? error.message : String(error)
-    warn(`泛化扫描未能转后台(${message}),改为本轮内同步执行`)
+    warn(`generalization scan could not move to the background (${message}); running it synchronously in this turn instead`)
     try {
       await options.scan()
       return { via: 'sync', ok: true, error: message }
     } catch (inner) {
       const innerMessage = inner instanceof Error ? inner.message : String(inner)
-      warn(`泛化扫描失败(已忽略,不影响本轮): ${innerMessage}`)
+      warn(`generalization scan failed (ignored; this turn is unaffected): ${innerMessage}`)
       return { via: 'sync', ok: false, error: innerMessage }
     }
   }

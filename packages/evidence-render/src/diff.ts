@@ -81,8 +81,8 @@ const SEVERITY_RANK = { error: 0, warn: 1, info: 2 } as const
 
 function moveWords(dx: number, dy: number): string {
   const parts: string[] = []
-  if (dx !== 0) parts.push(dx > 0 ? `右移${dx}px` : `左移${-dx}px`)
-  if (dy !== 0) parts.push(dy > 0 ? `下移${dy}px` : `上移${-dy}px`)
+  if (dx !== 0) parts.push(dx > 0 ? `moved right ${dx}px` : `moved left ${-dx}px`)
+  if (dy !== 0) parts.push(dy > 0 ? `moved down ${dy}px` : `moved up ${-dy}px`)
   return parts.join(' ')
 }
 
@@ -91,9 +91,9 @@ function relationChange(before: readonly string[], after: readonly string[]): st
   const removed = before.filter((r) => !after.includes(r))
   if (added.length === 0 && removed.length === 0) return null
   const bits: string[] = []
-  if (added.length > 0) bits.push(`新增 ${added.join('、')}`)
-  if (removed.length > 0) bits.push(`失去 ${removed.join('、')}`)
-  return `关系变化: ${bits.join('; ')}`
+  if (added.length > 0) bits.push(`gained ${added.join(', ')}`)
+  if (removed.length > 0) bits.push(`lost ${removed.join(', ')}`)
+  return `relations changed: ${bits.join('; ')}`
 }
 
 function boxText(node: ModuleNode): string {
@@ -122,23 +122,23 @@ export function diffSnapshots(
     || baseline.dpr !== current.dpr
   if (viewportChanged) {
     push({
-      kind: 'viewport', moduleId: null, label: '视口', severity: 'warn',
-      detail: `视口/缩放不一致: ${baseline.viewport.width}×${baseline.viewport.height}@${baseline.dpr}`
-        + ` → ${current.viewport.width}×${current.viewport.height}@${current.dpr};坐标差异在此比对中是噪声`,
+      kind: 'viewport', moduleId: null, label: 'viewport', severity: 'warn',
+      detail: `viewport/scale mismatch: ${baseline.viewport.width}×${baseline.viewport.height}@${baseline.dpr}`
+        + ` → ${current.viewport.width}×${current.viewport.height}@${current.dpr}; coordinate differences are noise in this comparison`,
     })
   }
 
   if (baseline.page.height !== current.page.height) {
     const delta = current.page.height - baseline.page.height
     push({
-      kind: 'page', moduleId: null, label: '页面', severity: 'info',
-      detail: `页面总高度 ${baseline.page.height} → ${current.page.height} (${delta > 0 ? '+' : ''}${delta}px)`,
+      kind: 'page', moduleId: null, label: 'page', severity: 'info',
+      detail: `full page height ${baseline.page.height} → ${current.page.height} (${delta > 0 ? '+' : ''}${delta}px)`,
     })
   }
   if (baseline.page.needsScroll !== current.page.needsScroll) {
     push({
-      kind: 'page', moduleId: null, label: '页面', severity: 'info',
-      detail: current.page.needsScroll ? '页面从无需滚动变为需要滚动' : '页面从需要滚动变为无需滚动',
+      kind: 'page', moduleId: null, label: 'page', severity: 'info',
+      detail: current.page.needsScroll ? 'page went from no-scroll to needs-scroll' : 'page went from needs-scroll to no-scroll',
     })
   }
 
@@ -152,7 +152,7 @@ export function diffSnapshots(
       push({
         kind: 'added', moduleId: id, label: entry.path,
         severity: node.kind === 'marker' || node.kind === 'interactive' ? 'warn' : 'info',
-        detail: `新增 <${node.kind}> ${boxText(node)} grid ${node.grid}`,
+        detail: `added <${node.kind}> ${boxText(node)} grid ${node.grid}`,
       })
       continue
     }
@@ -177,8 +177,8 @@ export function diffSnapshots(
       push({
         kind: 'resized', moduleId: id, label: entry.path,
         severity: areaDelta > 0.25 ? 'warn' : 'info',
-        detail: `尺寸 ${old.box.w}×${old.box.h} → ${node.box.w}×${node.box.h}`
-          + ` (宽${dw >= 0 ? '+' : ''}${dw}, 高${dh >= 0 ? '+' : ''}${dh})`,
+        detail: `size ${old.box.w}×${old.box.h} → ${node.box.w}×${node.box.h}`
+          + ` (width ${dw >= 0 ? '+' : ''}${dw}, height ${dh >= 0 ? '+' : ''}${dh})`,
       })
     }
 
@@ -187,28 +187,28 @@ export function diffSnapshots(
         kind: 'visibility', moduleId: id, label: entry.path,
         severity: node.visibility.occluded ? 'error' : 'info',
         detail: node.visibility.occluded
-          ? `新被遮挡${node.visibility.occludedBy !== null ? `(遮挡者: ${node.visibility.occludedBy})` : ''}`
-          : '不再被遮挡',
+          ? `newly occluded${node.visibility.occludedBy !== null ? ` (by ${node.visibility.occludedBy})` : ''}`
+          : 'no longer occluded',
       })
     }
     if (old.visibility.clipped !== node.visibility.clipped) {
       push({
         kind: 'visibility', moduleId: id, label: entry.path,
         severity: node.visibility.clipped ? 'warn' : 'info',
-        detail: node.visibility.clipped ? '内容新出现溢出裁剪' : '溢出裁剪消除',
+        detail: node.visibility.clipped ? 'content newly overflow-clipped' : 'overflow clipping gone',
       })
     }
     if (old.visibility.inViewport !== node.visibility.inViewport) {
       push({
         kind: 'visibility', moduleId: id, label: entry.path, severity: 'info',
-        detail: node.visibility.inViewport ? '进入首屏视口' : '移出首屏视口(需滚动可见)',
+        detail: node.visibility.inViewport ? 'entered the above-the-fold viewport' : 'left the above-the-fold viewport (visible only by scrolling)',
       })
     }
     if (old.visibility.displayed !== node.visibility.displayed) {
       push({
         kind: 'visibility', moduleId: id, label: entry.path,
         severity: node.visibility.displayed ? 'info' : 'error',
-        detail: node.visibility.displayed ? '恢复渲染' : '不再渲染(display/visibility/零尺寸)',
+        detail: node.visibility.displayed ? 'renders again' : 'no longer rendered (display/visibility/zero size)',
       })
     }
 
@@ -217,13 +217,13 @@ export function diffSnapshots(
         push({
           kind: 'interactive', moduleId: id, label: entry.path,
           severity: node.interactive.tabbable ? 'info' : 'error',
-          detail: node.interactive.tabbable ? '恢复可 Tab 选中' : '掉出 Tab 顺序(键盘不可达)',
+          detail: node.interactive.tabbable ? 'tabbable again' : 'fell out of tab order (unreachable by keyboard)',
         })
       }
       if (old.interactive.disabled !== node.interactive.disabled) {
         push({
           kind: 'interactive', moduleId: id, label: entry.path, severity: 'warn',
-          detail: node.interactive.disabled ? '变为禁用' : '变为可用',
+          detail: node.interactive.disabled ? 'became disabled' : 'became enabled',
         })
       }
     }
@@ -235,36 +235,36 @@ export function diffSnapshots(
       push({
         kind: 'contrast', moduleId: id, label: entry.path,
         severity: broke ? 'error' : 'info',
-        detail: `文字对比度 ${cBefore.toFixed(1)} → ${cAfter.toFixed(1)}${broke ? '(跌破 4.5 可读线)' : ''}`,
+        detail: `text contrast ${cBefore.toFixed(1)} → ${cAfter.toFixed(1)}${broke ? ' (dropped below the 4.5 readability line)' : ''}`,
       })
     }
 
     if (old.text !== node.text) {
       push({
         kind: 'text', moduleId: id, label: entry.path, severity: 'info',
-        detail: `文本 ${JSON.stringify(old.text)} → ${JSON.stringify(node.text)}`,
+        detail: `text ${JSON.stringify(old.text)} → ${JSON.stringify(node.text)}`,
       })
     }
 
     if (old.repeat !== null && node.repeat !== null) {
       const changes: string[] = []
-      if (old.repeat.count !== node.repeat.count) changes.push(`数量 ${old.repeat.count}→${node.repeat.count}`)
-      if (old.repeat.gap !== node.repeat.gap) changes.push(`间距 ${String(old.repeat.gap)}→${String(node.repeat.gap)}`)
-      if (old.repeat.structureSame !== node.repeat.structureSame) changes.push(node.repeat.structureSame ? '结构恢复一致' : '结构出现差异')
+      if (old.repeat.count !== node.repeat.count) changes.push(`count ${old.repeat.count}→${node.repeat.count}`)
+      if (old.repeat.gap !== node.repeat.gap) changes.push(`gap ${String(old.repeat.gap)}→${String(node.repeat.gap)}`)
+      if (old.repeat.structureSame !== node.repeat.structureSame) changes.push(node.repeat.structureSame ? 'structure became consistent again' : 'structure now differs')
       if (changes.length > 0) {
-        push({ kind: 'repeat', moduleId: id, label: entry.path, severity: 'info', detail: `重复组: ${changes.join(' · ')}` })
+        push({ kind: 'repeat', moduleId: id, label: entry.path, severity: 'info', detail: `repeat group: ${changes.join(' · ')}` })
       }
     } else if ((old.repeat === null) !== (node.repeat === null)) {
       push({
         kind: 'repeat', moduleId: id, label: entry.path, severity: 'warn',
-        detail: node.repeat !== null ? `变为重复组(×${node.repeat.count})` : '不再是重复组(结构发散?)',
+        detail: node.repeat !== null ? `became a repeat group (×${node.repeat.count})` : 'no longer a repeat group (structure diverged?)',
       })
     }
 
     if ((old.moduleName === null) !== (node.moduleName === null)) {
       push({
         kind: 'marker', moduleId: id, label: entry.path, severity: 'info',
-        detail: node.moduleName !== null ? `新增标记 data-module="${node.moduleName}"` : 'data-module 标记被移除',
+        detail: node.moduleName !== null ? `gained marker data-module="${node.moduleName}"` : 'data-module marker removed',
       })
     }
   }
@@ -275,7 +275,7 @@ export function diffSnapshots(
     push({
       kind: 'removed', moduleId: id, label: entry.path,
       severity: node.kind === 'interactive' || node.kind === 'marker' ? 'error' : 'warn',
-      detail: `消失(原 ${boxText(node)} grid ${node.grid})`,
+      detail: `gone (was ${boxText(node)} grid ${node.grid})`,
     })
   }
 
@@ -285,24 +285,24 @@ export function diffSnapshots(
   for (const [name, now] of afterAssertions) {
     const was = beforeAssertions.get(name)
     if (was === undefined) {
-      push({ kind: 'assertion', moduleId: null, label: name, severity: 'info', detail: `新检查项: ${now.pass ? '通过' : '未通过'} (实际: ${now.actual})` })
+      push({ kind: 'assertion', moduleId: null, label: name, severity: 'info', detail: `new assertion: ${now.pass ? 'passing' : 'failing'} (actual: ${now.actual})` })
     } else if (was.pass !== now.pass) {
       push({
         kind: 'assertion', moduleId: null, label: name,
         severity: now.pass ? 'info' : 'error',
-        detail: now.pass ? `检查转为通过 (实际: ${now.actual})` : `检查转为失败 (实际: ${now.actual}${now.expected !== null ? `, 期望: ${now.expected}` : ''})`,
+        detail: now.pass ? `assertion flipped to pass (actual: ${now.actual})` : `assertion flipped to fail (actual: ${now.actual}${now.expected !== null ? `, expected: ${now.expected}` : ''})`,
       })
     }
   }
   for (const name of beforeAssertions.keys()) {
     if (!afterAssertions.has(name)) {
-      push({ kind: 'assertion', moduleId: null, label: name, severity: 'warn', detail: '检查项消失(对应模块可能已不存在)' })
+      push({ kind: 'assertion', moduleId: null, label: name, severity: 'warn', detail: 'assertion disappeared (its module may no longer exist)' })
     }
   }
 
   for (const hint of current.markerHints) {
     if (!baseline.markerHints.includes(hint)) {
-      push({ kind: 'hint', moduleId: null, label: '标记提示', severity: 'info', detail: hint })
+      push({ kind: 'hint', moduleId: null, label: 'marker hint', severity: 'info', detail: hint })
     }
   }
 

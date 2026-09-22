@@ -73,12 +73,12 @@ export function parseSnapshotJson(text: string): LayoutSnapshot {
   const parsed = JSON.parse(text) as LayoutSnapshot
   if (parsed.version !== RENDER_SNAPSHOT_VERSION) {
     throw new Error(
-      `render snapshot 版本不匹配: 文件是 v${String(parsed.version)}, 当前 v${RENDER_SNAPSHOT_VERSION}`
-      + ' — 拒绝读取(不自动迁移), 请重新采集基准',
+      `render snapshot version mismatch: file is v${String(parsed.version)}, current v${RENDER_SNAPSHOT_VERSION}`
+      + ' — refused (no auto-migration); recapture the baseline',
     )
   }
   if (!Array.isArray(parsed.modules)) {
-    throw new Error('render snapshot 格式错误: 缺少 modules')
+    throw new Error('render snapshot malformed: modules missing')
   }
   return parsed
 }
@@ -103,29 +103,29 @@ function moduleLine(node: ModuleNode): string {
   }
 
   const flags: string[] = []
-  if (!node.visibility.displayed) flags.push('未显示')
-  if (!node.visibility.inViewport) flags.push('视口外')
-  if (node.visibility.occluded) flags.push(`被遮挡${node.visibility.occludedBy !== null ? `(${node.visibility.occludedBy})` : ''}`)
-  if (node.visibility.clipped) flags.push('溢出裁剪')
+  if (!node.visibility.displayed) flags.push('not displayed')
+  if (!node.visibility.inViewport) flags.push('outside viewport')
+  if (node.visibility.occluded) flags.push(`occluded${node.visibility.occludedBy !== null ? ` (by ${node.visibility.occludedBy})` : ''}`)
+  if (node.visibility.clipped) flags.push('overflow-clipped')
   if (node.interactive !== null) {
     const state = node.interactive
-    flags.push(state.disabled ? '禁用' : '可交互')
-    if (state.tabbable) flags.push(state.tabIndex !== null ? `Tab序${state.tabIndex}` : '可Tab')
-    if (state.focused) flags.push('当前聚焦')
+    flags.push(state.disabled ? 'disabled' : 'interactive')
+    if (state.tabbable) flags.push(state.tabIndex !== null ? `tab index ${state.tabIndex}` : 'tabbable')
+    if (state.focused) flags.push('focused')
   }
-  if (node.style.contrastRatio !== null) flags.push(`对比度${node.style.contrastRatio.toFixed(1)}`)
+  if (node.style.contrastRatio !== null) flags.push(`contrast ${node.style.contrastRatio.toFixed(1)}`)
   if (node.repeat !== null) {
     const repeat = node.repeat
-    flags.push(`×${repeat.count}${repeat.structureSame ? '结构一致' : '结构有异'}${repeat.gap !== null ? `间距${repeat.gap}` : ''}`)
+    flags.push(`×${repeat.count}${repeat.structureSame ? ' same-structure' : ' structure-differs'}${repeat.gap !== null ? ` gap ${repeat.gap}` : ''}`)
   }
   for (const violation of node.violations) flags.push(`⚠ ${violation}`)
   if (flags.length > 0) segments.push(flags.join(' · '))
 
   if (node.text !== null) {
     const more = node.textLength !== null && node.textLength > node.text.length
-      ? `…(共${node.textLength}字)`
+      ? `…(${node.textLength} chars total)`
       : ''
-    segments.push(`文本 ${JSON.stringify(node.text)}${more}`)
+    segments.push(`text ${JSON.stringify(node.text)}${more}`)
   }
   return segments.join('  ')
 }
@@ -145,8 +145,8 @@ function renderTree(nodes: readonly ModuleNode[], prefix: string, out: string[])
 
 /** One assertion as a single ✓/✗ line. */
 function assertionLine(assertion: AssertionResult): string {
-  const expected = assertion.expected !== null ? `  期望: ${assertion.expected}` : ''
-  return `  ${assertion.pass ? '✓' : '✗'} [${assertion.severity}] ${assertion.name}  实际: ${assertion.actual}${expected}`
+  const expected = assertion.expected !== null ? `  expected: ${assertion.expected}` : ''
+  return `  ${assertion.pass ? '✓' : '✗'} [${assertion.severity}] ${assertion.name}  actual: ${assertion.actual}${expected}`
 }
 
 /**
@@ -157,23 +157,23 @@ function assertionLine(assertion: AssertionResult): string {
  */
 export function serializeSnapshotText(snapshot: LayoutSnapshot): string {
   const lines: string[] = []
-  const scroll = snapshot.page.needsScroll ? ' (需滚动)' : ''
+  const scroll = snapshot.page.needsScroll ? ' (needs scroll)' : ''
   lines.push(
-    `页面 ${snapshot.target}  视口 ${snapshot.viewport.width}×${snapshot.viewport.height}`
-    + ` dpr ${snapshot.dpr}  页面总高 ${snapshot.page.height}${scroll}`,
+    `page ${snapshot.target}  viewport ${snapshot.viewport.width}×${snapshot.viewport.height}`
+    + ` dpr ${snapshot.dpr}  full page height ${snapshot.page.height}${scroll}`,
   )
   lines.push('')
   renderTree(snapshot.modules, '', lines)
   lines.push('')
-  lines.push('检查:')
+  lines.push('checks:')
   if (snapshot.assertions.length === 0) {
-    lines.push('  (未运行断言)')
+    lines.push('  (no assertions ran)')
   } else {
     for (const assertion of snapshot.assertions) lines.push(assertionLine(assertion))
   }
   if (snapshot.markerHints.length > 0) {
     lines.push('')
-    lines.push('标记提示:')
+    lines.push('marker hints:')
     for (const hint of snapshot.markerHints) lines.push(`  - ${hint}`)
   }
   return `${lines.join('\n')}\n`

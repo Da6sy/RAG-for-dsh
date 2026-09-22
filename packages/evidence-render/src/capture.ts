@@ -64,13 +64,13 @@ export async function captureScreenshot(options: CaptureOptions): Promise<Captur
   const projectRoot = await realpath(options.projectRoot)
   const pageRel = options.page.replace(/\\/g, '/').replace(/^\/+/, '')
   const pageAbs = path.resolve(projectRoot, pageRel)
-  if (!pageAbs.startsWith(projectRoot)) throw new Error(`页面路径逃出项目根: ${options.page}`)
+  if (!pageAbs.startsWith(projectRoot)) throw new Error(`page path escapes the project root: ${options.page}`)
   const info = await stat(pageAbs).catch(() => null)
-  if (info === null || !info.isFile()) throw new Error(`页面不存在: ${pageAbs}`)
+  if (info === null || !info.isFile()) throw new Error(`page does not exist: ${pageAbs}`)
 
   const probe = await probeBrowser()
   if (!probe.ok) {
-    throw new Error(`无法启动 Chromium(${probe.error ?? '原因未知'});截图升级需要真实浏览器`)
+    throw new Error(`cannot launch Chromium (${probe.error ?? 'unknown reason'}); the screenshot escalation needs a real browser`)
   }
 
   const normalizeConfig: NormalizeConfig = {
@@ -88,7 +88,7 @@ export async function captureScreenshot(options: CaptureOptions): Promise<Captur
       if (options.moduleId !== undefined) {
         const locator = page.locator(`[data-module="${options.moduleId}"]`).first()
         if (await locator.count() === 0) {
-          throw new Error(`页面 ${pageRel} 没有 data-module="${options.moduleId}" 的模块`)
+          throw new Error(`page ${pageRel} has no module with data-module="${options.moduleId}"`)
         }
         png = await locator.screenshot({ type: 'png' })
       } else {

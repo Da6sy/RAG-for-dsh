@@ -39,10 +39,10 @@ test('the flagship pitfall: a button out of the tab order fails its assertion', 
       interactive: interactive({ tabbable: false, tabIndex: -1 }),
     }),
   ]))
-  const tabCheck = results.find((r) => r.name.includes('可被 Tab 选中'))
+  const tabCheck = results.find((r) => r.name.includes('can be reached via Tab'))
   assert.ok(tabCheck)
   assert.equal(tabCheck.pass, false)
-  assert.equal(tabCheck.actual, '不在 Tab 顺序中')
+  assert.equal(tabCheck.actual, 'not in tab order')
 })
 
 test('occluded interactive module fails "未被遮挡"', () => {
@@ -53,10 +53,10 @@ test('occluded interactive module fails "未被遮挡"', () => {
       visibility: { displayed: true, inViewport: true, occluded: true, occludedBy: '弹层', clipped: false },
     }),
   ]))
-  const occlusion = results.find((r) => r.name.includes('未被遮挡'))
+  const occlusion = results.find((r) => r.name.includes('is not occluded'))
   assert.ok(occlusion)
   assert.equal(occlusion.pass, false)
-  assert.match(occlusion.actual, /遮挡者: 弹层/)
+  assert.match(occlusion.actual, /occluded \(by 弹层\)/)
 })
 
 test('low contrast fails with measured value; severity escalates below 3', () => {
@@ -64,16 +64,16 @@ test('low contrast fails with measured value; severity escalates below 3', () =>
     mod({ id: 'main', label: '主区域', kind: 'landmark' }),
     mod({ id: 't', label: '灰字', text: '灰字', textLength: 2, style: { position: 'static', zIndex: null, contrastRatio: 3.9 } }),
   ]))
-  const warn = warnLevel.find((r) => r.name.includes('对比度'))
+  const warn = warnLevel.find((r) => r.name.includes('text contrast'))
   assert.ok(warn && !warn.pass)
   assert.equal(warn.severity, 'warn')
-  assert.equal(warn.actual, '实测 3.9')
+  assert.equal(warn.actual, 'measured 3.9')
 
   const errorLevel = runBuiltinAssertions(snapshot([
     mod({ id: 'main', label: '主区域', kind: 'landmark' }),
     mod({ id: 't2', label: '浅字', text: '浅字', textLength: 2, style: { position: 'static', zIndex: null, contrastRatio: 2.1 } }),
   ]))
-  assert.equal(errorLevel.find((r) => r.name.includes('对比度'))?.severity, 'error')
+  assert.equal(errorLevel.find((r) => r.name.includes('text contrast'))?.severity, 'error')
 })
 
 test('unrendered marker module fails; clipped marker warns', () => {
@@ -84,22 +84,22 @@ test('unrendered marker module fails; clipped marker warns', () => {
       visibility: { displayed: false, inViewport: false, occluded: false, occludedBy: null, clipped: true },
     }),
   ]))
-  assert.equal(results.find((r) => r.name === '标记模块 search-bar 已渲染')?.pass, false)
-  assert.equal(results.find((r) => r.name === '标记模块 search-bar 无溢出裁剪')?.pass, false)
+  assert.equal(results.find((r) => r.name === 'marked module search-bar renders')?.pass, false)
+  assert.equal(results.find((r) => r.name === 'marked module search-bar has no overflow clipping')?.pass, false)
 })
 
 test('exactly one main landmark: zero or two both warn', () => {
   const zero = runBuiltinAssertions(snapshot([mod({ id: 'h', label: '顶部栏', kind: 'landmark' })]))
-  assert.equal(zero.find((r) => r.name.includes('main 地标'))?.pass, false)
+  assert.equal(zero.find((r) => r.name.includes('main landmark'))?.pass, false)
 
   const two = runBuiltinAssertions(snapshot([
     mod({ id: 'm1', label: '主区域', kind: 'landmark' }),
     mod({ id: 'm2', label: '主区域', kind: 'landmark' }),
   ]))
-  assert.equal(two.find((r) => r.name.includes('main 地标'))?.pass, false)
+  assert.equal(two.find((r) => r.name.includes('main landmark'))?.pass, false)
 
   const one = runBuiltinAssertions(snapshot([mod({ id: 'm1', label: '主区域', kind: 'landmark' })]))
-  assert.equal(one.find((r) => r.name.includes('main 地标'))?.pass, true)
+  assert.equal(one.find((r) => r.name.includes('main landmark'))?.pass, true)
 })
 
 test('repeat expansions are walked too', () => {

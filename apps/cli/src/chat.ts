@@ -86,7 +86,7 @@ export async function runChat(ctx: Context): Promise<void> {
       await waitForIdle(ctx, agent)
       process.stdout.write('\n')
       if (!streamedText) {
-        console.log('[本轮没有文本输出:多半是凭据缺失或请求失败,详见上方错误/会话日志]')
+        console.log('[no text output this turn: most likely missing credentials or a failed request — see the errors above or the session log]')
       }
     }
   } finally {

@@ -409,7 +409,7 @@ export async function writeEmbeddingConfig(
   expectedRevision?: number,
 ): Promise<ConfigWriteResult> {
   const settings = ctx.get('settings')
-  if (settings === undefined) throw new Error('写入嵌入配置失败: 该上下文没有 settings 服务(宿主未挂载设置文档)')
+  if (settings === undefined) throw new Error('embedding config: cannot write, this context has no settings service (the host never mounted the settings document)')
   const { retrievalPatch, embeddingPatch } = splitRetrievalPatch(patch)
   const merged = { ...readEmbeddingConfig(ctx), ...embeddingPatch } as EmbeddingConfig
   const errors = validateEmbeddingPatch(embeddingPatch, merged)
@@ -464,9 +464,9 @@ export async function recordMeasuredDim(
   ctx: Context,
   dim: number,
 ): Promise<{ previousDim: number; dim: number; rebuildImplied: boolean }> {
-  if (!Number.isInteger(dim) || dim <= 0) throw new Error(`recordMeasuredDim: 维度必须是正整数,收到 ${dim}`)
+  if (!Number.isInteger(dim) || dim <= 0) throw new Error(`recordMeasuredDim: dimension must be a positive integer, got ${dim}`)
   const settings = ctx.get('settings')
-  if (settings === undefined) throw new Error('记录维度失败: 该上下文没有 settings 服务')
+  if (settings === undefined) throw new Error('embedding config: cannot record the measured dimension, this context has no settings service')
   const previousDim = readEmbeddingConfig(ctx).dim
   if (previousDim !== dim) await settings.update(EMBEDDING_NAMESPACE, { dim })
   return { previousDim, dim, rebuildImplied: previousDim !== 0 && previousDim !== dim }
@@ -502,13 +502,32 @@ export interface KeyStatus {
  * @param config - the resolved provider configuration.
  * @returns the status a page or a CLI line renders verbatim.
  */
-export async function embeddingKeyStatus(ctx: Context, config: EmbeddingConfig = readEmbeddingConfig(ctx)): Promise<KeyStatus> {
+export async function embeddingKeyStatus(
+  ctx: Context,
+  config: EmbeddingConfig = readEmbeddingConfig(ctx),
+  lang: 'zh' | 'en' = 'zh',
+): Promise<KeyStatus> {
+  const en = lang === 'en'
   const credentials = ctx.get('credentials')
-  if (credentials === undefined) return { state: 'unreachable', detail: '本上下文没有 credentials 服务', writable: false }
+  if (credentials === undefined) {
+    return {
+      state: 'unreachable',
+      detail: en ? 'this context has no credentials service' : '本上下文没有 credentials 服务',
+      writable: false,
+    }
+  }
   const ref = embeddingCredentialRef(config)
   if (ref !== null) {
     const info = await credentials.describe(ref)
-    if (info.configured) return { state: 'configured', detail: `引用 ${String(ref)}(来源 ${info.source ?? '未知'})`, writable: info.writable }
+    if (info.configured) {
+      return {
+        state: 'configured',
+        detail: en
+          ? `reference ${String(ref)} (source ${info.source ?? 'unknown'})`
+          : `引用 ${String(ref)}(来源 ${info.source ?? '未知'})`,
+        writable: info.writable,
+      }
+    }
     return { state: 'missing', detail: `引用 ${String(ref)} 未配置`, writable: info.writable }
   }
   // No reference named: the store road (dsh's CredentialKey space).
@@ -537,7 +556,7 @@ export async function resolveEmbeddingKey(ctx: Context, config: EmbeddingConfig)
   if (ref !== null) {
     const hit = await credentials.resolve(ref)
     const value = hit?.value ?? ''
-    if (value === '') throw new Error(`嵌入密钥解析失败: 引用 ${String(ref)} 当前没有值(请在设置页或 clue kb embed-config key 写入)`)
+    if (value === '') throw new Error(`embedding key: resolution failed, reference ${String(ref)} currently holds no value (write it on the settings page or via clue kb embed-config key)`)
     return value
   }
   const record = await credentials.readRecord(embeddingCredentialKey())
@@ -551,11 +570,11 @@ export async function resolveEmbeddingKey(ctx: Context, config: EmbeddingConfig)
     // reported instead of being sent with no credential at all.
     const ambient = Object.keys(record.env ?? {})
     if (ambient.length > 0) {
-      throw new Error(`嵌入密钥解析失败: 记录声明了环境凭据(${ambient.join(', ')}),但 OpenAI 兼容端点需要显式密钥;请改用 apiKeyEnv 引用`)
+      throw new Error(`embedding key: resolution failed, the record declares ambient credentials (${ambient.join(', ')}), but an OpenAI-compatible endpoint needs an explicit key; use an apiKeyEnv reference instead`)
     }
     return null
   }
-  throw new Error(`嵌入密钥解析失败: 记录 ${CREDENTIAL_SCOPE}/${EMBEDDING_CREDENTIAL_ID} 不是 api-key 记录`)
+  throw new Error(`embedding key: resolution failed, record ${CREDENTIAL_SCOPE}/${EMBEDDING_CREDENTIAL_ID} is not an api-key record`)
 }
 
 /**
@@ -574,10 +593,10 @@ export async function resolveEmbeddingKey(ctx: Context, config: EmbeddingConfig)
  */
 export async function storeEmbeddingKey(ctx: Context, value: string, config: EmbeddingConfig = readEmbeddingConfig(ctx)): Promise<string> {
   const credentials = ctx.get('credentials')
-  if (credentials === undefined) throw new Error('写入密钥失败: 本上下文没有 credentials 服务')
+  if (credentials === undefined) throw new Error('embedding key: cannot write, this context has no credentials service')
   const trimmed = value.trim()
-  if (trimmed === '') throw new Error('写入密钥失败: 值为空(留空不是"清除",清除请用 unsetEmbeddingKey)')
-  if (/[\r\n]/.test(trimmed)) throw new Error('写入密钥失败: 值含换行(像是整行粘贴的 NAME=value,请只粘贴值本身)')
+  if (trimmed === '') throw new Error('embedding key: cannot write, the value is empty (empty is not "clear"; use unsetEmbeddingKey to clear)')
+  if (/[\r\n]/.test(trimmed)) throw new Error('embedding key: cannot write, the value contains a newline (looks like a whole NAME=value line was pasted; paste only the value)')
   const ref = embeddingCredentialRef(config)
   if (ref !== null) {
     await credentials.set(ref, trimmed)
@@ -595,7 +614,7 @@ export async function storeEmbeddingKey(ctx: Context, value: string, config: Emb
  */
 export async function unsetEmbeddingKey(ctx: Context, config: EmbeddingConfig = readEmbeddingConfig(ctx)): Promise<string> {
   const credentials = ctx.get('credentials')
-  if (credentials === undefined) throw new Error('清除密钥失败: 本上下文没有 credentials 服务')
+  if (credentials === undefined) throw new Error('embedding key: cannot clear, this context has no credentials service')
   const ref = embeddingCredentialRef(config)
   if (ref !== null) {
     await credentials.unset(ref)
@@ -630,7 +649,11 @@ export interface EmbeddingConfigSummary {
  * @param currentVersion - the `embedderVersion` stamp in effect (for the report).
  * @returns the printable summary.
  */
-export async function embeddingConfigSummary(ctx: Context, currentVersion?: string): Promise<EmbeddingConfigSummary> {
+export async function embeddingConfigSummary(
+  ctx: Context,
+  currentVersion?: string,
+  lang: 'zh' | 'en' = 'zh',
+): Promise<EmbeddingConfigSummary> {
   const config = readEmbeddingConfig(ctx)
   return {
     enabled: config.enabled,
@@ -644,7 +667,7 @@ export async function embeddingConfigSummary(ctx: Context, currentVersion?: stri
     concurrency: config.concurrency,
     maxUnitsPerBuild: config.maxUnitsPerBuild,
     quant: config.quant,
-    key: await embeddingKeyStatus(ctx, config),
+    key: await embeddingKeyStatus(ctx, config, lang),
     embedderVersion: currentVersion ?? (config.model !== '' && config.dim > 0 ? embedderVersion({ modelId: config.model, dim: config.dim }) : ''),
   }
 }
@@ -661,11 +684,21 @@ export function embeddingReady(config: EmbeddingConfig): boolean {
   return config.enabled && config.baseUrl.trim() !== '' && config.model.trim() !== '' && config.dim > 0
 }
 
-/** Why an incomplete configuration cannot be used (shown next to the switch). */
-export function embeddingReadinessNote(config: EmbeddingConfig): string {
-  if (!config.enabled) return '未启用 — 检索只走词法通道'
-  if (config.baseUrl.trim() === '') return '缺 baseUrl'
-  if (config.model.trim() === '') return '缺 model'
-  if (config.dim <= 0) return '尚未「测试连接」实测维度'
-  return '已就绪'
+/**
+ * Why an incomplete configuration cannot be used (shown next to the switch).
+ *
+ * `lang` exists because this one string is read by the settings page (Chinese)
+ * and by the console (English, product decision): the surface that knows which
+ * one it is passes it, and the default keeps every existing caller identical.
+ * @param config - the resolved configuration.
+ * @param lang - `zh` (default) or `en`.
+ * @returns the one-line reason.
+ */
+export function embeddingReadinessNote(config: EmbeddingConfig, lang: 'zh' | 'en' = 'zh'): string {
+  const en = lang === 'en'
+  if (!config.enabled) return en ? 'not enabled — retrieval is lexical-only' : '未启用 — 检索只走词法通道'
+  if (config.baseUrl.trim() === '') return en ? 'baseUrl missing' : '缺 baseUrl'
+  if (config.model.trim() === '') return en ? 'model missing' : '缺 model'
+  if (config.dim <= 0) return en ? 'dim not measured yet (run "test connection")' : '尚未「测试连接」实测维度'
+  return en ? 'ready' : '已就绪'
 }

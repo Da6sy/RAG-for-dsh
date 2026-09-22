@@ -85,6 +85,8 @@ export interface RetrieverConfig {
   termFrequency?: TermFrequency
   /** F4①: subword expansion — forwarded to the first level (query + fields). */
   identifierSubtokens?: boolean
+  /** Which language the hit annotations use (the console asks for `en`). */
+  annotationLanguage?: 'zh' | 'en'
   /**
    * Score multiplier applied to text-matched bound hits (their promoted
    * score is what the annotation explains). Default 1.5. Set to 1 to keep
@@ -154,6 +156,7 @@ export function createFulltextRetriever(
         limit: bindingRecall ? limit * 3 : limit,
         ...(config.lexicalIndexes !== undefined ? { lexicalIndexes: config.lexicalIndexes } : {}),
         ...(config.termFrequency !== undefined ? { termFrequency: config.termFrequency } : {}),
+        ...(config.annotationLanguage !== undefined ? { annotationLanguage: config.annotationLanguage } : {}),
         ...(config.identifierSubtokens !== undefined ? { identifierSubtokens: config.identifierSubtokens } : {}),
         ...(options.includeExpired !== undefined ? { includeExpired: options.includeExpired } : {}),
         ...(options.includeGlobal !== undefined ? { includeGlobal: options.includeGlobal } : {}),

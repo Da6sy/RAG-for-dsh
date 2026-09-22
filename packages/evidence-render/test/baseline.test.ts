@@ -100,7 +100,7 @@ test('confirm flips the record and stamps confirmedAt', async (t) => {
 test('confirming a missing baseline teaches the next step', async (t) => {
   const { home, project } = await tmpHome()
   t.after(async () => { const { rm } = await import('node:fs/promises'); await rm(home, { recursive: true, force: true }); await rm(project, { recursive: true, force: true }) })
-  await assert.rejects(() => confirmBaseline(project, 'nope.html', home), /先运行 --record/)
+  await assert.rejects(() => confirmBaseline(project, 'nope.html', home), /run --record first/)
 })
 
 test('isStale detects changed AND newly-bound source files', async (t) => {
@@ -121,7 +121,7 @@ test('load refuses a foreign record version (no auto-migration)', async (t) => {
   const file = await baselinePath(project, 'search.html', home)
   await mkdir(path.dirname(file), { recursive: true })
   await writeFile(file, JSON.stringify({ version: 999 }), 'utf8')
-  await assert.rejects(() => loadBaseline(project, 'search.html', home), /版本不匹配/)
+  await assert.rejects(() => loadBaseline(project, 'search.html', home), /baseline record version mismatch/)
 })
 
 test('sourceHash is sha256 of bytes and stable', async () => {

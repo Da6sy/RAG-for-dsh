@@ -51,9 +51,9 @@ export async function saveWorkLog(file: string, log: WorkLog): Promise<void> {
  */
 export async function loadWorkLog(file: string): Promise<WorkLog> {
   const log = await readJsonOrNull<WorkLog>(file)
-  if (log === null) throw new Error(`工单不存在: ${file}`)
+  if (log === null) throw new Error(`worklog does not exist: ${file}`)
   if (typeof log.projectRoot !== 'string' || !Array.isArray(log.changedFiles) || !Array.isArray(log.referencedEntryIds)) {
-    throw new Error(`工单格式错误(需要 projectRoot/changedFiles/referencedEntryIds): ${file}`)
+    throw new Error(`worklog malformed (needs projectRoot/changedFiles/referencedEntryIds): ${file}`)
   }
   return log
 }

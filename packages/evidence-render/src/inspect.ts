@@ -71,9 +71,9 @@ export async function inspectPage(options: InspectOptions): Promise<InspectResul
   const projectRoot = await realpath(options.projectRoot)
   const pageRel = options.page.replace(/\\/g, '/').replace(/^\/+/, '')
   const pageAbs = path.resolve(projectRoot, pageRel)
-  if (!pageAbs.startsWith(projectRoot)) throw new Error(`页面路径逃出项目根: ${options.page}`)
+  if (!pageAbs.startsWith(projectRoot)) throw new Error(`page path escapes the project root: ${options.page}`)
   const info = await stat(pageAbs).catch(() => null)
-  if (info === null || !info.isFile()) throw new Error(`页面不存在: ${pageAbs}`)
+  if (info === null || !info.isFile()) throw new Error(`page does not exist: ${pageAbs}`)
 
   // confirm needs no capture at all — the fast path.
   if (options.mode === 'confirm') {
@@ -81,7 +81,7 @@ export async function inspectPage(options: InspectOptions): Promise<InspectResul
     const confirmedFile = await baselinePath(projectRoot, pageRel, options.home)
     return {
       snapshot: null, snapshotText: '', baseline: record, stale: false, diff: null,
-      report: `基准已人工确认: ${pageRel}\n  文件: ${confirmedFile}\n`,
+      report: `baseline human-confirmed: ${pageRel}\n  file: ${confirmedFile}\n`,
       baselinePath: confirmedFile, exitOk: true,
     }
   }
@@ -105,10 +105,10 @@ export async function inspectPage(options: InspectOptions): Promise<InspectResul
   const probe = await probeBrowser()
   if (!probe.ok) {
     throw new Error(
-      `无法启动 Chromium(${probe.error ?? '原因未知'})。\n`
-      + '  浏览器二进制: `npx playwright install chromium`\n'
-      + '  系统库(Arch 等 Playwright 不自动装库的发行版): 见 packages/evidence-render/src/browser.ts 的 pacman 清单\n'
-      + '  (WSL Ubuntu/Debian: `npx playwright install --with-deps chromium` 一步到位)',
+      `cannot launch Chromium (${probe.error ?? 'unknown reason'}).\n`
+      + '  browser binary: `npx playwright install chromium`\n'
+      + '  system libs (distros where Playwright does not install them automatically, e.g. Arch): see the pacman list in packages/evidence-render/src/browser.ts\n'
+      + '  (WSL Ubuntu/Debian: `npx playwright install --with-deps chromium` does it in one step)',
     )
   }
 
@@ -167,11 +167,11 @@ export async function inspectPage(options: InspectOptions): Promise<InspectResul
     const existing = await loadBaseline(projectRoot, pageRel, options.home)
     const saved = await saveBaseline(projectRoot, snapshot, hashes, options.home)
     const lines = [
-      `基准已保存(待人工确认): ${pageRel}`,
-      `  文件: ${saved.path}`,
+      `baseline saved (pending human confirmation): ${pageRel}`,
+      `  file: ${saved.path}`,
       existing !== null
-        ? `  注意: 覆盖了原有基准(confirmed=${String(existing.confirmed)}),需要重新 --confirm。`
-        : '  下一步: 人工核对上面的结构树与检查结果,认可后运行 --confirm 转正。',
+        ? `  note: this overwrote the previous baseline (confirmed=${String(existing.confirmed)}); run --confirm again.`
+        : '  next: review the structure tree and check results above, then run --confirm to accept them.',
     ]
     return {
       snapshot, snapshotText, baseline: saved.record, stale: false, diff: null,
@@ -185,7 +185,7 @@ export async function inspectPage(options: InspectOptions): Promise<InspectResul
   if (record === null) {
     return {
       snapshot, snapshotText, baseline: null, stale: false, diff: null,
-      report: `尚无基准,本次按单次记录输出(运行 --record 可把它存为基准):\n\n${snapshotText}\n${assertionsText}\n`,
+      report: `no baseline yet; this run is reported as a one-off capture (run --record to store it as the baseline):\n\n${snapshotText}\n${assertionsText}\n`,
       baselinePath: null, exitOk: !failedError,
     }
   }
@@ -196,7 +196,7 @@ export async function inspectPage(options: InspectOptions): Promise<InspectResul
   const diffErrors = diff.entries.some((e) => e.severity === 'error')
   return {
     snapshot, snapshotText, baseline: record, stale, diff,
-    report: `${diffText}\n${assertionsText}\n\n当前结构树:\n${snapshotText}`,
+    report: `${diffText}\n${assertionsText}\n\ncurrent structure tree:\n${snapshotText}`,
     baselinePath: await baselinePath(projectRoot, pageRel, options.home),
     exitOk: !diffErrors && !failedError,
   }

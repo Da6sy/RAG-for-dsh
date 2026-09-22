@@ -232,13 +232,13 @@ async function embedBatch(embedder: Embedder, units: readonly EmbedUnit[]): Prom
       calls += 1
       const vectors = await embedder.embed(texts)
       if (vectors.length !== units.length) {
-        throw new Error(`embedder 返回 ${vectors.length} 个向量,但请求了 ${units.length} 个文本(适配器必须按序一一对应)`)
+        throw new Error(`index pipeline: embedder returned ${vectors.length} vectors for ${units.length} requested texts (the adapter must map them one-to-one in order)`)
       }
       const out = new Map<string, Float32Array>()
       units.forEach((unit, index) => {
         const vector = vectors[index] as Float32Array
         if (vector.length !== embedder.dim) {
-          throw new Error(`embedder 返回维度 ${vector.length},与声明的 dim ${embedder.dim} 不符`)
+          throw new Error(`index pipeline: embedder returned dimension ${vector.length}, which disagrees with the declared dim ${embedder.dim}`)
         }
         out.set(unit.key, vector)
       })

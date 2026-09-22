@@ -51,6 +51,12 @@ export interface QueryOptions {
    * BOTH sides (query text and entry fields). Default off = today.
    */
   identifierSubtokens?: boolean
+  /**
+   * Which language the hit ANNOTATIONS are rendered in (see
+   * {@link annotationsFor}). Default `zh`: the model-facing blocks and the web
+   * panel read these lines too, so only a surface that wants English asks.
+   */
+  annotationLanguage?: 'zh' | 'en'
   /** Query text. */
   text: string
   kinds?: KbKind[]
@@ -289,24 +295,52 @@ export function applyGovernanceFactors(
  * M9-1 adds the document facts: an entry with a原文层 says so, plus how many
  * 段 are behind it, so EVERY surface (CLI, panel, tool output) tells the reader
  * the same thing without each counting for itself.
+ * `lang` exists because this ONE implementation feeds three surfaces with three
+ * copy rules: the model-facing blocks and the web panel are Chinese, the console
+ * is English. The default is `zh`, so every existing caller is byte-identical —
+ * a surface asks for English explicitly or it gets what it always got.
  * @param entry - the entry to annotate.
  * @param docFacts - the derived chunk count (absent = "haz un doc, count unknown").
+ * @param lang - `zh` (default) or `en`.
  * @returns the annotation lines (empty for a clean trusted project entry).
  */
-export function annotationsFor(entry: KbEntry, docFacts?: { chunkCount?: number }): string[] {
+export function annotationsFor(
+  entry: KbEntry,
+  docFacts?: { chunkCount?: number },
+  lang: 'zh' | 'en' = 'zh',
+): string[] {
   const notes: string[] = []
-  if (entry.status === 'expired') notes.push('已过期、未复核 — 可读不可直接作为写操作依据(引用需审批)')
-  if (entry.status === 'candidate') notes.push('候选知识(尚未人工批准为可信)')
-  if (entry.status === 'superseded') notes.push('已被拆分替代(历史条目,仅供溯源)')
-  if (entry.needsReview) notes.push(`待复核: ${entry.reviewReason ?? '原因未记录'}`)
-  if (entry.tier === 'global') notes.push('来自全局库(项目库同题知识优先)')
+  const en = lang === 'en'
+  if (entry.status === 'expired') {
+    notes.push(en
+      ? 'expired and unreviewed — readable, but not a basis for a write (citing needs approval)'
+      : '已过期、未复核 — 可读不可直接作为写操作依据(引用需审批)')
+  }
+  if (entry.status === 'candidate') {
+    notes.push(en ? 'candidate knowledge (not yet approved as trusted)' : '候选知识(尚未人工批准为可信)')
+  }
+  if (entry.status === 'superseded') {
+    notes.push(en ? 'superseded by a split (historical entry, for provenance only)' : '已被拆分替代(历史条目,仅供溯源)')
+  }
+  if (entry.needsReview) {
+    notes.push(en
+      ? `needs review: ${entry.reviewReason ?? 'reason not recorded'}`
+      : `待复核: ${entry.reviewReason ?? '原因未记录'}`)
+  }
+  if (entry.tier === 'global') {
+    notes.push(en ? 'from the global tier (project-tier knowledge on the same topic wins)' : '来自全局库(项目库同题知识优先)')
+  }
   if (entry.doc !== undefined) {
     const count = docFacts?.chunkCount ?? 0
-    notes.push(count > 0 ? `含原文 ${count} 段,细节用 kb_detail 下钻` : '含原文快照,细节用 kb_detail 下钻')
+    if (en) notes.push(count > 0 ? `has a document layer (${count} chunks); drill down with kb_detail` : 'has a document snapshot; drill down with kb_detail')
+    else notes.push(count > 0 ? `含原文 ${count} 段,细节用 kb_detail 下钻` : '含原文快照,细节用 kb_detail 下钻')
   }
   const redlines = entry.redlines ?? []
   if (redlines.length > 0) {
-    notes.push(`含 ${redlines.length} 处人工划除段(已从显示与评分中移除${redlines.every((l) => l.target === 'text') ? '' : ',原文层细节见 kb_detail'})`)
+    const tail = redlines.every((l) => l.target === 'text') ? '' : (en ? '; document-layer detail via kb_detail' : ',原文层细节见 kb_detail')
+    notes.push(en
+      ? `contains ${redlines.length} manually redlined range(s), removed from display AND scoring${tail}`
+      : `含 ${redlines.length} 处人工划除段(已从显示与评分中移除${tail})`)
   }
   return notes
 }
@@ -332,7 +366,7 @@ export async function enrichHit(
   store: KbStore | null,
   entry: KbEntry,
   hit: QueryHit,
-  options: { at: string; noTouch?: boolean },
+  options: { at: string; noTouch?: boolean; annotationLanguage?: 'zh' | 'en' },
 ): Promise<QueryHit> {
   let current = entry
   if (store !== null && current.bindings.length > 0) {
@@ -344,7 +378,7 @@ export async function enrichHit(
   if (!options.noTouch && store !== null) {
     current = await store.touch(current.id, options.at)
   }
-  return withDocFacts(store, current, hit)
+  return withDocFacts(store, current, hit, options.annotationLanguage ?? 'zh')
 }
 
 /**
@@ -430,7 +464,12 @@ export async function queryKb(
         ? (other === null ? null : await other.get(row.id as KbEntryId))
         : (await preferred.get(row.id as KbEntryId)) ?? (other === null ? null : await other.get(row.id as KbEntryId))
       if (entry === null) continue
-      indexed.push({ entry, score: row.score, matched: row.matched, annotations: annotationsFor(entry) })
+      indexed.push({
+        entry,
+        score: row.score,
+        matched: row.matched,
+        annotations: annotationsFor(entry, undefined, options.annotationLanguage ?? 'zh'),
+      })
     }
     return finishQuery(indexed, { project, global, options, at, limit })
   }
@@ -465,7 +504,7 @@ export async function queryKb(
       ...(stats !== undefined ? { stats } : {}),
     })
     if (score === 0 || matched.length === 0) continue
-    hits.push({ entry, score, matched, annotations: annotationsFor(entry) })
+    hits.push({ entry, score, matched, annotations: annotationsFor(entry, undefined, options.annotationLanguage ?? 'zh') })
   }
 
   return finishQuery(hits, { project, global, options, at, limit })
@@ -502,7 +541,11 @@ async function finishQuery(
   const freshened: QueryHit[] = []
   for (const hit of hits) {
     const store = hit.entry.tier === 'global' ? global : project
-    freshened.push(await enrichHit(store, hit.entry, hit, { at, ...(options.noTouch !== undefined ? { noTouch: options.noTouch } : {}) }))
+    freshened.push(await enrichHit(store, hit.entry, hit, {
+      at,
+      ...(options.noTouch !== undefined ? { noTouch: options.noTouch } : {}),
+      annotationLanguage: options.annotationLanguage ?? 'zh',
+    }))
   }
 
   freshened.sort((a, b) =>
@@ -519,15 +562,23 @@ async function finishQuery(
  * @param store - the tier that owns the entry (null for synthetic hits).
  * @param entry - the (freshness-checked) entry.
  * @param hit - the scored hit it came from.
+ * @param lang - which language the annotation copy uses (the console asks for `en`).
  * @returns the hit with its document facts and re-derived annotations.
  */
-async function withDocFacts(store: KbStore | null, entry: KbEntry, hit: QueryHit): Promise<QueryHit> {
-  if (store === null || entry.doc === undefined) return { ...hit, entry, annotations: annotationsFor(entry) }
+async function withDocFacts(
+  store: KbStore | null,
+  entry: KbEntry,
+  hit: QueryHit,
+  lang: 'zh' | 'en' = 'zh',
+): Promise<QueryHit> {
+  if (store === null || entry.doc === undefined) {
+    return { ...hit, entry, annotations: annotationsFor(entry, undefined, lang) }
+  }
   const chunks = await readChunks(store.dir, entry.doc.docId)
   return {
     ...hit,
     entry,
-    annotations: annotationsFor(entry, { chunkCount: chunks.length }),
+    annotations: annotationsFor(entry, { chunkCount: chunks.length }, lang),
     docHeadingCount: chunks.length,
   }
 }

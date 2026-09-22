@@ -125,13 +125,13 @@ export function parseRerankAnswer(raw: string, baseline: readonly string[]): str
     } else if (arrayStart !== -1) {
       parsed = JSON.parse(text.slice(arrayStart, text.lastIndexOf(']') + 1))
     } else {
-      throw new Error('没有 JSON')
+      throw new Error('llm rerank: no JSON found in model output')
     }
   } catch {
-    throw new Error(`模型没有返回可解析的重排结果: ${text.slice(0, 120)}`)
+    throw new Error(`llm rerank: model returned no parsable rerank result: ${text.slice(0, 120)}`)
   }
   const list = Array.isArray(parsed) ? parsed : (parsed as { order?: unknown; ranking?: unknown }).order ?? (parsed as { ranking?: unknown }).ranking
-  if (!Array.isArray(list)) throw new Error('模型返回里没有 order 数组')
+  if (!Array.isArray(list)) throw new Error('llm rerank: model output has no order array')
   const known = new Set(baseline)
   const seen = new Set<string>()
   const order: string[] = []

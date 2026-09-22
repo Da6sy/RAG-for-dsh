@@ -79,7 +79,7 @@ const has = (args: EmbedArgs, name: string): boolean => args.flags.has(name)
 
 /** The three states the plan names for a key (原规划 §9.4-3). */
 function keyStateLabel(state: KeyStatus['state']): string {
-  return state === 'configured' ? '已配置' : state === 'missing' ? '未配置' : state === 'unresolved' ? '解析失败' : '不可用'
+  return state === 'configured' ? 'configured' : state === 'missing' ? 'missing' : state === 'unresolved' ? 'unresolved' : 'unavailable'
 }
 
 /** The live HTTP embedder for the current configuration (null when not ready). */
@@ -137,23 +137,25 @@ export async function embedTargets(store: KbStore, only: string): Promise<Vector
  * @returns the exit code.
  */
 export async function embedConfigShow(host: EmbeddingHost, args: EmbedArgs): Promise<number> {
-  const summary = await embeddingConfigSummary(host.ctx)
+  // The console is English; the same helpers feed the settings page (Chinese),
+  // so the surface asks for the language it needs.
+  const summary = await embeddingConfigSummary(host.ctx, undefined, 'en')
   if (has(args, 'json')) {
     console.log(JSON.stringify(summary, null, 2))
     return 0
   }
-  console.log(`设置文档: ${host.documentPath ?? '(无)'}`)
-  console.log(`启用: ${summary.enabled ? '是(向量层参与检索)' : '否(纯词法 + 明确标注"向量层未启用")'}`)
-  console.log(`Base URL: ${summary.baseUrl || '(空)'}`)
-  console.log(`Model:    ${summary.model || '(空)'}`)
-  console.log(`维度 dim: ${summary.dim > 0 ? summary.dim : '(未实测 — 用 clue kb embed-config test 实测)'}`)
+  console.log(`settings doc:  ${host.documentPath ?? '(none)'}`)
+  console.log(`enabled:       ${summary.enabled ? 'yes (the vector layer joins retrieval)' : 'no (lexical only, results explicitly annotated "vector layer not enabled")'}`)
+  console.log(`base URL:      ${summary.baseUrl || '(empty)'}`)
+  console.log(`model:         ${summary.model || '(empty)'}`)
+  console.log(`dim:           ${summary.dim > 0 ? summary.dim : '(not measured — run clue kb embed-config test to measure it)'}`)
   // The reference NAME is printed; the value is not reachable from here at all
   // (原规划 §9.4-3): this function never calls the resolver.
-  console.log(`密钥引用 apiKeyEnv: ${summary.apiKeyEnv || '(空 — 走密钥库记录,或该端点无需鉴权)'}`)
-  console.log(`密钥状态: ${keyStateLabel(summary.key.state)} — ${summary.key.detail}${summary.key.writable ? '' : '(只读,被环境变量遮蔽)'}`)
-  console.log(`超时 ${summary.timeoutMs}ms · 批量 ${summary.batchSize} · 并发 ${summary.concurrency} · 单次预算 ${summary.maxUnitsPerBuild} · 量化 ${summary.quant}`)
-  if (Object.keys(summary.headers).length > 0) console.log(`额外 headers: ${Object.keys(summary.headers).join(', ')}(值不回显)`)
-  console.log(`embedderVersion: ${summary.embedderVersion || '(未就绪)'}`)
+  console.log(`apiKeyEnv ref: ${summary.apiKeyEnv || '(empty — the key-store record is used, or the endpoint needs no auth)'}`)
+  console.log(`key status:    ${keyStateLabel(summary.key.state)} — ${summary.key.detail}${summary.key.writable ? '' : ' (read-only, shadowed by an environment variable)'}`)
+  console.log(`timeout ${summary.timeoutMs}ms · batch ${summary.batchSize} · concurrency ${summary.concurrency} · per-build budget ${summary.maxUnitsPerBuild} · quantization ${summary.quant}`)
+  if (Object.keys(summary.headers).length > 0) console.log(`extra headers: ${Object.keys(summary.headers).join(', ')} (values not echoed)`)
+  console.log(`embedderVersion: ${summary.embedderVersion || '(not ready)'}`)
   return 0
 }
 
@@ -179,24 +181,24 @@ export async function embedConfigSet(host: EmbeddingHost, args: EmbedArgs): Prom
     const parsed: Record<string, string> = {}
     for (const entry of headers) {
       const at = entry.indexOf('=')
-      if (at <= 0) throw new Error(`--header 需要 k=v 形式,收到 "${entry}"`)
+      if (at <= 0) throw new Error(`embed-config: --header requires k=v form, got "${entry}"`)
       parsed[entry.slice(0, at).trim()] = entry.slice(at + 1).trim()
     }
     patch.headers = { ...readEmbeddingConfig(host.ctx).headers, ...parsed }
   }
   if (Object.keys(patch).length === 0) {
-    throw new Error('embed-config set 需要至少一个字段(--base-url/--model/--api-key-env/--enable/--disable/--timeout-ms/--batch-size/--concurrency/--max-units/--header)')
+    throw new Error('embed-config: set requires at least one field (--base-url/--model/--api-key-env/--enable/--disable/--timeout-ms/--batch-size/--concurrency/--max-units/--header)')
   }
   const result = await writeEmbeddingConfig(host.ctx, patch)
   if (!result.ok) {
     for (const error of result.errors) console.error(`✗ ${error.field}: ${error.message}`)
     return 2
   }
-  console.log(`已写入 ${host.documentPath ?? '设置文档'}`)
+  console.log(`wrote ${host.documentPath ?? 'the settings document'}`)
   for (const [key, value] of Object.entries(patch)) {
-    console.log(`  ${key} = ${key === 'headers' ? '(已更新,值不回显)' : String(value)}`)
+    console.log(`  ${key} = ${key === 'headers' ? '(updated, values not echoed)' : String(value)}`)
   }
-  console.log('提示: 维度由 clue kb embed-config test 实测写入;改 model/dim 会作废重建向量层,只改 url/key 不会。')
+  console.log('note: dim is measured and written by clue kb embed-config test; changing model/dim invalidates and rebuilds the vector layer, changing only url/key does not')
   return 0
 }
 
@@ -208,15 +210,15 @@ export async function embedConfigSet(host: EmbeddingHost, args: EmbedArgs): Prom
  */
 export async function embedConfigKey(host: EmbeddingHost, args: EmbedArgs): Promise<number> {
   if (!has(args, 'stdin')) {
-    throw new Error('embed-config key 只从标准输入读取(避免密钥进 shell 历史与进程表):printf %s "$KEY" | clue kb embed-config key --stdin')
+    throw new Error('embed-config: key reads from standard input only (keeps the key out of shell history and the process table): printf %s "$KEY" | clue kb embed-config key --stdin')
   }
   const chunks: Buffer[] = []
   for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk as Uint8Array))
   const value = Buffer.concat(chunks).toString('utf8').trim()
-  if (value === '') throw new Error('embed-config key: 标准输入为空')
+  if (value === '') throw new Error('embed-config key: standard input is empty')
   const where = await storeEmbeddingKey(host.ctx, value)
   // Report the TARGET and the length (a safe sanity signal), never the value.
-  console.log(`已写入密钥: ${where}(${value.length} 字符,不回显)`)
+  console.log(`key stored: ${where} (${value.length} chars, not echoed)`)
   return 0
 }
 
@@ -227,8 +229,8 @@ export async function embedConfigKey(host: EmbeddingHost, args: EmbedArgs): Prom
  */
 export async function embedConfigUnsetKey(host: EmbeddingHost): Promise<number> {
   const where = await unsetEmbeddingKey(host.ctx)
-  console.log(`已清除密钥: ${where}`)
-  console.log('提示: 向量层保留,只是后续嵌入会解析失败而退回纯词法(并如实标注);要用回请重新写入密钥。')
+  console.log(`key removed: ${where}`)
+  console.log('note: the vector layer stays; later embedding calls will fail key resolution and fall back to lexical-only retrieval (honestly annotated) — store a key again to re-enable it')
   return 0
 }
 
@@ -246,9 +248,9 @@ export async function embedConfigAuto(host: EmbeddingHost, context: EmbedContext
   const { autoDetectEmbedder } = await import('@clue-harness/kb-face/embedding-catalog')
   const result = await autoDetectEmbedder(host.ctx, { dryRun: has(context.args, 'dry-run') })
   for (const probe of result.probes) {
-    if (probe.skipped !== undefined) console.log(`· 跳过 ${probe.route}/${probe.model}: ${probe.skipped}`)
-    else if (probe.ok) console.log(`✓ ${probe.route}/${probe.model} 可用(dim=${probe.dim},${probe.ms}ms)`)
-    else console.log(`✗ ${probe.route}/${probe.model}: ${probe.error ?? '失败'}`)
+    if (probe.skipped !== undefined) console.log(`· skipped ${probe.route}/${probe.model}: ${probe.skipped}`)
+    else if (probe.ok) console.log(`✓ ${probe.route}/${probe.model} usable (dim=${probe.dim}, ${probe.ms}ms)`)
+    else console.log(`✗ ${probe.route}/${probe.model}: ${probe.error ?? 'failed'}`)
   }
   console.log(result.summary)
   return result.applied === null ? 2 : 0
@@ -287,22 +289,22 @@ export async function embedConfigTest(host: EmbeddingHost, context: EmbedContext
   if (!result.ok) {
     console.error(`✗ ${result.status}: ${result.message}`)
     if (result.status === 'unauthorized') {
-      console.error('  提示:写密钥 printf %s "$KEY" | clue kb embed-config key --stdin,或用 --api-key-env 指向环境变量名。')
+      console.error('  note: store a key with printf %s "$KEY" | clue kb embed-config key --stdin, or point --api-key-env at an environment variable name')
     }
     return 2
   }
   console.log(`✓ ${result.message}`)
   if (result.rebuildNotice !== undefined) console.log(`⚠ ${result.rebuildNotice}`)
   if (has(context.args, 'no-record')) {
-    console.log(`实测维度 ${result.dim};已跳过写入(--no-record)。写入请去掉该开关,或在设置页保存。`)
+    console.log(`measured dim ${result.dim}; write skipped (--no-record) — drop the flag to record it, or save on the settings page`)
     return 0
   }
   if (result.dim === undefined || (result.dim === current.dim && current.dim > 0)) {
-    console.log(`维度未变(dim=${current.dim}),无需写入。`)
+    console.log(`dim unchanged (dim=${current.dim}), nothing to write`)
     return 0
   }
   const recorded = await recordMeasuredDim(host.ctx, result.dim)
-  console.log(`已写入实测维度 dim=${recorded.dim}${recorded.rebuildImplied ? `(此前 ${recorded.previousDim},向量层将作废重建:下一步跑 clue kb embed --rebuild)` : ''}`)
+  console.log(`wrote measured dim=${recorded.dim}${recorded.rebuildImplied ? ` (was ${recorded.previousDim}; the vector layer is invalidated and will be rebuilt — next step: clue kb embed --rebuild)` : ''}`)
   return 0
 }
 
@@ -320,18 +322,18 @@ export async function embedRun(host: EmbeddingHost, context: EmbedContext): Prom
   const embedder = embedderFrom(host)
   const config = readEmbeddingConfig(host.ctx)
   if (embedder === null) {
-    console.error('嵌入未配置或未就绪 ⇒ 不建立向量层;检索仍走纯词法(不会被伪装成语义命中)。')
-    console.error(`  现状: ${embeddingReadinessNote(config)} · baseUrl ${config.baseUrl || '(空)'} · model ${config.model || '(空)'} · dim ${config.dim || '(未实测)'}`)
-    console.error('  步骤: clue kb embed-config set --base-url … --model … [--api-key-env NAME] → 写密钥 → clue kb embed-config test')
+    console.error('embedding is not configured or not ready ⇒ no vector layer will be built; retrieval stays lexical-only (never disguised as semantic hits)')
+    console.error(`  current state: ${embeddingReadinessNote(config, 'en')} · baseUrl ${config.baseUrl || '(empty)'} · model ${config.model || '(empty)'} · dim ${config.dim || '(not measured)'}`)
+    console.error('  steps: clue kb embed-config set --base-url … --model … [--api-key-env NAME] → store the key → clue kb embed-config test')
     return 2
   }
   const only = flag(args, 'only') ?? 'entries'
-  if (!['entries', 'chunks', 'all'].includes(only)) throw new Error('--only 只能是 entries|chunks|all')
+  if (!['entries', 'chunks', 'all'].includes(only)) throw new Error('embed: --only accepts only entries|chunks|all')
   const dryRun = has(args, 'dry-run')
   const rebuild = has(args, 'rebuild')
   const version = embedderVersionOf({ modelId: config.model, dim: config.dim })
   console.log(`${dryRun ? '[dry-run] ' : ''}embedderVersion: ${version}`)
-  console.log(`配置: 批量 ${config.batchSize} · 并发 ${config.concurrency} · 单次预算 ${config.maxUnitsPerBuild} · 超时 ${config.timeoutMs}ms`)
+  console.log(`config: batch ${config.batchSize} · concurrency ${config.concurrency} · per-build budget ${config.maxUnitsPerBuild} · timeout ${config.timeoutMs}ms`)
 
   let units = 0
   let cacheHits = 0
@@ -339,7 +341,7 @@ export async function embedRun(host: EmbeddingHost, context: EmbedContext): Prom
   let chars = 0
   let missing = 0
   let skipped = 0
-  for (const [tierName, store] of [['项目库', context.project], ['全局库', context.global]] as const) {
+  for (const [tierName, store] of [['project', context.project], ['global', context.global]] as const) {
     for (const target of await embedTargets(store, only)) {
       const label = `${tierName} ${target.kind === 'entries' ? 'entries' : `chunks ${target.docId}`}`
       const options = {
@@ -353,11 +355,11 @@ export async function embedRun(host: EmbeddingHost, context: EmbedContext): Prom
       }
       const plan = await planEmbed(store, options)
       if (plan.upToDate) {
-        console.log(`· ${label}: 已是最新(${plan.units} 条),不动文件`)
+        console.log(`· ${label}: up to date (${plan.units} units), files untouched`)
         units += plan.units
         continue
       }
-      console.log(`· ${label}: 单元 ${plan.units} · 命中缓存 ${plan.cacheHits} · 待嵌入 ${plan.toEmbed} · 预算内 ${plan.withinBudget} · 批次 ${plan.batches} · 字符 ${plan.chars}${plan.budgetHit ? ' ⚠ 超预算:本轮只做预算内的部分' : ''}`)
+      console.log(`· ${label}: units ${plan.units} · cache hits ${plan.cacheHits} · to embed ${plan.toEmbed} · within budget ${plan.withinBudget} · batches ${plan.batches} · chars ${plan.chars}${plan.budgetHit ? ' ⚠ over budget: this run only covers the within-budget part' : ''}`)
       units += plan.units
       cacheHits += plan.cacheHits
       if (dryRun) continue
@@ -367,14 +369,14 @@ export async function embedRun(host: EmbeddingHost, context: EmbedContext): Prom
       missing += report.missing
       skipped += report.skipped
       if (report.upToDate) continue
-      console.log(`  ✓ 落盘 ${report.rows} 行 · 调用 ${report.calls} 次 · 字符 ${report.chars}${report.missing > 0 ? ` · ⚠ 缺 ${report.missing} 条(标 partial)` : ''}`)
+      console.log(`  ✓ wrote ${report.rows} rows · ${report.calls} calls · ${report.chars} chars${report.missing > 0 ? ` · ⚠ ${report.missing} missing (marked partial)` : ''}`)
     }
   }
   if (dryRun) {
-    console.log(`dry-run 合计: 单元 ${units} · 命中缓存 ${cacheHits} · 待嵌入 ${units - cacheHits}(零调用零花费)`)
+    console.log(`dry-run total: units ${units} · cache hits ${cacheHits} · to embed ${units - cacheHits} (zero calls, zero cost)`)
     return 0
   }
-  console.log(`合计: 单元 ${units} · 命中缓存 ${cacheHits} · 调用 ${calls} 次 · 字符 ${chars}${missing > 0 ? ` · 缺 ${missing} 条(下次重试)` : ''}${skipped > 0 ? ` · 预算外跳过 ${skipped} 条(下轮继续)` : ''}`)
+  console.log(`total: units ${units} · cache hits ${cacheHits} · calls ${calls} · chars ${chars}${missing > 0 ? ` · ${missing} missing (retried next run)` : ''}${skipped > 0 ? ` · ${skipped} skipped over budget (continued next round)` : ''}`)
   return 0
 }
 
@@ -390,11 +392,11 @@ export async function doctorRun(host: EmbeddingHost, context: EmbedContext): Pro
   const tuning = readRetrievalConfig(host.ctx)
   const ready = embeddingReady(config)
   const version = ready ? embedderVersionOf({ modelId: config.model, dim: config.dim }) : null
-  const status = await embeddingConfigSummary(host.ctx, version ?? undefined)
+  const status = await embeddingConfigSummary(host.ctx, version ?? undefined, 'en')
 
   const tiers: Array<{ name: string; store: KbStore }> = [
-    { name: '项目库', store: context.project },
-    { name: '全局库', store: context.global },
+    { name: 'project', store: context.project },
+    { name: 'global', store: context.global },
   ]
   const rows: Array<{ tier: string; status: Awaited<ReturnType<typeof vectorIndexStatuses>>[number] }> = []
   for (const tier of tiers) {
@@ -412,27 +414,27 @@ export async function doctorRun(host: EmbeddingHost, context: EmbedContext): Pro
     return 0
   }
 
-  console.log('[嵌入配置]')
-  console.log(`  启用 ${config.enabled ? '是' : '否'} · ${embeddingReadinessNote(config)}`)
-  console.log(`  baseUrl ${config.baseUrl || '(空)'} · model ${config.model || '(空)'} · dim ${config.dim || '(未实测)'}`)
-  console.log(`  密钥 ${keyStateLabel(status.key.state)} — ${status.key.detail}`)
-  console.log(`  embedderVersion ${version ?? '(未就绪 ⇒ 检索走纯词法并如实标注)'}`)
+  console.log('[embedding config]')
+  console.log(`  enabled ${config.enabled ? 'yes' : 'no'} · ${embeddingReadinessNote(config, 'en')}`)
+  console.log(`  baseUrl ${config.baseUrl || '(empty)'} · model ${config.model || '(empty)'} · dim ${config.dim || '(not measured)'}`)
+  console.log(`  key ${keyStateLabel(status.key.state)} — ${status.key.detail}`)
+  console.log(`  embedderVersion ${version ?? '(not ready ⇒ retrieval is lexical-only, honestly annotated)'}`)
 
-  console.log('[向量层]')
-  if (rows.length === 0) console.log('  尚未建立(首次 clue kb embed 或首次检索会自动建,受 maxUnitsPerBuild 护栏约束)')
+  console.log('[vector layer]')
+  if (rows.length === 0) console.log('  not built yet (the first clue kb embed or the first retrieval builds it automatically, bounded by the maxUnitsPerBuild guardrail)')
   for (const row of rows) {
     const notes: string[] = []
-    if (row.status.stale) notes.push(version === null ? '嵌入未配置 ⇒ 语义通道停用' : '版本过期 ⇒ 下次使用会重建')
-    if (row.status.unreadable) notes.push('文件缺失/长度不符 ⇒ 会重建')
-    if (row.status.missing > 0) notes.push(`partial: 缺 ${row.status.missing} 条`)
-    console.log(`  ${row.tier} ${row.status.stem}: ${row.status.count} 行 × ${row.status.dim} 维 · 建于 ${row.status.builtAt}${notes.length > 0 ? ` · ⚠ ${notes.join(' · ')}` : ' · ✓'}`)
+    if (row.status.stale) notes.push(version === null ? 'embedding not configured ⇒ semantic channel disabled' : 'stale version ⇒ rebuilt on next use')
+    if (row.status.unreadable) notes.push('file missing/length mismatch ⇒ will rebuild')
+    if (row.status.missing > 0) notes.push(`partial: ${row.status.missing} missing`)
+    console.log(`  ${row.tier} ${row.status.stem}: ${row.status.count} rows × dim ${row.status.dim} · built ${row.status.builtAt}${notes.length > 0 ? ` · ⚠ ${notes.join(' · ')}` : ' · ✓'}`)
   }
 
-  console.log('[检索调优]')
-  console.log(`  融合 ${tuning.fusion}(k=${tuning.rrfK}) · 通道权重 词法 ${tuning.channelWeights.lexical} / 语义 ${tuning.channelWeights.vector}`)
-  console.log(`  召回深度 ${tuning.recallDepth} · 精排候选 ${tuning.rerankCandidates} · 精排 ${tuning.rerank ? '开' : '关(--rerank off 复现今日排序)'}`)
-  console.log(`  ranklog ${tuning.ranklog ? '开' : '关'}: ${ranklog.rows} 行 / ${ranklog.queries} 个不同查询`)
-  console.log('提示: 这里只读元数据,不重建任何东西(诊断本身不该花钱)。')
+  console.log('[retrieval tuning]')
+  console.log(`  fusion ${tuning.fusion} (k=${tuning.rrfK}) · channel weights lexical ${tuning.channelWeights.lexical} / semantic ${tuning.channelWeights.vector}`)
+  console.log(`  recall depth ${tuning.recallDepth} · rerank candidates ${tuning.rerankCandidates} · rerank ${tuning.rerank ? 'on' : 'off (--rerank off reproduces today\'s ordering)'}`)
+  console.log(`  ranklog ${tuning.ranklog ? 'on' : 'off'}: ${ranklog.rows} rows / ${ranklog.queries} distinct queries`)
+  console.log('note: this reads metadata only and rebuilds nothing (diagnostics themselves must not cost money)')
   return 0
 }
 
@@ -449,12 +451,12 @@ export async function doctorRun(host: EmbeddingHost, context: EmbedContext): Pro
 export async function queryExplainRun(host: EmbeddingHost, context: EmbedContext): Promise<number> {
   const args = context.args
   const text = args.positional.join(' ')
-  if (text.trim() === '') throw new Error('query 需要检索词')
+  if (text.trim() === '') throw new Error('query: search terms are required')
   const config = readEmbeddingConfig(host.ctx)
   const tuning = readRetrievalConfig(host.ctx)
   const channelFlag = flag(args, 'channel')
   const channels = (channelFlag ?? (embeddingReady(config) ? 'hybrid' : 'lexical')) as RecallChannels
-  if (!['lexical', 'vector', 'hybrid'].includes(channels)) throw new Error('--channel 只能是 lexical|vector|hybrid')
+  if (!['lexical', 'vector', 'hybrid'].includes(channels)) throw new Error('query: --channel accepts only lexical|vector|hybrid')
   const rerankFlag = flag(args, 'rerank')
   const rerank = rerankFlag === undefined ? tuning.rerank : rerankFlag === 'on'
   const limit = flag(args, 'limit') !== undefined ? Number(flag(args, 'limit')) : 5
@@ -499,6 +501,10 @@ export async function queryExplainRun(host: EmbeddingHost, context: EmbedContext
   const retriever = createHybridRetriever(context.project, context.global, {
     channels,
     rerank,
+    // The console is English (product decision); the engine's explanation lines
+    // are SHARED with the web panel (Chinese), so the surface chooses.
+    explainLabels: 'en',
+    annotationLanguage: 'en',
     llmRerank: wantLlmRerank,
     topK: limit,
     profile: flag(args, 'profile') ?? 'tool',
@@ -536,16 +542,16 @@ export async function queryExplainRun(host: EmbeddingHost, context: EmbedContext
     if (chatHost !== null) await chatHost.close()
     chatHost = null
   }
-  console.log(`查询「${text}」 · 通道 ${channels} · 精排 ${rerank ? 'on' : 'off'} · profile ${detailed.profile.name}${wantLlmRerank ? ' · 模型重排 on' : ''}`)
-  console.log(`召回: 词法 ${detailed.recalled.lexical} · 语义 ${detailed.recalled.vector} · 融合 ${detailed.fused} · 语义通道 ${detailed.vector.status}`)
+  console.log(`query "${text}" · channels ${channels} · rerank ${rerank ? 'on' : 'off'} · profile ${detailed.profile.name}${wantLlmRerank ? ' · model rerank on' : ''}`)
+  console.log(`recall: lexical ${detailed.recalled.lexical} · semantic ${detailed.recalled.vector} · fused ${detailed.fused} · semantic channel ${detailed.vector.status}`)
   if (detailed.vector.status !== 'used') console.log(`  ⚠ ${detailed.vector.note}`)
   if (detailed.hits.length === 0) {
-    console.log('没有命中。')
+    console.log('no hits.')
     return 0
   }
   if (wantLlmRerank) {
     if (detailed.llmRerank === undefined || detailed.llmRerank === null) {
-      console.log(`  模型重排: 未生效 ⇒ 保留确定性精排序${llmRerankError === null ? '(候选不足)' : `(原因: ${llmRerankError})`}`)
+      console.log(`  model rerank: not applied ⇒ keeping the deterministic rerank order${llmRerankError === null ? ' (not enough candidates)' : ` (reason: ${llmRerankError})`}`)
     } else {
       const { describeRerankDiff } = await import('@clue-harness/rag')
       for (const line of describeRerankDiff(detailed.llmRerank, (id) => detailed.hits.find((hit) => String(hit.entry.id) === id)?.entry.title ?? id)) {
@@ -555,11 +561,11 @@ export async function queryExplainRun(host: EmbeddingHost, context: EmbedContext
   }
   for (const hit of detailed.hits) {
     console.log('')
-    console.log(`▸ [${hit.score}] ${hit.entry.id} <${hit.entry.kind},${hit.entry.status}${hit.entry.tier === 'global' ? ',全局' : ''}> ${hit.entry.title}`)
+    console.log(`▸ [${hit.score}] ${hit.entry.id} <${hit.entry.kind},${hit.entry.status}${hit.entry.tier === 'global' ? ',global' : ''}> ${hit.entry.title}`)
     if (hit.explain !== undefined) {
       for (const line of hit.explain.lines) console.log(`    · ${line}`)
       const ranks = Object.entries(hit.explain.channels).map(([name, rank]) => `${name} #${rank}`).join(' ')
-      if (ranks !== '') console.log(`    · 通道名次 ${ranks}`)
+      if (ranks !== '') console.log(`    · channel ranks ${ranks}`)
     }
     for (const note of hit.annotations) console.log(`    ⚠ ${note}`)
   }

@@ -189,10 +189,10 @@ export async function writeVectorIndex(
   vectors: Float32Array,
 ): Promise<void> {
   if (meta.idOrder.length !== meta.count) {
-    throw new Error(`向量索引非法: count=${meta.count} 与 idOrder=${meta.idOrder.length} 不一致`)
+    throw new Error(`vector index invalid: count=${meta.count} disagrees with idOrder=${meta.idOrder.length}`)
   }
   if (vectors.length !== meta.count * meta.dim) {
-    throw new Error(`向量索引非法: 矩阵 ${vectors.length} 个 float ≠ count ${meta.count} × dim ${meta.dim}`)
+    throw new Error(`vector index invalid: matrix holds ${vectors.length} floats ≠ count ${meta.count} × dim ${meta.dim}`)
   }
   await mkdir(vectorsDir(kbDir), { recursive: true })
   const bin = vectorBinPath(kbDir, target)

@@ -66,7 +66,7 @@ test('entry files refuse foreign versions (house style)', async (t) => {
   const raw = JSON.parse(await (await import('node:fs/promises')).readFile(file, 'utf8'))
   raw.version = 999
   await writeFile(file, JSON.stringify(raw), 'utf8')
-  await assert.rejects(() => projectStore.get(entry.id), /版本不匹配/)
+  await assert.rejects(() => projectStore.get(entry.id), /kb entry version mismatch/)
 })
 
 test('binding drift raises needsReview automatically on query; reverify --accept rebinds and clears', async (t) => {

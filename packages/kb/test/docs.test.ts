@@ -169,9 +169,9 @@ test('M9-1: attaching evidence fails loud — unknown snapshot, unknown entry', 
   const globalEntry = await global.add({ kind: 'fact', title: 'g', text: 'global' })
   const local = await store.add({ kind: 'fact', title: 'l', text: 'local' })
   // An unknown snapshot is refused with the actionable reason.
-  await assert.rejects(() => store.attachDoc(local.id, 'd-nope'), /文档快照不存在/)
+  await assert.rejects(() => store.attachDoc(local.id, 'd-nope'), /document snapshot not found/)
   // An entry that is not in this tier is refused too (no cross-tier edits).
-  await assert.rejects(() => store.attachDoc(globalEntry.id as never, 'd-whatever'), /条目不存在/)
+  await assert.rejects(() => store.attachDoc(globalEntry.id as never, 'd-whatever'), /entry not found/)
   assert.equal(await store.getDoc('d-nope'), null)
   assert.deepEqual(await store.listDocs(), [])
 })

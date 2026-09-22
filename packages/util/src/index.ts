@@ -79,11 +79,11 @@ export async function workspaceKey(projectRoot: string, home: string = clueHome(
     if (meta === null) {
       if ((await stat(dir).catch(() => null)) === null) return key
       if ((await readdir(dir).catch(() => ['?'])).length === 0) return key
-      throw new Error(`工作区目录已存在但缺少可读锚点: ${metaFile} — 请修正后再打开(不静默接管陌生数据)`)
+      throw new Error(`workspace directory exists but has no readable anchor: ${metaFile} — fix it before opening (never take over foreign data silently)`)
     }
     if (meta.projectRoot === root) return key
   }
-  throw new Error(`工作区键名走位超过 1000 次仍冲突: ${root}`)
+  throw new Error(`workspace key still collides after 1000 probes: ${root}`)
 }
 
 /**

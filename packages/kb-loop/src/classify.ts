@@ -43,7 +43,7 @@ export async function loadRenderSurfaceConfig(projectRoot: string, home?: string
   const extensions = stored?.extensions ?? DEFAULT_RENDER_SURFACE.extensions
   const pathPrefixes = stored?.pathPrefixes ?? DEFAULT_RENDER_SURFACE.pathPrefixes
   if (!Array.isArray(extensions) || !Array.isArray(pathPrefixes)) {
-    throw new Error(`渲染面配置格式错误: ${projectRoot} 的 renderSurface.extensions/pathPrefixes 必须是数组`)
+    throw new Error(`render surface config malformed: renderSurface.extensions/pathPrefixes of ${projectRoot} must be arrays`)
   }
   return {
     extensions: extensions.map((e) => e.toLowerCase().startsWith('.') ? e.toLowerCase() : `.${e.toLowerCase()}`),

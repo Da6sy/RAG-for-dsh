@@ -93,7 +93,7 @@ export function extractJson(text: string): unknown {
   const candidate = (fenced?.[1] ?? text).trim()
   const start = candidate.indexOf('{')
   const end = candidate.lastIndexOf('}')
-  if (start === -1 || end <= start) throw new Error(`模型没有返回 JSON 对象: ${candidate.slice(0, 120)}`)
+  if (start === -1 || end <= start) throw new Error(`prompt-ab: the model returned no JSON object: ${candidate.slice(0, 120)}`)
   return JSON.parse(candidate.slice(start, end + 1))
 }
 
@@ -110,7 +110,7 @@ export function extractJson(text: string): unknown {
 export function parseQueries(raw: string, expected: number): string[] {
   const parsed = extractJson(raw) as { queries?: unknown } | unknown[]
   const list = Array.isArray(parsed) ? parsed : (parsed as { queries?: unknown }).queries
-  if (!Array.isArray(list)) throw new Error('模型返回里没有 queries 数组')
+  if (!Array.isArray(list)) throw new Error('prompt-ab: the model answer contains no queries array')
   const out = new Array<string>(expected).fill('')
   for (const item of list) {
     if (typeof item === 'string') continue
@@ -163,7 +163,7 @@ export async function runPromptAb(
   const sampledDocs = set.docs.slice(0, samples)
   const embedderKind = typeof args.embedder === 'string' ? args.embedder : 'hash'
   const embedder = embedderKind === 'http'
-    ? deps.httpEmbedder ?? (() => { throw new Error('--embedder http 需要已配置并实测维度的嵌入端点') })()
+    ? deps.httpEmbedder ?? (() => { throw new Error('prompt-ab: --embedder http requires a configured embedding endpoint with the dim actually measured') })()
     : hashEmbedder()
   const semantics: 'none' | 'endpoint' = embedderKind === 'http' ? 'endpoint' : 'none'
 
@@ -183,7 +183,7 @@ export async function runPromptAb(
         timeoutMs: 120_000,
       })
       if (answer.text.trim() === '') {
-        throw new Error(`模型没有返回可见文本(思考 ${answer.reasoningChars} 字)——提高 --max-tokens 或换模型`)
+        throw new Error(`prompt-ab: the model returned no visible text (${answer.reasoningChars} chars went to reasoning) — raise --max-tokens or switch models`)
       }
       const queries = parseQueries(answer.text, batch.length)
       batch.forEach((doc, index) => {
@@ -211,6 +211,10 @@ export async function runPromptAb(
     }
     await buildVectorIndex(store, { home, embedder, target: { kind: 'entries' }, maxUnitsPerBuild: 100_000 })
     const retriever = createHybridRetriever(store, null, {
+      // Console surface: engine-authored notes/labels in English (the shared
+      // defaults stay Chinese for the model blocks and the web panel).
+      annotationLanguage: 'en',
+      explainLabels: 'en',
       channels: semantics === 'endpoint' ? 'hybrid' : 'lexical',
       rerank: args.rerank === undefined ? true : args.rerank === 'on',
       profile: 'tool',
@@ -254,11 +258,11 @@ export async function runPromptAb(
     ? null
     : Math.round((intent.recall[1] - keywords.recall[1]) * 1000) / 10
   const caveats = [
-    '查询由真模型按两种提示词写出,检索由产品自己的检索器执行 —— 两半都是真的',
-    'recall@1 才是这一页要看的数;@5 在合成集上通常饱和',
+    'queries are written by a real model under the two prompts, and retrieval is executed by the shipped retriever itself — both halves are real',
+    'recall@1 is the number this report is about; @5 usually saturates on the synthetic set',
   ]
   if (semantics === 'none') {
-    caveats.push('嵌入为 hashEmbedder(语义能力=0):本次只测"意图句是否伤害词法匹配",语义收益必须用真端点重跑')
+    caveats.push('embedder is hashEmbedder (semantic ability=0): this run only measures whether the intent sentence hurts lexical matching; the semantic benefit must be re-run against a real endpoint')
   }
   return {
     generatedAt: new Date().toISOString(),
@@ -278,26 +282,26 @@ export async function runPromptAb(
 export function printPromptAb(report: PromptAbReport): void {
   const pct = (value: number): string => `${(value * 100).toFixed(1)}%`
   console.log('')
-  console.log(`提示词 A/B:模型 ${report.model.provider}/${report.model.model} · 取样 ${report.samples} 篇 · 模型调用 ${report.calls} 次`)
-  console.log(`配对样本 ${report.pairedPairs} 篇(两种提示词都写出了查询);另有 ${report.droppedPairs} 篇被模型漏写,已从对比中剔除`)
-  console.log(`嵌入: ${report.embedder.id}(${report.embedder.semantics === 'none' ? '语义能力=0' : '真端点'})`)
+  console.log(`prompt A/B: model ${report.model.provider}/${report.model.model} · sampled ${report.samples} docs · ${report.calls} model calls`)
+  console.log(`paired samples: ${report.pairedPairs} docs (both prompts produced a query); ${report.droppedPairs} more were skipped by the model and excluded from the comparison`)
+  console.log(`embedder: ${report.embedder.id} (${report.embedder.semantics === 'none' ? 'semantic ability=0' : 'real endpoint'})`)
   console.log('')
-  console.log(`${'提示词风格'.padEnd(14)}${'查询数'.padEnd(8)}${'平均字数'.padEnd(10)}${'recall@1'.padEnd(12)}${'recall@5'.padEnd(12)}MRR`)
+  console.log(`${'prompt style'.padEnd(14)}${'queries'.padEnd(8)}${'avg chars'.padEnd(10)}${'recall@1'.padEnd(12)}${'recall@5'.padEnd(12)}MRR`)
   for (const row of report.results) {
     const r1 = row.overall === null ? '—' : pct(row.overall.recall[1])
     const r5 = row.overall === null ? '—' : pct(row.overall.recall[5] ?? 0)
     const mrr = row.overall === null ? '—' : row.overall.mrr.toFixed(3)
-    console.log(`${(row.doctrine === 'keywords' ? '关键词堆' : '意图句').padEnd(14)}${String(row.queries).padEnd(8)}${String(row.avgChars).padEnd(10)}${r1.padEnd(12)}${r5.padEnd(12)}${mrr}`)
+    console.log(`${(row.doctrine === 'keywords' ? 'keywords' : 'intent').padEnd(14)}${String(row.queries).padEnd(8)}${String(row.avgChars).padEnd(10)}${r1.padEnd(12)}${r5.padEnd(12)}${mrr}`)
   }
   console.log('')
   if (report.deltaPt !== null) {
-    console.log(`意图句相对关键词堆:recall@1 ${report.deltaPt >= 0 ? '+' : ''}${report.deltaPt.toFixed(1)}pt`)
+    console.log(`intent vs keywords: recall@1 ${report.deltaPt >= 0 ? '+' : ''}${report.deltaPt.toFixed(1)}pt`)
   }
   for (const row of report.results) {
     console.log('')
-    console.log(`${row.doctrine === 'keywords' ? '关键词堆' : '意图句'} 样例:`)
+    console.log(`${row.doctrine === 'keywords' ? 'keywords' : 'intent'} samples:`)
     for (const sample of row.samples) console.log(`  · ${sample}`)
   }
   console.log('')
-  for (const caveat of report.caveats) console.log(`注: ${caveat}`)
+  for (const caveat of report.caveats) console.log(`note: ${caveat}`)
 }

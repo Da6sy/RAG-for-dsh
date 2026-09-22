@@ -41,20 +41,32 @@ export interface DetailView {
 
 /**
  * Render one chunk hit as a block: anchor line, then the excerpt.
+ *
+ * `lang` follows the same doctrine as every other shared renderer in this
+ * package: the model blocks and the web panel are Chinese, the console is
+ * English, so the surface that knows which one it is passes it and the default
+ * keeps every existing caller identical.
  * @param hit - the ranked chunk hit.
  * @param index - 1-based position (for the reader's orientation).
+ * @param lang - `zh` (default) or `en`.
  * @returns the block text.
  */
-export function renderChunkBlock(hit: ChunkHit, index: number): string {
-  const heading = hit.headingPath === '' ? '(无标题)' : hit.headingPath
+export function renderChunkBlock(hit: ChunkHit, index: number, lang: 'zh' | 'en' = 'zh'): string {
+  const en = lang === 'en'
+  const heading = hit.headingPath === '' ? (en ? '(untitled)' : '(无标题)') : hit.headingPath
   const lines: string[] = [
-    `▸ [${index}] ${hit.docId} 行 ${hit.lines.start}-${hit.lines.end} · ${heading}`
-    + ` · ${hit.chars} 字 · 相关度 ${hit.score}`,
-    `  锚点: “${hit.quoteAnchor}”`,
+    en
+      ? `▸ [${index}] ${hit.docId} lines ${hit.lines.start}-${hit.lines.end} · ${heading}`
+        + ` · ${hit.chars} chars · relevance ${hit.score}`
+      : `▸ [${index}] ${hit.docId} 行 ${hit.lines.start}-${hit.lines.end} · ${heading}`
+        + ` · ${hit.chars} 字 · 相关度 ${hit.score}`,
+    en ? `  anchor: “${hit.quoteAnchor}”` : `  锚点: “${hit.quoteAnchor}”`,
   ]
   if (hit.partialRedline && hit.redlines.length > 0) {
     const reasons = [...new Set(hit.redlines.map((redline) => redline.reason))].join('; ')
-    lines.push(`  ✂ 部分划除(标 ✂ 的行已被人工作废,勿作为依据): ${reasons}`)
+    lines.push(en
+      ? `  ✂ partially redlined (lines marked ✂ were retracted by a human; do not rely on them): ${reasons}`
+      : `  ✂ 部分划除(标 ✂ 的行已被人工作废,勿作为依据): ${reasons}`)
   }
   for (const line of hit.excerpt.split('\n')) lines.push(`  | ${line}`)
   return lines.join('\n')
@@ -73,17 +85,25 @@ export function renderChunkBlock(hit: ChunkHit, index: number): string {
 export function renderDetailView(
   input: { entryId: string; title: string; docIds: readonly string[]; hits: readonly ChunkHit[]; noDoc: boolean },
   maxChars: number = DEFAULT_DETAIL_MAX_CHARS,
+  lang: 'zh' | 'en' = 'zh',
 ): DetailView {
+  const en = lang === 'en'
   const head = input.noDoc
-    ? `# ${input.entryId} · ${input.title}\n该知识无原文层(entry 未挂载 doc),正文即全部内容。`
-    : `# ${input.entryId} · ${input.title}\n原文: ${input.docIds.join(', ')} · 命中 ${input.hits.length} 段(纯读取,不记信号、不改状态)`
+    ? (en
+        ? `# ${input.entryId} · ${input.title}\nthis entry has no document layer (nothing mounted), the body is all there is.`
+        : `# ${input.entryId} · ${input.title}\n该知识无原文层(entry 未挂载 doc),正文即全部内容。`)
+    : (en
+        ? `# ${input.entryId} · ${input.title}\ndocument: ${input.docIds.join(', ')} · ${input.hits.length} chunk(s) matched (read-only: no signals, no state change)`
+        : `# ${input.entryId} · ${input.title}\n原文: ${input.docIds.join(', ')} · 命中 ${input.hits.length} 段(纯读取,不记信号、不改状态)`)
   const lines: string[] = [head]
   let used = head.length
   let shown = 0
   for (const hit of input.hits) {
-    const block = renderChunkBlock(hit, shown + 1)
+    const block = renderChunkBlock(hit, shown + 1, lang)
     if (used + block.length + 1 > maxChars) {
-      lines.push(`…(预算 ${maxChars} 字已满,余下 ${input.hits.length - shown} 段未展开)`)
+      lines.push(en
+        ? `…(budget of ${maxChars} chars is full; ${input.hits.length - shown} chunk(s) left uncollapsed)`
+        : `…(预算 ${maxChars} 字已满,余下 ${input.hits.length - shown} 段未展开)`)
       break
     }
     lines.push(block)
@@ -91,7 +111,9 @@ export function renderDetailView(
     shown += 1
   }
   if (!input.noDoc && input.hits.length === 0) {
-    lines.push('原文中没有与该查询相关的段(可用空 query 浏览全部段)。')
+    lines.push(en
+      ? 'no chunk in the document matches this query (browse all chunks with an empty query).'
+      : '原文中没有与该查询相关的段(可用空 query 浏览全部段)。')
   }
   return {
     entryId: input.entryId,

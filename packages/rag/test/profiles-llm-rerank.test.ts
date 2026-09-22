@@ -89,7 +89,7 @@ test('rerank 解析: 部分/未知/重复/乱序都由基线补齐 —— 候选
   assert.deepEqual(parseRerankAnswer('```json\n{"order":["b"]}\n```', baseline), ['b', 'a', 'c'], '漏掉的按原序补在末尾')
   assert.deepEqual(parseRerankAnswer('{"order":["zzz","b","b"]}', baseline), ['b', 'a', 'c'], '未知 id 与重复被忽略')
   assert.deepEqual(parseRerankAnswer('["c","b","a"]', baseline), ['c', 'b', 'a'], '裸数组也认')
-  assert.throws(() => parseRerankAnswer('我觉得 a 更好', baseline), /没有返回可解析/)
+  assert.throws(() => parseRerankAnswer('我觉得 a 更好', baseline), /no parsable rerank result/)
 })
 
 test('rerank: 成功时给出与确定性精排的差异,失败/超时保留确定性序', async () => {
@@ -150,5 +150,5 @@ test('LTR: 标注只认账本信号,不够量就明确说"还没到时候"', asy
   const model = trainLogistic(many, { epochs: 60 })
   assert.equal(typeof model.weights.bm25ish, 'number')
   assert.ok(evaluateWeights(many, model.weights).mrr >= evaluateWeights(many, handWeights()).mrr - 0.001)
-  assert.throws(() => trainLogistic([{ query: 'q', entryId: 'k', features: {}, label: 1 }]), /单一极性/)
+  assert.throws(() => trainLogistic([{ query: 'q', entryId: 'k', features: {}, label: 1 }]), /single polarity/)
 })

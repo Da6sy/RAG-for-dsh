@@ -58,11 +58,11 @@ test('expired re-activates to candidate (re-earn trust), discarded rescues to ca
 test('illegal edges throw with the legal-edge list (fail loud, never coerce)', () => {
   assert.throws(
     () => applyTransition(entry('candidate'), 'trusted', 'rescue', 'x'),
-    /非法状态迁移: candidate → trusted/,
+    /illegal state transition: candidate → trusted/,
   )
   assert.throws(
     () => applyTransition(entry('discarded'), 'trusted', 'approve-promote', 'x'),
-    /非法状态迁移/,
+    /illegal state transition/,
   )
 })
 

@@ -91,19 +91,19 @@ test('缺陷 7.1 反面: 新报告自己没过硬线时仍然退出 1', () => {
 test('缺陷 7.2: 查询数不同 ⇒ 检出并判未证明,数字只列不判', () => {
   const report = evaluateDiff(entry({ queries: 50 }), entry({ queries: 10 }))
   assert.equal(report.comparable, false)
-  assert.deepEqual(report.mismatches.map((row) => row.field), ['查询数'])
-  assert.ok(report.unproven.some((line) => line.includes('口径不同')))
-  assert.ok(report.after.every((row) => row.state === 'unproven' && row.reason.includes('口径不同')), '硬线一律未证明(连"会失败"也不判)')
-  assert.ok(report.rows.every((row) => row.flag.includes('口径不同') && !row.regresses), '数字行不作判定')
+  assert.deepEqual(report.mismatches.map((row) => row.field), ['queries'])
+  assert.ok(report.unproven.some((line) => line.includes('provenance differs')))
+  assert.ok(report.after.every((row) => row.state === 'unproven' && row.reason.includes('provenance differs')), '硬线一律未证明(连"会失败"也不判)')
+  assert.ok(report.rows.every((row) => row.flag.includes('provenance differs') && !row.regresses), '数字行不作判定')
   assert.equal(report.regressed, false, '口径不同不产生退出码')
 })
 
 test('缺陷 7.2: 嵌入器/语料规模/k 截断/判分器版本同样算口径', () => {
   const cases: Array<[string, IndexEntry]> = [
-    ['嵌入器', entry({ embedderId: 'hash-v1', embedderSemantics: 'endpoint' })],
-    ['语料规模', entry({ documents: 900 })],
-    ['k 截断', entry({ ks: [5] })],
-    ['查询数', entry({ queries: 7 })],
+    ['embedder', entry({ embedderId: 'hash-v1', embedderSemantics: 'endpoint' })],
+    ['corpus size', entry({ documents: 900 })],
+    ['k cutoff', entry({ ks: [5] })],
+    ['queries', entry({ queries: 7 })],
   ]
   for (const [field, other] of cases) {
     assert.ok(provenanceMismatches(entry(), other).some((row) => row.field === field), `${field} 必须被检出`)
@@ -118,10 +118,10 @@ test('缺陷 7.3: 无能力嵌入器下硬线判未证明,而不是构造性 ✓
   assert.equal(verdicts.length, 2)
   for (const verdict of verdicts) {
     assert.equal(verdict.state, 'unproven')
-    assert.match(verdict.reason, /语义能力=0/)
+    assert.match(verdict.reason, /semantics=0/)
   }
   const report = evaluateDiff(hash, hash)
-  assert.ok(report.unproven.some((line) => line.includes('无能力嵌入器')))
+  assert.ok(report.unproven.some((line) => line.includes('no-ability embedder')))
   assert.equal(report.regressed, false)
 })
 
@@ -146,7 +146,7 @@ test('旧 schema 的满矩阵报告:缺列的原因要指对地方(不是"--only
   })
   const fusion = hardLineVerdicts(old).find((verdict) => verdict.line.includes('no-rerank'))
   assert.equal(fusion?.state, 'unproven')
-  assert.match(fusion?.reason ?? '', /旧 schema/)
+  assert.match(fusion?.reason ?? '', /old schema/)
   assert.doesNotMatch(fusion?.reason ?? '', /--only/)
 })
 
@@ -156,7 +156,7 @@ test('质量回退仍然退出 1;成本与观察列不参与判定', () => {
   const worse = entry({ rows: { ...entry().rows, 'hybrid+rerank': { 'nDCG@10': 0.4, 'recall@10': 0.8, seconds: 31 } } })
   const report = evaluateDiff(entry(), worse)
   assert.equal(report.regressed, true)
-  assert.ok(report.rows.some((row) => row.metric === 'nDCG@10' && row.flag.includes('✗ 回退')))
+  assert.ok(report.rows.some((row) => row.metric === 'nDCG@10' && row.flag.includes('✗ regress')))
 })
 
 test('同一份报告自比:全通过且无未证明', () => {

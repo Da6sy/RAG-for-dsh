@@ -84,7 +84,7 @@ export async function openEmbeddingHost(options: { dshHome?: string } = {}): Pro
     waitForService(ctx, 'credentials'),
   ])
   if (!settingsReady || !credentialsReady) {
-    throw new Error(`打开设置/凭据服务失败(${dshHome}):settings=${settingsReady} credentials=${credentialsReady}`)
+    throw new Error(`embedding host: cannot open the settings/credentials services (${dshHome}): settings=${settingsReady} credentials=${credentialsReady}`)
   }
   if (await waitForService(ctx, 'llm')) {
     try {

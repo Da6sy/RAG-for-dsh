@@ -97,7 +97,7 @@ function hashToken(token: string): { index: number; sign: number } {
  */
 export function hashEmbedder(options: { dim?: number } = {}): Embedder {
   const dim = options.dim ?? DEFAULT_HASH_DIM
-  if (!Number.isInteger(dim) || dim <= 0) throw new Error(`hashEmbedder: dim 必须是正整数,收到 ${dim}`)
+  if (!Number.isInteger(dim) || dim <= 0) throw new Error(`hashEmbedder: dim must be a positive integer, got ${dim}`)
   return {
     id: `${HASH_EMBEDDER_ID}${options.dim === undefined ? '' : `-${dim}`}`,
     dim,

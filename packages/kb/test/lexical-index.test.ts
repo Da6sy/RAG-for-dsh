@@ -386,10 +386,10 @@ test('§9 setBindings:改绑写哈希与履历;新路径不存在则拒绝(不�
   // 不存在的路径必须拒绝:否则下一次 checkBindings 会凭空报漂移
   await assert.rejects(
     () => store.setBindings(entry.id, ['不存在.md'], '误操作'),
-    /绑定文件不存在/,
+    /binding file does not exist/,
   )
   // 理由必填
-  await assert.rejects(() => store.setBindings(entry.id, [], '   '), /必须写明理由/)
+  await assert.rejects(() => store.setBindings(entry.id, [], '   '), /a reason is required/)
   // 清空绑定是合法操作
   const cleared = await store.setBindings(entry.id, [], '锚点不再需要')
   assert.deepEqual(cleared.bindings, [])

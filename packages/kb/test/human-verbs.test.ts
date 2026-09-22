@@ -111,7 +111,7 @@ test('promote: 结清在队的提升请求(队列不留"已经做过的决定")'
   assert.deepEqual(pending.map((r) => r.id), [advisory.id], '只结清提升请求,不碰建议类请求')
   // The settled request is done: resolving it again reports that honestly
   // instead of attempting an illegal trusted → trusted transition.
-  await assert.rejects(() => projectStore.resolveApproval(queued.id, true), /已被处理/)
+  await assert.rejects(() => projectStore.resolveApproval(queued.id, true), /is already resolved/)
 })
 
 test('promote: 只有候选能提升——其它状态各有自己的边,不给捷径', async (t) => {
@@ -122,14 +122,14 @@ test('promote: 只有候选能提升——其它状态各有自己的边,不给�
   await projectStore.promote(entry.id, { by: 'cli' })
   await assert.rejects(
     () => projectStore.promote(entry.id, { by: 'cli' }),
-    /只有候选能提升为可信,当前是 trusted/,
+    /only candidates can be promoted to trusted, this entry is trusted/,
   )
 
   const expiring = await projectStore.add({ kind: 'fact', title: '会过期的', text: '长期未引用会过期。' })
   await projectStore.transition(expiring.id, 'expired', 'expire-idle', '测试:闲置过期')
   await assert.rejects(
     () => projectStore.promote(expiring.id, { by: 'cli' }),
-    /当前是 expired.*reverify/,
+    /this entry is expired.*reverify/,
   )
   assert.equal((await projectStore.get(expiring.id))?.status, 'expired', '失败不得改状态')
 
@@ -137,11 +137,11 @@ test('promote: 只有候选能提升——其它状态各有自己的边,不给�
   await projectStore.transition(discarded.id, 'discarded', 'strong-negative', '测试:强负遗弃')
   await assert.rejects(
     () => projectStore.promote(discarded.id, { by: 'cli' }),
-    /当前是 discarded/,
+    /this entry is discarded/,
   )
 
   // A missing id is the store's honest not-found, never a silent create.
-  await assert.rejects(() => projectStore.promote(KbEntryId('k-nope-000000'), { by: 'cli' }), /条目不存在/)
+  await assert.rejects(() => projectStore.promote(KbEntryId('k-nope-000000'), { by: 'cli' }), /entry not found/)
 })
 
 test('promote: 全局库同样可用(人权入口不是项目库特权)', async (t) => {
@@ -164,8 +164,8 @@ test('retire: 候选/可信 → 过期,必须带理由,并撤掉 ⚑ 标记', as
 
   // A verdict without its why is refused outright — the history line is the
   // only place a later reader can learn why the entry left the write-basis.
-  await assert.rejects(() => projectStore.retire(entry.id, { by: 'web' }), /必须留下理由/)
-  await assert.rejects(() => projectStore.retire(entry.id, { by: 'web', reason: '   ' }), /必须留下理由/)
+  await assert.rejects(() => projectStore.retire(entry.id, { by: 'web' }), /a reason is required/)
+  await assert.rejects(() => projectStore.retire(entry.id, { by: 'web', reason: '   ' }), /a reason is required/)
   assert.equal((await projectStore.get(entry.id))?.status, 'candidate', '被拒的判定不得改状态')
 
   const { entry: retired } = await projectStore.retire(entry.id, { by: 'web', reason: '组件已改版为 ds-button v2' })
@@ -198,17 +198,17 @@ test('retire: 已退出/已拆分/不存在都拒绝,且不改状态', async (t)
   await projectStore.transition(discarded.id, 'discarded', 'strong-negative', '测试')
   await assert.rejects(
     () => projectStore.retire(discarded.id, { by: 'cli', reason: 'r' }),
-    /只有候选\/可信能人工判定不再成立,当前是 discarded/,
+    /only candidate\/trusted entries can be retired by human decision, this entry is discarded/,
   )
 
   const superseded = await projectStore.add({ kind: 'fact', title: '已拆分', text: 'x' })
   await projectStore.splitEntry(superseded.id, [{ title: '后继', text: 'y' }], '测试拆分')
   await assert.rejects(
     () => projectStore.retire(superseded.id, { by: 'cli', reason: 'r' }),
-    /已拆分条目是历史/,
+    /a superseded entry is history/,
   )
 
-  await assert.rejects(() => projectStore.retire(KbEntryId('k-nope-000000'), { by: 'cli', reason: 'r' }), /条目不存在/)
+  await assert.rejects(() => projectStore.retire(KbEntryId('k-nope-000000'), { by: 'cli', reason: 'r' }), /entry not found/)
 })
 
 test('reactivate/rescue: 退出现役的条目能被人拉回来,但只能回到候选', async (t) => {
@@ -230,9 +230,9 @@ test('reactivate/rescue: 退出现役的条目能被人拉回来,但只能回到
   assert.match(rescued.history.at(-1)?.reason ?? '', /^rescue: 人工捞回候选\(web\)$/)
 
   // Wrong statuses are refused with the honest hint, never coerced.
-  await assert.rejects(() => projectStore.reactivate(dead.id, { by: 'cli' }), /只有过期条目能重新激活,当前是 candidate/)
-  await assert.rejects(() => projectStore.rescue(expiring.id, { by: 'cli' }), /只有已遗弃条目能捞回,当前是 candidate/)
-  await assert.rejects(() => projectStore.reactivate(KbEntryId('k-nope-000000'), { by: 'cli' }), /条目不存在/)
+  await assert.rejects(() => projectStore.reactivate(dead.id, { by: 'cli' }), /only expired entries can be reactivated, this entry is candidate/)
+  await assert.rejects(() => projectStore.rescue(expiring.id, { by: 'cli' }), /only discarded entries can be rescued, this entry is candidate/)
+  await assert.rejects(() => projectStore.reactivate(KbEntryId('k-nope-000000'), { by: 'cli' }), /entry not found/)
 })
 
 test('reactivate/rescue: 也结清在队的同名请求', async (t) => {

@@ -61,7 +61,7 @@ test('full-page capture (no moduleId) and honest failure for a missing module', 
 
   await assert.rejects(
     captureScreenshot({ projectRoot: project, page: 'page.html', moduleId: 'ghost', home }),
-    /没有 data-module="ghost"/,
+    /has no module with data-module="ghost"/,
     '缺失模块必须响亮失败,不得静默截全页',
   )
 })

@@ -415,7 +415,7 @@ test('polish + entry/text: the M6 rewrite aid returns text, adoption writes with
   assert.equal((await call(route, 'POST', `${API_PREFIX}/polish`, JSON.stringify({ scope: 'project', id: 'k-ghost' }))).statusCode, 404)
   const blank = await call(route, 'POST', `${API_PREFIX}/entry/text`, JSON.stringify({ scope: 'project', id: String(entry.id), text: '  ' }))
   assert.equal(blank.statusCode, 500)
-  assert.ok((blank.json() as { error: string }).error.includes('正文不能为空白'))
+  assert.ok((blank.json() as { error: string }).error.includes('entry text must not be blank'))
 })
 
 test('browser identity: the index-injection row claims the tab title + network favicon', async (t) => {

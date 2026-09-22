@@ -617,7 +617,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     let entry: KbEntry | null = null
     if (entryId !== null) {
       entry = (await project.get(entryId as KbEntryId)) ?? (await global.get(entryId as KbEntryId))
-      if (entry === null) throw new Error(`没有条目 "${entryId}"`)
+      if (entry === null) throw new Error(`kb detail: no such entry: "${entryId}"`)
     }
     const owner = entry !== null && entry.tier === 'global' ? global : project
     const sources = await resolveChunkSources(owner, {
@@ -1090,7 +1090,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     // forget with a warn — feedback processing must never block or fail the
     // loop's turn machinery.
     void pollFeedback(session).catch((error) => {
-      ctx.logger.warn(`kb: 反馈轮询失败(已忽略): ${error instanceof Error ? error.message : String(error)}`)
+      ctx.logger.warn(`kb: feedback poll failed (ignored): ${error instanceof Error ? error.message : String(error)}`)
     })
   })
 
@@ -1193,7 +1193,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       )
     }
     void pollFeedback(agent.session).catch((error) => {
-      ctx.logger.warn(`kb: 反馈轮询失败(已忽略): ${error instanceof Error ? error.message : String(error)}`)
+      ctx.logger.warn(`kb: feedback poll failed (ignored): ${error instanceof Error ? error.message : String(error)}`)
     })
     if (report.outcome.exitOk) {
       // M5 generalization trigger: a PASS that recorded objective evidence

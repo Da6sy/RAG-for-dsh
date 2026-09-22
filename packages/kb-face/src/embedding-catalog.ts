@@ -373,7 +373,7 @@ export async function autoDetectEmbedder(
       })
       const [vector] = await embedder.embed([CONNECTION_PROBE_TEXT])
       const dim = vector?.length ?? 0
-      if (dim <= 0) throw new Error('端点返回了空向量')
+      if (dim <= 0) throw new Error('embedding probe: the endpoint returned an empty vector')
       probes.push({ id: candidate.id, route: candidate.route, model: candidate.model, baseUrl: candidate.baseUrl, ok: true, dim, ms: Date.now() - started })
       if (applied === null) {
         applied = { id: candidate.id, baseUrl: candidate.baseUrl, model: candidate.model, apiKeyEnv: candidate.apiKeyEnv, dim }

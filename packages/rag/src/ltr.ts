@@ -133,7 +133,7 @@ export interface LtrModel {
  */
 export function trainLogistic(training: readonly TrainingRow[], options: { epochs?: number; learningRate?: number } = {}): LtrModel {
   const labels = new Set(training.map((row) => row.label))
-  if (labels.size < 2) throw new Error('LTR: 标注只有单一极性,无法拟合')
+  if (labels.size < 2) throw new Error('LTR: labels carry a single polarity only, cannot fit')
   const epochs = options.epochs ?? 400
   const lr = options.learningRate ?? 0.1
   const weights: Record<string, number> = {}

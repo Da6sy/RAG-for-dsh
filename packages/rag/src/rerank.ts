@@ -258,6 +258,17 @@ export interface RerankContext {
    */
   semanticRanks?: { rank: ReadonlyMap<string, number>; minmax: ReadonlyMap<string, number> }
   /**
+   * Which language the EXPLANATION LINES are rendered in.
+   *
+   * The explain text is shared by three surfaces with different copy rules: the
+   * console (English, by product decision), the web panel (Chinese), and the
+   * model-facing blocks (Chinese). So the labels are chosen by the CALLER rather
+   * than baked in — the arithmetic stays one implementation, and each surface
+   * gets the copy its own rule demands. Default `zh` keeps every existing caller
+   * byte-identical.
+   */
+  labels?: 'zh' | 'en'
+  /**
    * D1's `scale_q`: the saturation scale `bm25ish = raw/(raw + scale_q)` divides
    * by. Absent ⇒ the recall pool's p90 (the documented approximation); the
    * indexed path supplies the CORPUS-level quantile instead, which is what the
@@ -541,20 +552,36 @@ export function rerankOne(candidate: RerankCandidate, context: RerankContext, bm
   const score = Math.round(additive * multiplier * 10000) / 10000
 
   const explanation: string[] = []
-  const label: Record<string, string> = {
-    bm25ish: '词法 BM25(含 IDF 与长度归一)',
-    exactPhrase: '查询逐字命中',
-    semantic: '语义相似度',
-    specificity: '查询覆盖率',
-    bindingOverlap: '绑定文件在本次改动中',
-    redlinePenalty: '划除惩罚',
-    freshness: '新鲜度',
-    signalScore: '窗口信号分',
-    docMountBonus: '有原文层可下钻',
-    semanticRank: '语义名次',
-    fusedRank: '融合名次',
-    semanticAbsent: '语义缺失指示',
-  }
+  const en = (context.labels ?? 'zh') === 'en'
+  const label: Record<string, string> = en
+    ? {
+        bm25ish: 'lexical BM25 (IDF + length norm)',
+        exactPhrase: 'verbatim query hit',
+        semantic: 'semantic similarity',
+        specificity: 'query coverage',
+        bindingOverlap: 'bound file touched',
+        redlinePenalty: 'redline penalty',
+        freshness: 'freshness',
+        signalScore: 'window signal score',
+        docMountBonus: 'document layer available',
+        semanticRank: 'semantic rank',
+        fusedRank: 'fused rank',
+        semanticAbsent: 'semantic missing',
+      }
+    : {
+        bm25ish: '词法 BM25(含 IDF 与长度归一)',
+        exactPhrase: '查询逐字命中',
+        semantic: '语义相似度',
+        specificity: '查询覆盖率',
+        bindingOverlap: '绑定文件在本次改动中',
+        redlinePenalty: '划除惩罚',
+        freshness: '新鲜度',
+        signalScore: '窗口信号分',
+        docMountBonus: '有原文层可下钻',
+        semanticRank: '语义名次',
+        fusedRank: '融合名次',
+        semanticAbsent: '语义缺失指示',
+      }
   for (const [key, value] of Object.entries(contributions)) {
     // D3: present-but-tiny is silent (as before); absent-and-counting is not.
     if (Math.abs(value) < 0.0005) continue
@@ -563,19 +590,29 @@ export function rerankOne(candidate: RerankCandidate, context: RerankContext, bm
   for (const key of missing) {
     const weight = key === 'semanticRank' ? weights.semanticRank : weights.semantic
     if (weight === 0) continue
-    explanation.push(`${label[key] ?? key} 未参与(该通道未召回,不计 0 分)`)
+    explanation.push(en
+      ? `${label[key] ?? key} not participating (channel did not recall this candidate)`
+      : `${label[key] ?? key} 未参与(该通道未召回,不计 0 分)`)
   }
   // F1: a GATED channel says so in the same breath — "silently zero" and
   // "switched off for a stated reason" must not look alike.
   if (semanticGated && weights.semantic !== 0) {
-    explanation.push(`语义相似度 未参与(${context.semanticGate?.reason ?? '门控'})`)
+    explanation.push(en
+      ? `semantic similarity not participating (${context.semanticGate?.reason ?? 'gated'})`
+      : `语义相似度 未参与(${context.semanticGate?.reason ?? '门控'})`)
   }
-  explanation.push(`词法召回分 ${candidate.lexicalScore}(保留,不参与精排)`)
-  if (factors.statusFactor !== 1) explanation.push(`状态 ${entry.status} ×${factors.statusFactor}`)
-  if (factors.tierFactor !== 1) explanation.push(`全局层 ×${factors.tierFactor}`)
-  if (factors.reviewPenalty !== 1) explanation.push(`待复核 ×${factors.reviewPenalty}`)
+  explanation.push(en
+    ? `lexical recall score ${candidate.lexicalScore} (kept, not part of the rerank)`
+    : `词法召回分 ${candidate.lexicalScore}(保留,不参与精排)`)
+  if (factors.statusFactor !== 1) {
+    explanation.push(en ? `status ${entry.status} ×${factors.statusFactor}` : `状态 ${entry.status} ×${factors.statusFactor}`)
+  }
+  if (factors.tierFactor !== 1) explanation.push(en ? `global tier ×${factors.tierFactor}` : `全局层 ×${factors.tierFactor}`)
+  if (factors.reviewPenalty !== 1) explanation.push(en ? `needs review ×${factors.reviewPenalty}` : `待复核 ×${factors.reviewPenalty}`)
   if (context.profile !== undefined) {
-    explanation.push(`通道 profile ${context.profile.name}(词法 ×${context.profile.lexicalWeight} / 语义 ×${context.profile.semanticWeight})`)
+    explanation.push(en
+      ? `channel profile ${context.profile.name} (lexical ×${context.profile.lexicalWeight} / semantic ×${context.profile.semanticWeight})`
+      : `通道 profile ${context.profile.name}(词法 ×${context.profile.lexicalWeight} / 语义 ×${context.profile.semanticWeight})`)
   }
   return { candidate, score, features, contributions, factors, explanation, missing }
 }

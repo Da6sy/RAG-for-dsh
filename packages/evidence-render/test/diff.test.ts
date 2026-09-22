@@ -54,7 +54,7 @@ test('added and removed modules are reported with severity by kind', () => {
   const added = report.entries.find((e) => e.kind === 'added')
   assert.ok(added)
   assert.equal(added.severity, 'warn') // interactive additions matter
-  assert.match(added.detail, /新增 <interactive>/)
+  assert.match(added.detail, /added <interactive>/)
 
   const report2 = diffSnapshots(next, base)
   const removed = report2.entries.find((e) => e.kind === 'removed')
@@ -74,10 +74,10 @@ test('moved module reports delta, grid change and relation change', () => {
   const report = diffSnapshots(before, after)
   const moved = report.entries.find((e) => e.kind === 'moved')
   assert.ok(moved)
-  assert.match(moved.detail, /下移64px/)
-  assert.match(moved.detail, /左移610px/)
+  assert.match(moved.detail, /moved down 64px/)
+  assert.match(moved.detail, /moved left 610px/)
   assert.match(moved.detail, /grid r1 c6-6 → r2 c1-1/)
-  assert.match(moved.detail, /关系变化: 新增 below:input; 失去 beside:input/)
+  assert.match(moved.detail, /relations changed: gained below:input; lost beside:input/)
 })
 
 test('tabbable loss is an error-severity interactive regression', () => {
@@ -87,7 +87,7 @@ test('tabbable loss is an error-severity interactive regression', () => {
   const entry = report.entries.find((e) => e.kind === 'interactive')
   assert.ok(entry)
   assert.equal(entry.severity, 'error')
-  assert.match(entry.detail, /掉出 Tab 顺序/)
+  assert.match(entry.detail, /fell out of tab order/)
 })
 
 test('new occlusion is error; clearing it is info', () => {
@@ -109,7 +109,7 @@ test('assertion flips: pass→fail is error, fail→pass is info, vanished is wa
   const flip = report.entries.find((e) => e.label === '按钮可 Tab')
   assert.ok(flip)
   assert.equal(flip.severity, 'error')
-  assert.match(flip.detail, /检查转为失败/)
+  assert.match(flip.detail, /assertion flipped to fail/)
   const vanished = report.entries.find((e) => e.label === '旧检查')
   assert.equal(vanished?.severity, 'warn')
 

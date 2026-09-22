@@ -81,6 +81,6 @@ test('updateEntryText: audited body edit, no-op on identical text, loud on blank
   assert.equal(same.history.length, updated.history.length)
 
   // Blank text and missing entries fail loud.
-  await assert.rejects(store.updateEntryText(entry.id, '   ', 'x'), /正文不能为空白/)
-  await assert.rejects(store.updateEntryText('k-ghost' as never, 'x', 'y'), /条目不存在/)
+  await assert.rejects(store.updateEntryText(entry.id, '   ', 'x'), /entry text must not be blank/)
+  await assert.rejects(store.updateEntryText('k-ghost' as never, 'x', 'y'), /entry not found/)
 })

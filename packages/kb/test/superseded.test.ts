@@ -57,7 +57,7 @@ test('状态机: superseded 只能由 split 到达,且没有出边(终态)', () 
       'rescue',
       'x',
     ),
-    /非法状态迁移/,
+    /illegal state transition/,
   )
 })
 

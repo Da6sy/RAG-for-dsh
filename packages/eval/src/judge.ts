@@ -85,7 +85,7 @@ export function extractJson(text: string): unknown {
   const candidate = (fenced?.[1] ?? text).trim()
   const start = candidate.indexOf('{')
   const end = candidate.lastIndexOf('}')
-  if (start === -1 || end <= start) throw new Error(`没有 JSON: ${candidate.slice(0, 100)}`)
+  if (start === -1 || end <= start) throw new Error(`eval judge: no JSON found in model output: ${candidate.slice(0, 100)}`)
   return JSON.parse(candidate.slice(start, end + 1))
 }
 

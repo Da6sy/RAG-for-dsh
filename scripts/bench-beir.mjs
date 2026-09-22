@@ -266,7 +266,10 @@ try {
     }
     const n = evaluated.length || 1
     rows.push({
-      config: 'bm25 (参考基线)', channels: 'bm25', rerank: false,
+      // Console-facing label: it lands in the report and is printed verbatim by
+      // `clue bench diff`/`bench list` (the console is English). Archived reports
+      // keep the older Chinese label they were written with — that is data.
+      config: 'bm25 (reference baseline)', channels: 'bm25', rerank: false,
       'nDCG@10': Math.round((ndcg / n) * 10000) / 10000,
       'recall@10': Math.round((recall / n) * 10000) / 10000,
       'MRR@10': Math.round((rr / n) * 10000) / 10000,

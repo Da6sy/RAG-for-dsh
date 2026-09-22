@@ -53,17 +53,17 @@ test('嵌入来源:hash 明确标注语义能力=0,http 缺配置时拒绝而不
   const hash = pickEmbedder('hash', null)
   assert.equal(hash.semantics, 'none')
   assert.match(hash.embedder.id, /hash/)
-  assert.throws(() => pickEmbedder('http', null), /需要先配置嵌入端点/)
+  assert.throws(() => pickEmbedder('http', null), /requires a configured embedding endpoint/)
   const real = pickEmbedder('http', hashEmbedder({ dim: 8 }))
   assert.equal(real.semantics, 'endpoint')
-  assert.throws(() => pickEmbedder('nope', null), /只能是 hash\|http/)
+  assert.throws(() => pickEmbedder('nope', null), /accepts only hash\|http/)
 })
 
 test('护栏:词法金矿类回退超 1pt 即失败(硬线,不可被平均掉)', () => {
   const baseline = { exact: block(1), entity: block(1), identifier: block(1), paraphrase: block(0.5), 'cross-lingual': block(0) }
   const dropped = { ...baseline, exact: block(0.9) }
   const violations = guardrails(dropped, baseline, toolConfig)
-  assert.ok(violations.some((line) => line.includes('exact recall@1 回退 10.0pt')), violations.join(' | '))
+  assert.ok(violations.some((line) => line.includes('exact recall@1 regressed 10.0pt')), violations.join(' | '))
   // 1pt 以内不算违规(阈值是"回退 > 1pt")
   const tiny = { ...baseline, entity: block(0.995) }
   assert.equal(guardrails(tiny, baseline, toolConfig).some((line) => line.includes('entity')), false)
@@ -72,7 +72,7 @@ test('护栏:词法金矿类回退超 1pt 即失败(硬线,不可被平均掉)',
 test('护栏:语义目标类提升不足 5pt 时,向量通道算"未证明有效"(任一截断点算数)', () => {
   const baseline = { exact: block(1), entity: block(1), identifier: block(1), paraphrase: block(0.6), 'cross-lingual': block(0.2) }
   const flat = { ...baseline, paraphrase: block(0.62) }
-  assert.ok(guardrails(flat, baseline, toolConfig).some((line) => line.includes('未证明有效')))
+  assert.ok(guardrails(flat, baseline, toolConfig).some((line) => line.includes('not proven effective')))
   const improved = { ...baseline, paraphrase: block(0.7), 'cross-lingual': block(0.3) }
   assert.deepEqual(guardrails(improved, baseline, toolConfig), [])
   // 词法-only 的配置不该被要求证明语义
@@ -135,5 +135,5 @@ test('生成器:类别轮转按请求的集合走,默认仍是三类(老报告�
   assert.deepEqual([...new Set(legacy.queries.map((query) => query.kind))].sort(), ['entity', 'exact', 'paraphrase'])
   const six = buildSyntheticSet({ chunks: 30, queries: 60, seed: 3, kinds: ['exact', 'cross-lingual', 'negation', 'identifier'] })
   assert.deepEqual([...new Set(six.queries.map((query) => query.kind))].sort(), ['cross-lingual', 'exact', 'identifier', 'negation'])
-  assert.throws(() => buildSyntheticSet({ kinds: [] }), /不能为空/)
+  assert.throws(() => buildSyntheticSet({ kinds: [] }), /kinds must not be empty/)
 })

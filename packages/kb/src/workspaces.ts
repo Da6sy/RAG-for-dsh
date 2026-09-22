@@ -150,7 +150,7 @@ export async function readWorkspaces(home: string = clueHome()): Promise<Workspa
     return sortRecords(records)
   }
   if (doc.version !== undefined && doc.version !== WORKSPACES_REGISTRY_VERSION) {
-    throw new Error(`工作区注册表版本不匹配: v${String(doc.version)} ≠ v${WORKSPACES_REGISTRY_VERSION} — 拒绝读取(不自动迁移)`)
+    throw new Error(`workspace registry version mismatch: v${String(doc.version)} ≠ v${WORKSPACES_REGISTRY_VERSION} — refused (no auto-migration)`)
   }
   return sortRecords((doc.workspaces ?? []) as WorkspaceRecord[])
 }
@@ -274,7 +274,7 @@ export async function writeWorkspaces(records: readonly WorkspaceRecord[], home:
  */
 export async function addWorkspace(projectRoot: string, label?: string, home: string = clueHome()): Promise<WorkspaceRecord> {
   const root = canonicalRoot(projectRoot)
-  if (!(await rootExists(root))) throw new Error(`工作区目录不存在: ${projectRoot}`)
+  if (!(await rootExists(root))) throw new Error(`workspace directory does not exist: ${projectRoot}`)
   const now = new Date().toISOString()
   const records = await readWorkspaces(home)
   const existing = records.find((row) => row.root === root)
@@ -297,10 +297,10 @@ export async function addWorkspace(projectRoot: string, label?: string, home: st
  * @throws when the key is unknown or the label is blank.
  */
 export async function renameWorkspace(key: string, label: string, home: string = clueHome()): Promise<WorkspaceRecord> {
-  if (label.trim() === '') throw new Error('工作区标签不能为空')
+  if (label.trim() === '') throw new Error('workspace label must not be empty')
   const records = await readWorkspaces(home)
   const index = records.findIndex((row) => row.key === key)
-  if (index === -1) throw new Error(`工作区未登记: ${key}`)
+  if (index === -1) throw new Error(`workspace not registered: ${key}`)
   records[index] = { ...records[index], label: label.trim(), lastSeenAt: new Date().toISOString() }
   await writeRegistry({ version: WORKSPACES_REGISTRY_VERSION, workspaces: sortRecords(records) }, home)
   return records[index]
@@ -321,7 +321,7 @@ export async function removeWorkspace(
 ): Promise<{ record: WorkspaceRecord; kbDir: string; baselinesDir: string }> {
   const records = await readWorkspaces(home)
   const index = records.findIndex((row) => row.key === key)
-  if (index === -1) throw new Error(`工作区未登记: ${key}`)
+  if (index === -1) throw new Error(`workspace not registered: ${key}`)
   const [record] = records.splice(index, 1)
   await writeRegistry({ version: WORKSPACES_REGISTRY_VERSION, workspaces: sortRecords(records) }, home)
   return {
@@ -382,7 +382,7 @@ export async function setRenderSurface(
 ): Promise<WorkspaceRecord> {
   const records = await readWorkspaces(home)
   const index = records.findIndex((row) => row.key === key)
-  if (index === -1) throw new Error(`工作区未登记: ${key}`)
+  if (index === -1) throw new Error(`workspace not registered: ${key}`)
   const next = { ...records[index], lastSeenAt: new Date().toISOString() }
   if (settings === null) delete next.renderSurface
   else next.renderSurface = settings

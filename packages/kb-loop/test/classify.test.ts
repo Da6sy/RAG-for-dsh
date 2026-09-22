@@ -67,7 +67,7 @@ test('the workspace record REPLACES defaults (explicit over implicit) and fails 
   const doc = JSON.parse(await readFile(path.join(home, 'workspaces.json'), 'utf8'))
   doc.workspaces[0].renderSurface = { extensions: 'nope' }
   await writeFile(path.join(home, 'workspaces.json'), JSON.stringify(doc), 'utf8')
-  await assert.rejects(() => loadRenderSurfaceConfig(proj, home), /格式错误/)
+  await assert.rejects(() => loadRenderSurfaceConfig(proj, home), /render surface config malformed/)
 
   // Clearing the override falls back to the shipped defaults.
   await setRenderSurface(record.key, null, home)

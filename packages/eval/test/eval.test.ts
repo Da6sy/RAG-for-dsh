@@ -73,7 +73,7 @@ test('BEIR 读取器: 只保留有 qrels 的查询(未判定的查询不能算�
 test('判分解析: 宽容(围栏/百分制/缺项),失败返回 null 而不是 0', () => {
   assert.equal(parseFaithfulness('```json\n{"claims":[{"supported":true},{"supported":false}]}\n```'), 0.5)
   assert.equal(parseFaithfulness('{"claims":[]}'), null)
-  assert.throws(() => parseFaithfulness('我觉得还行'), /没有 JSON/)
+  assert.throws(() => parseFaithfulness('我觉得还行'), /no JSON found/)
   assert.equal(parseRelevance('{"relevance":0.8}'), 0.8)
   assert.equal(parseRelevance('{"relevance":80}'), 0.8, '百分制要归一化')
   assert.equal(parseRelevance('{"relevance":8}'), 0.8, '十分制要归一化')

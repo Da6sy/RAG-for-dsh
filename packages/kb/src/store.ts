@@ -165,7 +165,7 @@ export class KbStore {
     if (options.tier === 'global') {
       dir = path.join(home, 'kb', '_global')
     } else {
-      if (options.projectRoot === undefined) throw new Error('KbStore.open: tier=project 需要 projectRoot')
+      if (options.projectRoot === undefined) throw new Error('KbStore.open: tier=project requires projectRoot')
       tierRoot = canonicalRoot(options.projectRoot)
       key = await workspaceKey(tierRoot, home)
       dir = path.join(home, 'kb', key)
@@ -192,7 +192,7 @@ export class KbStore {
 
   /** Resolve a binding's relative path against the project anchor. */
   bindingPath(binding: SourceBinding): string {
-    if (this.projectRoot === null) throw new Error('全局库条目不支持文件绑定解析(没有项目锚点)')
+    if (this.projectRoot === null) throw new Error('kb: global-tier entries cannot resolve file bindings (no project anchor)')
     return path.resolve(this.projectRoot, binding.path)
   }
 
@@ -204,14 +204,14 @@ export class KbStore {
    */
   async add(input: AddEntryInput, at: string = new Date().toISOString()): Promise<KbEntry> {
     if (input.title.trim() === '' || input.text.trim() === '') {
-      throw new Error('kb add: title 和 text 都不能为空')
+      throw new Error('kb add: neither title nor text may be empty')
     }
     const id = KbEntryId(`k-${Date.now().toString(36)}-${randomUUID().slice(0, 6)}`)
     const bindings: SourceBinding[] = []
     for (const rel of input.bindings ?? []) {
       const normalized = rel.replace(/\\/g, '/').replace(/^\/+/, '')
       const abs = this.projectRoot === null
-        ? (() => { throw new Error('全局库条目不能绑定项目文件') })()
+        ? (() => { throw new Error('kb add: global-tier entries cannot bind project files') })()
         : path.resolve(this.projectRoot, normalized)
       bindings.push({ path: normalized, contentHash: await sha256File(abs) })
     }
@@ -245,7 +245,7 @@ export class KbStore {
     const entry = await readJsonOrNull<KbEntry>(this.entryFile(id))
     if (entry === null) return null
     if (entry.version !== KB_FORMAT_VERSION) {
-      throw new Error(`kb 条目版本不匹配: ${id} 是 v${String(entry.version)}, 当前 v${KB_FORMAT_VERSION} — 拒绝读取(不自动迁移)`)
+      throw new Error(`kb entry version mismatch: ${id} is v${String(entry.version)}, current v${KB_FORMAT_VERSION} — refused (no auto-migration)`)
     }
     return entry
   }
@@ -281,7 +281,7 @@ export class KbStore {
   /** Guarded status transition (legality lives in state-machine.ts). */
   async transition(id: KbEntryId, to: KbStatus, trigger: TransitionTrigger, reason: string, at?: string): Promise<KbEntry> {
     const entry = await this.get(id)
-    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry === null) throw new Error(`kb: entry not found: ${id}`)
     return this.save(applyTransition(entry, to, trigger, reason, at))
   }
 
@@ -293,7 +293,7 @@ export class KbStore {
    */
   async checkBindings(id: KbEntryId, at: string = new Date().toISOString()): Promise<KbEntry> {
     let entry = await this.get(id)
-    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry === null) throw new Error(`kb: entry not found: ${id}`)
     if (entry.tier === 'global' || entry.bindings.length === 0) return entry
     for (const binding of entry.bindings) {
       const abs = this.bindingPath(binding)
@@ -341,7 +341,7 @@ export class KbStore {
    */
   async flagNeedsReview(id: KbEntryId, reason: string, at: string = new Date().toISOString()): Promise<KbEntry> {
     const entry = await this.get(id)
-    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry === null) throw new Error(`kb: entry not found: ${id}`)
     return this.save(raiseNeedsReview(entry, reason, at))
   }
 
@@ -352,7 +352,7 @@ export class KbStore {
    */
   async reverify(id: KbEntryId, accept: boolean, at: string = new Date().toISOString()): Promise<KbEntry> {
     let entry = await this.get(id)
-    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry === null) throw new Error(`kb: entry not found: ${id}`)
     if (accept && entry.tier !== 'global') {
       const rebound: SourceBinding[] = []
       const previous = entry.bindings
@@ -361,7 +361,7 @@ export class KbStore {
         try {
           rebound.push({ path: binding.path, contentHash: await sha256File(abs) })
         } catch {
-          throw new Error(`kb reverify --accept: 绑定文件不存在 ${binding.path}(不能接受一个消失的文件为新基准)`)
+          throw new Error(`kb reverify --accept: binding file does not exist: ${binding.path} (a vanished file cannot be accepted as the new basis)`)
         }
       }
       const changed = rebound.some((b, i) => b.contentHash !== previous[i].contentHash)
@@ -408,11 +408,11 @@ export class KbStore {
   ): Promise<KbEntry> {
     const at = options.at ?? new Date().toISOString()
     let entry = await this.get(id)
-    if (entry === null) throw new Error(`kb rebind: 条目不存在 ${id}`)
+    if (entry === null) throw new Error(`kb rebind: entry not found: ${id}`)
     if (entry.tier === 'global' && paths.length > 0) {
-      throw new Error('kb rebind: 全局库条目不能绑定项目文件')
+      throw new Error('kb rebind: global-tier entries cannot bind project files')
     }
-    if (reason.trim() === '') throw new Error('kb rebind: 必须写明理由(改绑进履历)')
+    if (reason.trim() === '') throw new Error('kb rebind: a reason is required (the rebind enters the history)')
     const bindings: SourceBinding[] = []
     for (const rel of paths) {
       const normalized = rel.replace(/\\/g, '/').replace(/^\/+/, '')
@@ -420,7 +420,7 @@ export class KbStore {
       try {
         bindings.push({ path: normalized, contentHash: await sha256File(abs) })
       } catch {
-        throw new Error(`kb rebind: 绑定文件不存在 ${normalized}(先确认路径,再改绑)`)
+        throw new Error(`kb rebind: binding file does not exist: ${normalized} (check the path first, then rebind)`)
       }
     }
     const before = entry.bindings.map((binding) => binding.path).join(', ')
@@ -460,8 +460,8 @@ export class KbStore {
    */
   async updateEntryText(id: KbEntryId, text: string, reason: string, at: string = new Date().toISOString()): Promise<KbEntry> {
     const entry = await this.get(id)
-    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
-    if (text.trim() === '') throw new Error('kb: 正文不能为空白')
+    if (entry === null) throw new Error(`kb: entry not found: ${id}`)
+    if (text.trim() === '') throw new Error('kb: entry text must not be blank')
     if (text === entry.text) return entry // no-op edit: no history spam
     return this.save({
       ...entry,
@@ -478,7 +478,7 @@ export class KbStore {
 
   /** Resolve a doc source path against the project anchor (drift detection). */
   docSourcePath(relative: string): string {
-    if (this.projectRoot === null) throw new Error('全局库条目不支持原文层(没有项目锚点)')
+    if (this.projectRoot === null) throw new Error('kb: global-tier entries have no document layer (no project anchor)')
     return path.resolve(this.projectRoot, relative)
   }
 
@@ -491,7 +491,7 @@ export class KbStore {
     const record = await readDocRecord(this.dir, docId)
     if (record === null) return null
     if (record.version !== KB_FORMAT_VERSION) {
-      throw new Error(`kb 文档版本不匹配: ${String(docId)} 是 v${String(record.version)}, 当前 v${KB_FORMAT_VERSION} — 拒绝读取(不自动迁移)`)
+      throw new Error(`kb document version mismatch: ${String(docId)} is v${String(record.version)}, current v${KB_FORMAT_VERSION} — refused (no auto-migration)`)
     }
     return record
   }
@@ -543,8 +543,8 @@ export class KbStore {
    */
   async attachDoc(id: KbEntryId, docId: KbDocId | string, anchor?: DocAnchor, at: string = new Date().toISOString()): Promise<KbEntry> {
     const entry = await this.get(id)
-    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
-    if (!await docExists(this.dir, docId)) throw new Error(`kb: 文档快照不存在 ${String(docId)}(先用 clue kb ingest 导入)`)
+    if (entry === null) throw new Error(`kb: entry not found: ${id}`)
+    if (!await docExists(this.dir, docId)) throw new Error(`kb: document snapshot not found: ${String(docId)} (import it with clue kb ingest first)`)
     const anchorWithQuote = anchor === undefined
       ? undefined
       : { ...anchor, quoteAnchor: anchor.quoteAnchor ?? '' }
@@ -575,7 +575,7 @@ export class KbStore {
    */
   async checkDocs(id: KbEntryId, at: string = new Date().toISOString()): Promise<KbEntry> {
     let entry = await this.get(id)
-    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry === null) throw new Error(`kb: entry not found: ${id}`)
     if (entry.tier === 'global' || entry.doc === undefined) return entry
     const record = await this.getDoc(entry.doc.docId)
     if (record === null) {
@@ -637,10 +637,10 @@ export class KbStore {
     at: string = new Date().toISOString(),
   ): Promise<{ entry: KbEntry; ratio: number; proposal: ApprovalRequest | null }> {
     const entry = await this.get(id)
-    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry === null) throw new Error(`kb: entry not found: ${id}`)
     const [from, to] = input.chars
     if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from) {
-      throw new Error(`kb redline: 非法字符区间 ${from}-${to}(需 1 ≤ from ≤ to)`)
+      throw new Error(`kb redline: invalid char range ${from}-${to} (requires 1 ≤ from ≤ to)`)
     }
     const quoteAnchor = entry.text.slice(from - 1, from - 1 + 40).replace(/\s+/g, ' ').trim()
     const redline: KbRedline = {
@@ -693,13 +693,13 @@ export class KbStore {
     at: string = new Date().toISOString(),
   ): Promise<{ entry: KbEntry; ratio: number; proposal: ApprovalRequest | null }> {
     const entry = await this.get(id)
-    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
-    if (entry.doc === undefined) throw new Error(`kb redline: 条目 ${id} 没有原文层,划除请用 --chars(正文区间)`)
+    if (entry === null) throw new Error(`kb: entry not found: ${id}`)
+    if (entry.doc === undefined) throw new Error(`kb redline: entry ${id} has no document layer; redline a text range with --chars instead`)
     const record = await this.getDoc(entry.doc.docId)
-    if (record === null) throw new Error(`kb redline: 文档快照不存在 ${String(entry.doc.docId)}`)
+    if (record === null) throw new Error(`kb redline: document snapshot not found: ${String(entry.doc.docId)}`)
     const [from, to] = input.lines
     if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from || to > record.lineCount) {
-      throw new Error(`kb redline: 非法行区间 ${from}-${to}(文档共 ${record.lineCount} 行)`)
+      throw new Error(`kb redline: invalid line range ${from}-${to} (the document has ${record.lineCount} lines)`)
     }
     const { readDocText } = await import('./docs.ts')
     const text = (await readDocText(this.dir, entry.doc.docId)) ?? ''
@@ -765,9 +765,9 @@ export class KbStore {
     at: string = new Date().toISOString(),
   ): Promise<{ old: KbEntry; created: KbEntry[] }> {
     const entry = await this.get(id)
-    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
-    if (entry.status === 'superseded') throw new Error(`kb split: 条目 ${id} 已被拆分替代(superseded 是终态)`)
-    if (drafts.length === 0) throw new Error('kb split: 至少需要一条新条目草稿')
+    if (entry === null) throw new Error(`kb: entry not found: ${id}`)
+    if (entry.status === 'superseded') throw new Error(`kb split: entry ${id} was superseded by a split (superseded is a terminal state)`)
+    if (drafts.length === 0) throw new Error('kb split: at least one new-entry draft is required')
     const created: KbEntry[] = []
     for (const draft of drafts) {
       const child = await this.add({
@@ -795,7 +795,7 @@ export class KbStore {
 
   /** Append one weighted signal to the ledger. */
   async recordSignal(id: KbEntryId, input: SignalInput, note = '', at?: string): Promise<SignalRecord> {
-    if ((await this.get(id)) === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if ((await this.get(id)) === null) throw new Error(`kb: entry not found: ${id}`)
     const record = buildSignal(id, input, note, this.config, at)
     await appendSignal(this.signalsFile, record)
     return record
@@ -809,7 +809,7 @@ export class KbStore {
   /** Mark the entry as referenced (drives the expire timer; NOT a signal — see query.ts doctrine). */
   async touch(id: KbEntryId, at: string = new Date().toISOString()): Promise<KbEntry> {
     const entry = await this.get(id)
-    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry === null) throw new Error(`kb: entry not found: ${id}`)
     return this.save({
       ...entry,
       stats: { lastReferencedAt: at, referenceCount: entry.stats.referenceCount + 1 },
@@ -936,9 +936,9 @@ export class KbStore {
   async resolveApproval(requestId: string, approved: boolean, at: string = new Date().toISOString()): Promise<{ request: ApprovalRequest; entry: KbEntry | null }> {
     const approvals = (await readJsonOrNull<ApprovalRequest[]>(this.approvalsFile)) ?? []
     const index = approvals.findIndex((a) => a.id === requestId)
-    if (index === -1) throw new Error(`kb: 审批请求不存在 ${requestId}`)
+    if (index === -1) throw new Error(`kb: approval request not found: ${requestId}`)
     const request = approvals[index]
-    if (request.resolvedAt !== null) throw new Error(`kb: 请求 ${requestId} 已被处理(${request.resolution})`)
+    if (request.resolvedAt !== null) throw new Error(`kb: request ${requestId} is already resolved (${request.resolution})`)
     let entry: KbEntry | null = null
     if (approved) {
       if (request.action === 'promote') {
@@ -999,16 +999,16 @@ export class KbStore {
     at: string = new Date().toISOString(),
   ): Promise<{ entry: KbEntry; requests: ApprovalRequest[] }> {
     const entry = await this.get(id)
-    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry === null) throw new Error(`kb: entry not found: ${id}`)
     if (entry.status !== 'candidate') {
       const hint = entry.status === 'trusted'
-        ? '(它已经是可信)'
+        ? ' (it is already trusted)'
         : entry.status === 'expired'
-          ? '(过期的先 reverify/reactivate 回到候选,再提升)'
+          ? ' (an expired entry must reverify/reactivate back to candidate first, then promote)'
           : entry.status === 'discarded'
-            ? '(已遗弃的先捞回成候选,再提升)'
-            : '(已拆分条目是历史,提升它的后继条目)'
-      throw new Error(`kb promote: 只有候选能提升为可信,当前是 ${entry.status}${hint}`)
+            ? ' (a discarded entry must be rescued to candidate first, then promote)'
+            : ' (a superseded entry is history; promote its successor instead)'
+      throw new Error(`kb promote: only candidates can be promoted to trusted, this entry is ${entry.status}${hint}`)
     }
     const by = input.by ?? 'cli'
     const why = (input.reason ?? '').trim()
@@ -1049,14 +1049,14 @@ export class KbStore {
     at: string = new Date().toISOString(),
   ): Promise<{ entry: KbEntry; requests: ApprovalRequest[] }> {
     const entry = await this.get(id)
-    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry === null) throw new Error(`kb: entry not found: ${id}`)
     if (entry.status !== 'candidate' && entry.status !== 'trusted') {
-      throw new Error(`kb retire: 只有候选/可信能人工判定不再成立,当前是 ${entry.status}`
-        + (entry.status === 'superseded' ? '(已拆分条目是历史,处理它的后继条目)' : '(它已经不在服役)'))
+      throw new Error(`kb retire: only candidate/trusted entries can be retired by human decision, this entry is ${entry.status}`
+        + (entry.status === 'superseded' ? ' (a superseded entry is history; act on its successor)' : ' (it is no longer in service)'))
     }
     const by = input.by ?? 'cli'
     const why = (input.reason ?? '').trim()
-    if (why === '') throw new Error('kb retire: 必须留下理由(判定"不再成立"是一次治理决定)')
+    if (why === '') throw new Error('kb retire: a reason is required (deciding "no longer holds" is a governance decision)')
     const retired = await this.transition(entry.id, 'expired', 'human-retire', `人工判定不再成立(${by}): ${why}`, at)
     // The verdict supersedes the drift flag: a retired entry cannot be
     // "possibly stale" — it is out of the write-basis by decision.
@@ -1087,9 +1087,9 @@ export class KbStore {
     at: string = new Date().toISOString(),
   ): Promise<{ entry: KbEntry; requests: ApprovalRequest[] }> {
     const entry = await this.get(id)
-    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry === null) throw new Error(`kb: entry not found: ${id}`)
     if (entry.status !== 'expired') {
-      throw new Error(`kb reactivate: 只有过期条目能重新激活,当前是 ${entry.status}`)
+      throw new Error(`kb reactivate: only expired entries can be reactivated, this entry is ${entry.status}`)
     }
     const by = input.by ?? 'cli'
     const why = (input.reason ?? '').trim()
@@ -1122,9 +1122,9 @@ export class KbStore {
     at: string = new Date().toISOString(),
   ): Promise<{ entry: KbEntry; requests: ApprovalRequest[] }> {
     const entry = await this.get(id)
-    if (entry === null) throw new Error(`kb: 条目不存在 ${id}`)
+    if (entry === null) throw new Error(`kb: entry not found: ${id}`)
     if (entry.status !== 'discarded') {
-      throw new Error(`kb rescue: 只有已遗弃条目能捞回,当前是 ${entry.status}`)
+      throw new Error(`kb rescue: only discarded entries can be rescued, this entry is ${entry.status}`)
     }
     const by = input.by ?? 'cli'
     const why = (input.reason ?? '').trim()
@@ -1260,30 +1260,30 @@ export async function migrateWorkspaceKbsToCentral(options: MigrateOptions = {})
     if (hasKb) {
       const occupied = (await readdir(kbTo).catch(() => null)) !== null
       if (occupied) {
-        report.push({ root, kind: 'kb', from: kbFrom, to: kbTo, moved: false, reason: '中心库已存在，不覆盖（请手动合并）' })
+        report.push({ root, kind: 'kb', from: kbFrom, to: kbTo, moved: false, reason: 'central store already exists — not overwritten (merge manually)' })
       } else if (options.dryRun === true) {
-        report.push({ root, kind: 'kb', from: kbFrom, to: kbTo, moved: false, reason: 'dry-run：将迁入中心库' })
+        report.push({ root, kind: 'kb', from: kbFrom, to: kbTo, moved: false, reason: 'dry-run: would move into the central store' })
       } else {
         await moveDir(kbFrom, kbTo)
         await registerWorkspace(root, { home, source: 'migrate' })
-        report.push({ root, kind: 'kb', from: kbFrom, to: kbTo, moved: true, reason: '已收回到中心库' })
+        report.push({ root, kind: 'kb', from: kbFrom, to: kbTo, moved: true, reason: 'moved into the central store' })
       }
     }
     if (hasBaselines) {
       const occupied = (await readdir(baselinesTo).catch(() => null)) !== null
       if (occupied) {
-        report.push({ root, kind: 'baselines', from: baselinesFrom, to: baselinesTo, moved: false, reason: '中心基准目录已存在，不覆盖' })
+        report.push({ root, kind: 'baselines', from: baselinesFrom, to: baselinesTo, moved: false, reason: 'central baselines directory already exists — not overwritten' })
       } else if (options.dryRun === true) {
-        report.push({ root, kind: 'baselines', from: baselinesFrom, to: baselinesTo, moved: false, reason: 'dry-run：将迁入中心基准目录' })
+        report.push({ root, kind: 'baselines', from: baselinesFrom, to: baselinesTo, moved: false, reason: 'dry-run: would move into the central baselines directory' })
       } else {
         await moveDir(baselinesFrom, baselinesTo)
-        report.push({ root, kind: 'baselines', from: baselinesFrom, to: baselinesTo, moved: true, reason: '渲染基准已收回中心' })
+        report.push({ root, kind: 'baselines', from: baselinesFrom, to: baselinesTo, moved: true, reason: 'render baselines moved into the central directory' })
       }
     }
     if (hasSurface) {
       const target = `${key} @ workspaces.json`
       if (options.dryRun === true) {
-        report.push({ root, kind: 'surface', from: surfaceFrom, to: target, moved: false, reason: 'dry-run：将写入注册表' })
+        report.push({ root, kind: 'surface', from: surfaceFrom, to: target, moved: false, reason: 'dry-run: would write into the roster' })
       } else {
         const custom = await readJsonOrNull<Partial<RenderSurfaceSettings>>(surfaceFrom)
         const settings: RenderSurfaceSettings = {

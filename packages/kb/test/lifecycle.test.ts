@@ -135,5 +135,5 @@ test('double resolution of one request is refused (single-shot decisions)', asyn
   const entry = await store.add({ kind: 'fact', title: 'q', text: 'q' })
   const request = await store.requestApproval(entry.id, 'promote', '测试', 99)
   await store.resolveApproval(request.id, true)
-  await assert.rejects(() => store.resolveApproval(request.id, true), /已被处理/)
+  await assert.rejects(() => store.resolveApproval(request.id, true), /is already resolved/)
 })

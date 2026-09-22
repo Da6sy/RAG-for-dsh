@@ -92,9 +92,9 @@ export async function openChatHost(options: { dshHome?: string; provider?: strin
     ctx.plugin(CredentialsLocal as never, { dshHome, watch: false } as never),
   ] as unknown as Array<{ dispose?: () => Promise<void> | void }>
   const settingsReady = await waitForService(ctx, 'settings')
-  if (!settingsReady) throw new Error(`打开设置服务失败(${dshHome})`)
+  if (!settingsReady) throw new Error(`chat host: cannot open the settings service (${dshHome})`)
   fibers.push(ctx.plugin(LlmRuntime as never, {} as never) as unknown as { dispose?: () => Promise<void> | void })
-  if (!await waitForService(ctx, 'llm')) throw new Error('挂载 ctx.llm 失败(宿主 llm 运行时没起来)')
+  if (!await waitForService(ctx, 'llm')) throw new Error('chat host: cannot mount ctx.llm (the host llm runtime never came up)')
   // The adapter layers its entry config under the `llm-deepseek` settings
   // section and resolves its key per request (its own contract).
   applyDeepSeek(ctx, {} as never)
@@ -194,7 +194,7 @@ export function chatRankPort(host: ChatHost, options: { model?: string; timeoutM
         ...(signal !== undefined ? { signal } : {}),
       })
       if (answer.text.trim() === '') {
-        throw new Error(`模型没有返回可见文本(思考 ${answer.reasoningChars} 字,耗时 ${answer.ms}ms):检查密钥是否可解析、或提高 maxTokens`)
+        throw new Error(`chat host: model returned no visible text (reasoning ${answer.reasoningChars} chars, took ${answer.ms}ms): check that the key resolves, or raise maxTokens`)
       }
       return answer.text
     },

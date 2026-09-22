@@ -64,7 +64,7 @@ test('record → compare: identical verdict, baseline pending confirmation', { s
     await readdir(path.join(project, '.clue')).catch(() => null), null,
     'M9: 工作区目录里不再出现 .clue/',
   )
-  assert.match(recorded.report, /待人工确认/)
+  assert.match(recorded.report, /pending human confirmation/)
 
   const compared = await inspectPage({
     projectRoot: project, page: 'sample.html', mode: 'compare',
@@ -72,8 +72,8 @@ test('record → compare: identical verdict, baseline pending confirmation', { s
   })
   assert.ok(compared.diff)
   assert.equal(compared.diff.identical, true)
-  assert.match(compared.report, /与基准完全一致/)
-  assert.match(compared.report, /尚未经人工确认/)
+  assert.match(compared.report, /identical to the baseline/)
+  assert.match(compared.report, /has not been human-confirmed/)
 
   const confirmed = await inspectPage({ projectRoot: project, page: 'sample.html', mode: 'confirm', home })
   assert.equal(confirmed.baseline?.confirmed, true)
@@ -89,8 +89,8 @@ test('real-browser pitfalls: tab-order loss and low contrast are caught', { skip
   })
   assert.ok(result.snapshot)
   const failed = result.snapshot.assertions.filter((a) => !a.pass).map((a) => a.name)
-  assert.ok(failed.some((n) => n.includes('可被 Tab 选中')), `未抓到 Tab 顺序坑: ${failed.join(', ')}`)
-  assert.ok(failed.some((n) => n.includes('对比度')), `未抓到对比度坑: ${failed.join(', ')}`)
+  assert.ok(failed.some((n) => n.includes('can be reached via Tab')), `未抓到 Tab 顺序坑: ${failed.join(', ')}`)
+  assert.ok(failed.some((n) => n.includes('text contrast')), `未抓到对比度坑: ${failed.join(', ')}`)
   // Evidence gate: the planted pitfalls make exitOk false (scriptable signal).
   assert.equal(result.exitOk, false)
 })
@@ -116,11 +116,11 @@ test('baseline lifecycle: edit source → stale flag + moved/relation diff', { s
   })
   assert.ok(compared.diff)
   assert.equal(compared.stale, true, '源文件变了必须标 stale(待复核)')
-  assert.match(compared.report, /基准已过期/)
+  assert.match(compared.report, /baseline is stale/)
   const moved = compared.diff.entries.find((e) => e.kind === 'moved' && e.label.includes('搜索'))
   assert.ok(moved, `未见按钮移动条目: ${compared.diff.entries.map((e) => `${e.kind}:${e.label}`).join(', ')}`)
-  assert.match(moved.detail, /下移/)
-  assert.match(moved.detail, /关系变化/)
+  assert.match(moved.detail, /moved down/)
+  assert.match(moved.detail, /relations changed/)
   assert.equal(compared.exitOk, false)
 })
 
@@ -134,7 +134,7 @@ test('M7 dogfood finding: marked controls keep interactive facts (tab assertion 
   t.after(() => rm(root, { recursive: true, force: true }))
   const result = await inspectPage({ projectRoot: project, page: 'page.html', mode: 'show' })
   const failed = (result.snapshot?.assertions ?? []).filter((a) => !a.pass).map((a) => a.name)
-  assert.ok(failed.some((n) => n.includes('可被 Tab 选中')),
+  assert.ok(failed.some((n) => n.includes('can be reached via Tab')),
     `带 data-module 的按钮必须吃到 Tab 断言(身份 marker、事实跟随元素): ${failed.join(' | ')}`)
   assert.equal(result.exitOk, false)
 })

@@ -88,7 +88,7 @@ test('remove unregisters but never deletes; the root re-registers on use', async
   assert.ok(again !== null, '中心库仍在,条目仍可读出')
   assert.equal((await readWorkspaces(home)).length, 1, '再次使用即自动回到名单')
 
-  await assert.rejects(() => removeWorkspace('no-such-key', home), /未登记/)
+  await assert.rejects(() => removeWorkspace('no-such-key', home), /workspace not registered/)
 })
 
 test('add validates the directory and records the manual source', async (t) => {
@@ -96,11 +96,11 @@ test('add validates the directory and records the manual source', async (t) => {
   t.after(() => rm(root, { recursive: true, force: true }))
   const proj = await workspace(root, 'admin')
 
-  await assert.rejects(() => addWorkspace(path.join(root, 'ghost'), undefined, home), /目录不存在/)
+  await assert.rejects(() => addWorkspace(path.join(root, 'ghost'), undefined, home), /directory does not exist/)
   const record = await addWorkspace(proj, '后台', home)
   assert.equal(record.label, '后台')
   assert.equal(record.source, 'manual')
-  await assert.rejects(() => renameWorkspace(record.key, '   ', home), /不能为空/)
+  await assert.rejects(() => renameWorkspace(record.key, '   ', home), /label must not be empty/)
 })
 
 test('findWorkspace accepts a key, a root, or any path spelling', async (t) => {
@@ -150,7 +150,7 @@ test('same-basename workspaces get distinct keys; the anchor walk keeps them apa
   // An existing, NON-EMPTY directory with no readable anchor is never adopted.
   const strangerKey = await workspaceKey(path.join(root, 'stranger'), home)
   await mkdir(path.join(home, 'kb', strangerKey, 'entries'), { recursive: true })
-  await assert.rejects(() => workspaceKey(path.join(root, 'stranger'), home), /缺少可读锚点/)
+  await assert.rejects(() => workspaceKey(path.join(root, 'stranger'), home), /no readable anchor/)
   // ...and an EMPTY directory is fine to adopt (a half-created tier).
   await rm(path.join(home, 'kb', strangerKey), { recursive: true, force: true })
   await mkdir(path.join(home, 'kb', strangerKey), { recursive: true })
@@ -168,7 +168,7 @@ test('the render surface lives in the record, and null clears it', async (t) => 
   assert.deepEqual(await getRenderSurface(proj, home), { extensions: ['.jsx'] })
   await setRenderSurface(record.key, null, home)
   assert.equal(await getRenderSurface(proj, home), undefined)
-  await assert.rejects(() => setRenderSurface('ghost-key', null, home), /未登记/)
+  await assert.rejects(() => setRenderSurface('ghost-key', null, home), /workspace not registered/)
 })
 
 test('listActiveWorkspaces filters rows whose tier or directory is gone', async (t) => {
@@ -215,7 +215,7 @@ test('a foreign roster version fails loud (never auto-migrated)', async (t) => {
   t.after(() => rm(root, { recursive: true, force: true }))
   await mkdir(home, { recursive: true })
   await writeFile(workspacesRegistryFile(home), JSON.stringify({ version: 99, workspaces: [] }), 'utf8')
-  await assert.rejects(() => readWorkspaces(home), /版本不匹配/)
+  await assert.rejects(() => readWorkspaces(home), /workspace registry version mismatch/)
 })
 
 test('migrate pulls an M8 workspace .clue back into the home (never overwrites)', async (t) => {
@@ -263,7 +263,7 @@ test('migrate pulls an M8 workspace .clue back into the home (never overwrites)'
   await mkdir(path.join(proj, '.clue', 'kb', 'entries'), { recursive: true })
   await writeFile(path.join(proj, '.clue', 'kb', 'meta.json'), JSON.stringify(meta), 'utf8')
   const second = await migrateWorkspaceKbsToCentral({ home, roots: [proj] })
-  assert.ok(second.some((row) => row.kind === 'kb' && !row.moved && /已存在/.test(row.reason)), '目标非空不覆盖')
+  assert.ok(second.some((row) => row.kind === 'kb' && !row.moved && /already exists/.test(row.reason)), '目标非空不覆盖')
 })
 
 test('migrate dry-run reports without moving', async (t) => {

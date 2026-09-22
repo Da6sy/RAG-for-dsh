@@ -237,7 +237,7 @@ test('不变量 10: 密钥只进密钥库,设置文档与一切摘要里都没�
   assert.equal((await embeddingKeyStatus(ctx)).state, 'missing')
   // 名为引用却解析不到值是**解析失败**,不是"无鉴权":静默发一个没有凭据的请求
   // 会把一个配置错误伪装成端点的 401。要表达"该端点无需鉴权"的姿势是 apiKeyEnv 留空。
-  await assert.rejects(() => resolveEmbeddingKey(ctx, readEmbeddingConfig(ctx)), /解析失败/)
+  await assert.rejects(() => resolveEmbeddingKey(ctx, readEmbeddingConfig(ctx)), /resolution failed/)
   const noRef = { ...readEmbeddingConfig(ctx), apiKeyEnv: '' }
   assert.equal(await resolveEmbeddingKey(ctx, noRef), null, 'apiKeyEnv 留空 + 无密钥库记录 ⇒ 无鉴权调用')
 })

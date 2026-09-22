@@ -90,7 +90,7 @@ export async function loadBaseline(projectRoot: string, pageRel: string, home?: 
   }
   const record = JSON.parse(text) as BaselineRecord
   if (record.version !== BASELINE_RECORD_VERSION) {
-    throw new Error(`基准记录版本不匹配: 文件 v${String(record.version)}, 当前 v${BASELINE_RECORD_VERSION} — 拒绝读取, 请重新采集`)
+    throw new Error(`baseline record version mismatch: file v${String(record.version)}, current v${BASELINE_RECORD_VERSION} — refused; recapture the baseline`)
   }
   return record
 }
@@ -121,7 +121,7 @@ export async function saveBaseline(
 /** Mark the stored baseline as human-confirmed (the one manual act §4.5 requires). */
 export async function confirmBaseline(projectRoot: string, pageRel: string, home?: string): Promise<BaselineRecord> {
   const record = await loadBaseline(projectRoot, pageRel, home)
-  if (record === null) throw new Error(`没有可确认的基准: ${pageRel}(先运行 --record)`)
+  if (record === null) throw new Error(`no baseline to confirm: ${pageRel} (run --record first)`)
   record.confirmed = true
   record.confirmedAt = new Date().toISOString()
   const file = await baselinePath(projectRoot, pageRel, home)

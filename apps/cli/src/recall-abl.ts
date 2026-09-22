@@ -152,10 +152,10 @@ export function resolveConfigs(args: ParsedArgs): AblationConfig[] {
 export function pickEmbedder(kind: string, http: Embedder | null): { embedder: Embedder; semantics: 'none' | 'endpoint' } {
   if (kind === 'hash') return { embedder: hashEmbedder(), semantics: 'none' }
   if (kind === 'http') {
-    if (http === null) throw new Error('--embedder http 需要先配置嵌入端点并「测试连接」实测维度:clue kb embed-config set/test')
+    if (http === null) throw new Error('--embedder http requires a configured embedding endpoint whose dim was actually measured via "test connection": clue kb embed-config set/test')
     return { embedder: http, semantics: 'endpoint' }
   }
-  throw new Error(`--embedder 只能是 hash|http,收到 "${kind}"`)
+  throw new Error(`--embedder accepts only hash|http, got "${kind}"`)
 }
 
 /**
@@ -222,6 +222,10 @@ export async function runAblation(
         profile: config.profile,
         topK: maxK,
         recallDepth: Number(args.depth ?? 50),
+        // This harness IS a console surface: the notes and explanation lines it
+        // prints come from the engine's shared copy, so it asks for English.
+        annotationLanguage: 'en',
+        explainLabels: 'en',
         // P4 of the D-plan: the internal guardrail has to be able to run at the
         // NEW档位, one variable at a time (A/B 协议第 2 条). Values come from
         // flags, not from settings: this harness builds its own corpus, so an
@@ -272,18 +276,18 @@ export async function runAblation(
 
     const leaks = crossLingualLeaks(set.docs, set.queries)
     const caveats: string[] = [
-      '合成数据集:查询由生成器构造,用于回归对照,不代表真实用户提问分布',
-      '一级(条目)检索:V0–V2 的向量层是条目级;二级(原文分片)向量化在 V4',
-      '相似度只解释"为什么排这",状态才解释"能不能信" —— 本报告与可信度无关',
-      'cross-lingual 类的查询与金标文档零词元重叠、且主题在语料里重复 ⇒ recall@1 本就不可能判别到那一篇;该类按 recall@5 判定(护栏同样接受 @5)',
+      'synthetic set: queries are generator-built as a regression baseline; they do not reflect real user question distributions',
+      'level-1 (entry) retrieval: the V0–V2 vector layer is entry-level; level-2 (chunk) vectorization lands in V4',
+      'similarity only explains "why it ranked here"; status is what explains "whether it can be trusted" — this report says nothing about trust',
+      'cross-lingual queries share zero tokens with their gold document and their topic repeats across the corpus ⇒ recall@1 can never single out that one document; this class is judged on recall@5 (the guardrail accepts @5 too)',
     ]
     if (semantics === 'none') {
-      caveats.push('嵌入为 hashEmbedder(确定性伪向量):本次只验管线不验语义 —— 语义能力=0,任何"语义召回提升"的结论都必须用真端点重跑并存档')
+      caveats.push('embedder is hashEmbedder (deterministic pseudo-vectors): this run verifies the pipeline only, never the semantics — semantic ability=0, and any "semantic recall improved" conclusion must be re-run against a real endpoint and archived')
     } else {
-      caveats.push(`嵌入为真端点 ${embedder.id}(dim=${embedder.dim})`)
+      caveats.push(`embedder is a real endpoint ${embedder.id} (dim=${embedder.dim})`)
     }
     if (leaks.length > 0) {
-      caveats.push(`⚠ cross-lingual 自检失败 ${leaks.length} 条:这些查询与金标文档有共同 token,测的是词法而不是语义(例:「${leaks[0]?.text ?? ''}」↔ ${leaks[0]?.shared.join('/') ?? ''})`)
+      caveats.push(`⚠ cross-lingual self-check failed for ${leaks.length} queries: they share tokens with their gold document, so they measure lexical matching rather than semantics (e.g. "${leaks[0]?.text ?? ''}" ↔ ${leaks[0]?.shared.join('/') ?? ''})`)
     }
     return {
       generatedAt: new Date().toISOString(),
@@ -320,7 +324,7 @@ export function guardrails(
     if (now === undefined || before === undefined) continue
     const drop = (before.recall[1] - now.recall[1]) * 100
     if (drop > GUARDRAIL_MAX_DROP_PT) {
-      violations.push(`${kind} recall@1 回退 ${drop.toFixed(1)}pt > ${GUARDRAIL_MAX_DROP_PT}pt(硬线:词法金矿类不得被稀释)`)
+      violations.push(`${kind} recall@1 regressed ${drop.toFixed(1)}pt > ${GUARDRAIL_MAX_DROP_PT}pt (hard line: the lexical gold-mine classes must not be diluted)`)
     }
   }
   // The gain target is only meaningful where the vector channel participates:
@@ -341,7 +345,7 @@ export function guardrails(
       return Math.max((now.recall[1] - before.recall[1]) * 100, ((now.recall[5] ?? 0) - (before.recall[5] ?? 0)) * 100)
     }).filter((value): value is number => value !== null)
     if (gains.length > 0 && gains.every((gain) => gain < GUARDRAIL_MIN_GAIN_PT)) {
-      violations.push(`语义目标类(paraphrase/cross-lingual)recall@1/@5 提升均 < ${GUARDRAIL_MIN_GAIN_PT}pt —— 本次向量通道未证明有效(合成集 + 该 embedder)`)
+      violations.push(`semantic target classes (paraphrase/cross-lingual) gained < ${GUARDRAIL_MIN_GAIN_PT}pt on both recall@1 and recall@5 — the vector channel is not proven effective in this run (synthetic set + this embedder)`)
     }
   }
   return violations
@@ -352,15 +356,15 @@ export function printAblation(report: AblationReport): void {
   const pct = (value: number): string => `${(value * 100).toFixed(1)}%`
   const pt = (value: number): string => `${value >= 0 ? '+' : ''}${value.toFixed(1)}pt`
   console.log('')
-  console.log(`消融台: ${report.corpus.entries} 条条目 / ${report.corpus.queries} 条查询(${report.corpus.kinds.join('/')})`)
-  console.log(`嵌入: ${report.embedder.id} dim=${report.embedder.dim} · ${report.embedder.semantics === 'none' ? '语义能力=0(只验管线)' : '真端点'}`)
-  console.log(`基线: ${report.baseline}(相对它的 delta 才有意义)`)
+  console.log(`ablation harness: ${report.corpus.entries} entries / ${report.corpus.queries} queries (${report.corpus.kinds.join('/')})`)
+  console.log(`embedder: ${report.embedder.id} dim=${report.embedder.dim} · ${report.embedder.semantics === 'none' ? 'semantic ability=0 (pipeline check only)' : 'real endpoint'}`)
+  console.log(`baseline: ${report.baseline} (deltas are meaningful only relative to it)`)
   const kinds = [...new Set(report.rows.flatMap((row) => Object.keys(row.byKind)))]
   const nameWidth = Math.max(20, ...report.rows.map((row) => row.config.id.length + 2))
   const cellWidth = Math.max(18, ...kinds.map((kind) => kind.length + 8))
   const rowsOut: string[][] = [[
-    '配置',
-    '总体@1',
+    'config',
+    'overall@1',
     ...kinds.map((kind) => `${kind}@1`),
   ], ...report.rows.map((row) => [
     row.config.id,
@@ -375,7 +379,7 @@ export function printAblation(report: AblationReport): void {
     console.log(cells.map((cell, index) => cell.padEnd(index === 0 ? nameWidth : cellWidth)).join(''))
   }
   console.log('')
-  console.log('语义通道使用情况:')
+  console.log('semantic channel usage:')
   for (const row of report.rows) {
     const other = Object.entries(row.vector.other).map(([status, count]) => `${status}×${count}`).join(' ')
     console.log(`  ${row.config.id}: used×${row.vector.used}${other === '' ? '' : ` · ${other}`}${row.vector.firstNote === null ? '' : ` — ${row.vector.firstNote.slice(0, 160)}`}`)
@@ -383,13 +387,13 @@ export function printAblation(report: AblationReport): void {
   console.log('')
   for (const row of report.rows) {
     if (row.violations.length === 0) {
-      if (!row.baseline) console.log(`✓ ${row.config.id}: 通过护栏`)
+      if (!row.baseline) console.log(`✓ ${row.config.id}: passed the guardrails`)
       continue
     }
     for (const violation of row.violations) console.log(`✗ ${row.config.id}: ${violation}`)
   }
   console.log('')
-  for (const caveat of report.caveats) console.log(`注: ${caveat}`)
+  for (const caveat of report.caveats) console.log(`note: ${caveat}`)
   console.log('')
-  console.log(report.ok ? '结论: 全部配置通过护栏。' : '结论: 有配置未过护栏(见上)。')
+  console.log(report.ok ? 'verdict: every configuration passed its guardrails' : 'verdict: some configurations failed their guardrails (see above)')
 }

@@ -170,6 +170,20 @@ export interface HybridConfig {
   /** R1: how the index step went, so the result can say whether the corpus was scanned. */
   lexicalIndexNote?: string
   /**
+   * Which language the EXPLANATION lines use (see `RerankContext.labels`).
+   *
+   * The console is English and the web panel is Chinese, and both read the SAME
+   * explanation strings — so the surface that knows which one it is decides.
+   * Default `zh` keeps every existing caller unchanged.
+   */
+  explainLabels?: 'zh' | 'en'
+  /**
+   * Which language the hit ANNOTATIONS use (`annotationsFor`'s copy). Same
+   * doctrine as {@link explainLabels}: one implementation, the surface picks,
+   * default `zh` (model blocks + web panel).
+   */
+  annotationLanguage?: 'zh' | 'en'
+  /**
    * F4② (`docs/落地计划-剩余工程.md` §2-4): `presence` (shipped) or `count`.
    * One switch moves the term frequencies and the length basis together, and the
    * statistics, the `bm25ish` feature and the delegated path all follow it.
@@ -291,6 +305,8 @@ class SemanticSkip extends Error {}
 
 /** The one honest line for the "nothing to embed" state (V3 `gate` profile). */
 const SEMANTIC_SKIP_NOTE = '该 query 在 profile 下只剩标识符(已按 profile 只走词法通道)'
+/** The same line for the console (English), chosen by `annotationLanguage`. */
+const SEMANTIC_SKIP_NOTE_EN = 'this query is identifiers only under the profile (lexical channel only by profile rule)'
 
 /** One corpus member: the entry plus the store that owns it. */
 interface CorpusEntry {
@@ -298,22 +314,43 @@ interface CorpusEntry {
   store: KbStore
 }
 
-/** Build the annotation a degraded vector channel must leave on every hit. */
-function degradationNote(state: VectorChannelState): string | null {
+/**
+ * Build the annotation a degraded vector channel must leave on every hit.
+ *
+ * These lines reach the model blocks, the web panel AND the console, so they
+ * come in both languages and the surface picks (same doctrine as the explain
+ * labels): the console is English by product decision, the other two stay
+ * Chinese.
+ * @param state - the vector channel's state.
+ * @param lang - `zh` (default) or `en`.
+ * @returns the line, or null when nothing was degraded.
+ */
+function degradationNote(state: VectorChannelState, lang: 'zh' | 'en' = 'zh'): string | null {
+  const en = lang === 'en'
   switch (state.status) {
     case 'used':
     case 'disabled':
       return null
     case 'not-configured':
-      return '语义通道未启用(嵌入未配置)— 本次为纯词法结果'
+      return en
+        ? 'semantic channel off (no embedding configured) — these are lexical-only results'
+        : '语义通道未启用(嵌入未配置)— 本次为纯词法结果'
     case 'index-missing':
-      return '向量层待建 — 本次为纯词法结果(未伪装成语义命中)'
+      return en
+        ? 'vector layer not built yet — lexical-only results (never dressed up as semantic hits)'
+        : '向量层待建 — 本次为纯词法结果(未伪装成语义命中)'
     case 'index-stale':
-      return '向量层版本已过期,待重建 — 本次为纯词法结果'
+      return en
+        ? 'vector layer is out of date and waits for a rebuild — lexical-only results'
+        : '向量层版本已过期,待重建 — 本次为纯词法结果'
     case 'partial':
-      return `向量层不完整(缺 ${state.missing ?? 0} 条)— 语义通道只覆盖已建部分`
+      return en
+        ? `vector layer incomplete (${state.missing ?? 0} rows missing) — the semantic channel covers only what was built`
+        : `向量层不完整(缺 ${state.missing ?? 0} 条)— 语义通道只覆盖已建部分`
     case 'error':
-      return `语义通道本次失败(${state.note}),已退回纯词法`
+      return en
+        ? `semantic channel failed this time (${state.note}); fell back to lexical`
+        : `语义通道本次失败(${state.note}),已退回纯词法`
   }
 }
 
@@ -368,8 +405,11 @@ export function createHybridRetriever(
     && config.embedder.semantics === 'none'
     && config.allowNoAbilityEmbedder !== true
   const effectiveChannels: RecallChannels = abilityGated ? 'lexical' : channels
+  const notesLanguage = config.annotationLanguage ?? 'zh'
   const channelStateNote = abilityGated
-    ? '嵌入器自报语义能力=0(确定性兜底),按 F1 不进入融合 — 本次为纯词法结果'
+    ? (notesLanguage === 'en'
+        ? 'embedder self-reports semantics=0 (deterministic fallback); per F1 it does not enter fusion — lexical-only results'
+        : '嵌入器自报语义能力=0(确定性兜底),按 F1 不进入融合 — 本次为纯词法结果')
     : null
   /**
    * 落地计划 §2-2 (按通道启用 D1/D2): the scale decisions belong HERE, because
@@ -397,6 +437,7 @@ export function createHybridRetriever(
     ...(config.lexicalScorer !== undefined ? { lexicalScorer: config.lexicalScorer } : {}),
     ...(config.termFrequency !== undefined ? { termFrequency: config.termFrequency } : {}),
     ...(config.identifierSubtokens !== undefined ? { identifierSubtokens: config.identifierSubtokens } : {}),
+    ...(config.annotationLanguage !== undefined ? { annotationLanguage: config.annotationLanguage } : {}),
     // R1: the delegated rollback path gets the SAME index, so turning reranking
     // off stays a quality switch rather than becoming a performance cliff.
     ...(config.lexicalIndexes !== undefined ? { lexicalIndexes: config.lexicalIndexes } : {}),
@@ -571,7 +612,12 @@ export function createHybridRetriever(
       await emitRank(annotated, effectiveChannels, false, 'disabled')
       return {
         hits: annotated,
-        vector: { status: 'disabled', note: channelStateNote ?? '本次只走词法通道(--channel lexical --rerank off)' },
+        vector: {
+          status: 'disabled',
+          note: channelStateNote ?? (notesLanguage === 'en'
+            ? 'lexical channel only (--channel lexical --rerank off)'
+            : '本次只走词法通道(--channel lexical --rerank off)'),
+        },
         profile,
         channels: effectiveChannels,
         rerank: false,
@@ -659,6 +705,7 @@ export function createHybridRetriever(
           noTouch: true,
           termFrequency,
           ...(identifierSubtokens ? { identifierSubtokens: true } : {}),
+          annotationLanguage: config.annotationLanguage ?? 'zh',
           lexicalIndexes: config.lexicalIndexes as readonly LexicalIndex[],
           ...(options.includeExpired !== undefined ? { includeExpired: options.includeExpired } : {}),
           ...(options.includeGlobal !== undefined ? { includeGlobal: options.includeGlobal } : {}),
@@ -697,7 +744,12 @@ export function createHybridRetriever(
     const semanticById = new Map<string, number>()
     let vectorRanked: string[] = []
     if (effectiveChannels === 'lexical') {
-      state = { status: 'disabled', note: channelStateNote ?? '本次只走词法通道(--channel lexical)' }
+      state = {
+        status: 'disabled',
+        note: channelStateNote ?? (notesLanguage === 'en'
+          ? 'lexical channel only (--channel lexical)'
+          : '本次只走词法通道(--channel lexical)'),
+      }
     } else if (config.embedder === undefined) {
       state = { status: 'not-configured', note: '嵌入端点未配置(enabled=false 或缺 baseUrl/model)' }
     } else {
@@ -709,7 +761,7 @@ export function createHybridRetriever(
         // channel has nothing to embed", not an embedding of boilerplate.
         if (normalized.semantic.trim() === '') throw new SemanticSkip()
         const [queryVector] = await embedder.embed([normalized.semantic])
-        if (queryVector === undefined) throw new Error('embedder 未返回查询向量')
+        if (queryVector === undefined) throw new Error('hybrid: embedder returned no query vector')
         const tiers: KbStore[] = []
         if (project !== null) tiers.push(project)
         if (global !== null && options.includeGlobal !== false) tiers.push(global)
@@ -743,7 +795,7 @@ export function createHybridRetriever(
         if (error instanceof SemanticSkip) {
           // Nothing to embed. This is NOT a failure and NOT a miss: it is a
           // fact about the profile, and it says so in those words.
-          state = { status: 'disabled', note: SEMANTIC_SKIP_NOTE }
+          state = { status: 'disabled', note: notesLanguage === 'en' ? SEMANTIC_SKIP_NOTE_EN : SEMANTIC_SKIP_NOTE }
         } else {
           // The adapter's error text carries the status code and host, never a
           // key (原规划 §9.4-2); the retrieval degrades instead of failing.
@@ -809,7 +861,7 @@ export function createHybridRetriever(
     }
 
     // ── deterministic rerank (or the fused order, honestly labeled) ───────
-    const note = degradationNote(state)
+    const note = degradationNote(state, notesLanguage)
     const buildHit = (key: string, score: number, result: RerankResult | null, fusedRow: FusedCandidate): QueryHit | null => {
       const member = byId.get(key)
       if (member === undefined) return null
@@ -819,7 +871,7 @@ export function createHybridRetriever(
         entry: member.entry,
         score: Math.round(score * 10000) / 10000,
         matched: lexicalRow?.matched ?? [],
-        annotations: annotationsFor(member.entry),
+        annotations: annotationsFor(member.entry, undefined, config.annotationLanguage ?? 'zh'),
         explain: {
           score: Math.round(score * 10000) / 10000,
           lexicalScore: lexicalRow?.score ?? 0,
@@ -829,7 +881,9 @@ export function createHybridRetriever(
           contributions: result?.contributions ?? {},
           factors: result?.factors ?? {},
           lines: result?.explanation ?? [
-            `未精排:按 RRF 融合分排序(词法通道名次 ${fusedRow.ranks.lexical ?? '-'} / 语义通道名次 ${fusedRow.ranks.vector ?? '-'})`,
+            (config.explainLabels ?? 'zh') === 'en'
+              ? `not reranked: ordered by the RRF fusion score (lexical rank ${fusedRow.ranks.lexical ?? '-'} / semantic rank ${fusedRow.ranks.vector ?? '-'})`
+              : `未精排:按 RRF 融合分排序(词法通道名次 ${fusedRow.ranks.lexical ?? '-'} / 语义通道名次 ${fusedRow.ranks.vector ?? '-'})`,
           ],
         },
       }
@@ -855,7 +909,7 @@ export function createHybridRetriever(
           matched: lexicalRow?.matched ?? [],
           ...(semantic !== undefined ? { semantic } : {}),
           ...(semanticRank !== undefined ? { semanticRank } : {}),
-          annotations: annotationsFor(member.entry),
+          annotations: annotationsFor(member.entry, undefined, config.annotationLanguage ?? 'zh'),
         })
       }
       /**
@@ -927,6 +981,7 @@ export function createHybridRetriever(
         termFrequency,
         ...(identifierSubtokens ? { identifierSubtokens: true } : {}),
         ...(config.semanticNormalization !== undefined ? { semanticNormalization: config.semanticNormalization } : {}),
+        ...(config.explainLabels !== undefined ? { labels: config.explainLabels } : {}),
         ...(corpusScaleQ !== undefined && corpusScaleQ > 0 ? { scaleQ: corpusScaleQ } : {}),
         semanticGate,
         profile,
@@ -995,7 +1050,11 @@ export function createHybridRetriever(
     const final: QueryHit[] = []
     for (const hit of ordered.slice(0, limit)) {
       const store = storeOf(hit.entry)
-      const enriched = await enrichHit(store, hit.entry, hit, { at, ...(options.noTouch === true ? { noTouch: true } : {}) })
+      const enriched = await enrichHit(store, hit.entry, hit, {
+        at,
+        ...(options.noTouch === true ? { noTouch: true } : {}),
+        annotationLanguage: config.annotationLanguage ?? 'zh',
+      })
       // Two honest notes can apply: the channel's own degradation, and F1's
       // ability gate. Both must reach the reader.
       const notes = [note, channelStateNote].filter((value): value is string => value !== null && value !== undefined)

@@ -43,13 +43,13 @@ export function runBuiltinAssertions(snapshot: LayoutSnapshot): AssertionResult[
     // the page under test is not the page the author meant.
     if (node.kind === 'marker') {
       out.push(result(
-        `标记模块 ${node.id} 已渲染`,
+        `marked module ${node.id} renders`,
         node.visibility.displayed,
-        node.visibility.displayed ? '已渲染' : '未渲染(display/visibility/零尺寸)',
-        '已渲染',
+        node.visibility.displayed ? 'rendered' : 'not rendered (display/visibility/zero size)',
+        'rendered',
       ))
       if (node.visibility.clipped) {
-        out.push(result(`标记模块 ${node.id} 无溢出裁剪`, false, '内容被祖先 overflow 裁剪', '无裁剪', 'warn'))
+        out.push(result(`marked module ${node.id} has no overflow clipping`, false, 'content clipped by an ancestor overflow', 'no clipping', 'warn'))
       }
     }
 
@@ -58,28 +58,28 @@ export function runBuiltinAssertions(snapshot: LayoutSnapshot): AssertionResult[
       // the tab order" pitfall — the flagship demo of this whole layer.
       if (!node.interactive.disabled) {
         out.push(result(
-          `${node.label} 可被 Tab 选中`,
+          `${node.label} can be reached via Tab`,
           node.interactive.tabbable,
-          node.interactive.tabbable ? '在 Tab 顺序中' : '不在 Tab 顺序中',
-          '在 Tab 顺序中',
+          node.interactive.tabbable ? 'in tab order' : 'not in tab order',
+          'in tab order',
         ))
       }
       out.push(result(
-        `${node.label} 未被遮挡`,
+        `${node.label} is not occluded`,
         !node.visibility.occluded,
         node.visibility.occluded
-          ? `被遮挡${node.visibility.occludedBy !== null ? `(遮挡者: ${node.visibility.occludedBy})` : ''}`
-          : '中心点可命中',
-        '中心点可命中',
+          ? `occluded${node.visibility.occludedBy !== null ? ` (by ${node.visibility.occludedBy})` : ''}`
+          : 'center point is hit-testable',
+        'center point is hit-testable',
       ))
     }
 
     // Readability floor for text-bearing modules (WCAG AA for normal text).
     if (node.style.contrastRatio !== null) {
       out.push(result(
-        `${node.label} 文字对比度 ≥ 4.5`,
+        `${node.label} text contrast ≥ 4.5`,
         node.style.contrastRatio >= 4.5,
-        `实测 ${node.style.contrastRatio.toFixed(1)}`,
+        `measured ${node.style.contrastRatio.toFixed(1)}`,
         '≥ 4.5',
         node.style.contrastRatio >= 3 ? 'warn' : 'error',
       ))
@@ -87,10 +87,10 @@ export function runBuiltinAssertions(snapshot: LayoutSnapshot): AssertionResult[
   }
 
   out.push(result(
-    '页面有且仅有一个 main 地标',
+    'page has exactly one main landmark',
     mainCount === 1,
-    mainCount === 1 ? '1 个' : `${mainCount} 个`,
-    '1 个',
+    mainCount === 1 ? '1' : `${mainCount}`,
+    '1',
     'warn',
   ))
   return out

@@ -116,7 +116,7 @@ export function parseWebArgs(args: readonly string[]): { port?: number; host?: s
     if (arg === '--port' && i + 1 < args.length) {
       const parsed = Number(args[++i])
       if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
-        throw new Error(`clue web: --port 需要 0-65535 的整数,收到 "${args[i]}"`)
+        throw new Error(`clue web: --port requires an integer in 0-65535, got "${args[i]}"`)
       }
       port = parsed
     } else if (arg === '--host' && i + 1 < args.length) {
@@ -126,7 +126,7 @@ export function parseWebArgs(args: readonly string[]): { port?: number; host?: s
     }
   }
   if (host !== undefined && host !== '127.0.0.1' && host !== '0.0.0.0') {
-    throw new Error(`clue web: --host 只支持 127.0.0.1 或 0.0.0.0,收到 "${host}"`)
+    throw new Error(`clue web: --host only supports 127.0.0.1 or 0.0.0.0, got "${host}"`)
   }
   return { port, host, rest }
 }
@@ -257,7 +257,7 @@ export async function runWeb(options: RunWebOptions): Promise<WebHandle> {
   // The bound port (OS-assigned when 0 was requested) — the webserver service
   // exposes it after listen; boot settled, so it is live.
   const webServer = ctx.get('webServer') as { port: number } | undefined
-  if (webServer === undefined) throw new Error('clue web: webserver 服务缺失(组合被破坏了?)')
+  if (webServer === undefined) throw new Error('clue web: webserver service missing (composition broken?)')
   const host = flags.host ?? '127.0.0.1'
   // Origin form, NO trailing slash — the format dsh's own `dsh web: <url>`
   // print uses. Launcher tools (ClueHarnessApp's parseUrl) capture this line

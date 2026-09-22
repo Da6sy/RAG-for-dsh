@@ -128,7 +128,7 @@ export function applyTransition(
 ): KbEntry {
   if (!canTransition(entry.status, to, trigger)) {
     throw new Error(
-      `非法状态迁移: ${entry.status} → ${to} (trigger=${trigger})。合法边: `
+      `kb: illegal state transition: ${entry.status} → ${to} (trigger=${trigger}); legal edges: `
       + transitionTable().filter((e) => e.from === entry.status)
         .map((e) => `${e.from}→${e.to}[${e.triggers.join('|')}]`).join(', '),
     )

@@ -61,7 +61,7 @@ test('有注册表:扫描抛错 ⇒ job 记 failed,调度本身不抛(轮次不�
   const outcome = await specs[0]?.run().done
   assert.equal(outcome?.status, 'failed')
   assert.match(String(outcome?.detail), /某个工作区读不了/)
-  assert.ok(warnings.some((line) => line.includes('泛化扫描失败')), '失败要留痕')
+  assert.ok(warnings.some((line) => line.includes('generalization scan failed')), '失败要留痕')
 })
 
 test('取消是诚实的:请求被记录,扫描跑完才结算,结果标 killed', async () => {
@@ -77,7 +77,7 @@ test('取消是诚实的:请求被记录,扫描跑完才结算,结果标 killed'
   const outcome = await hooks?.done
   assert.equal(finished, true, '取消不会假装把工作停掉 —— 它跑完了')
   assert.equal(outcome?.status, 'killed')
-  assert.match(String(outcome?.detail), /不可中断/)
+  assert.match(String(outcome?.detail), /not interruptible/)
   assert.match(hooks?.readOutput?.() ?? '', /agent 关了/)
 })
 
@@ -95,7 +95,7 @@ test('没有注册表:退回同步执行(行为与改动前逐字相同),失败�
   })
   assert.equal(failed.via, 'sync')
   assert.equal(failed.ok, false)
-  assert.ok(warnings[0]?.includes('泛化扫描失败(已忽略,不影响本轮)'))
+  assert.ok(warnings[0]?.includes('generalization scan failed (ignored; this turn is unaffected)'))
 })
 
 test('注册表拒绝(例如没有挂控制器):扫描不丢,退回同步执行', async () => {
@@ -108,5 +108,5 @@ test('注册表拒绝(例如没有挂控制器):扫描不丢,退回同步执行'
   })
   assert.equal(result.via, 'sync')
   assert.equal(ran, 1, '被拒绝不是丢活的理由')
-  assert.ok(warnings.some((line) => line.includes('改为本轮内同步执行')))
+  assert.ok(warnings.some((line) => line.includes('running it synchronously in this turn instead')))
 })

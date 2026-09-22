@@ -146,10 +146,10 @@ async function index(): Promise<number> {
   const entries = await collect()
   await mkdir(RUNS, { recursive: true })
   await writeFile(INDEX, `${JSON.stringify({ generatedAt: new Date().toISOString(), reports: entries }, null, 2)}\n`, 'utf8')
-  console.log(`已汇总 ${entries.length} 份报告 → ${path.relative(REPO, INDEX)}`)
+  console.log(`indexed ${entries.length} reports → ${path.relative(REPO, INDEX)}`)
   const byDataset: Record<string, number> = {}
   for (const entry of entries) byDataset[entry.dataset] = (byDataset[entry.dataset] ?? 0) + 1
-  for (const [dataset, count] of Object.entries(byDataset)) console.log(`  ${dataset}: ${count} 份`)
+  for (const [dataset, count] of Object.entries(byDataset)) console.log(`  ${dataset}: ${count} reports`)
   return 0
 }
 
@@ -158,9 +158,9 @@ async function list(): Promise<number> {
   if ((await stat(INDEX).catch(() => null)) === null) await index()
   const entries = (JSON.parse(await readFile(INDEX, 'utf8')) as { reports: IndexEntry[] }).reports
   for (const entry of entries) {
-    console.log(`${entry.dataset.padEnd(14)} ${entry.generatedAt.slice(0, 19)}  ${String(entry.queries).padStart(3)}q  ${entry.embedder ?? '-'}  judge=${entry.judgeVersion ?? '-'}  ${entry.ok ? 'ok' : '未通过'}`)
+    console.log(`${entry.dataset.padEnd(14)} ${entry.generatedAt.slice(0, 19)}  ${String(entry.queries).padStart(3)}q  ${entry.embedder ?? '-'}  judge=${entry.judgeVersion ?? '-'}  ${entry.ok ? 'ok' : 'fail'}`)
   }
-  console.log(`共 ${entries.length} 份(索引 ${path.relative(REPO, INDEX)})`)
+  console.log(`${entries.length} reports in total (index ${path.relative(REPO, INDEX)})`)
   return 0
 }
 
@@ -187,14 +187,14 @@ export function provenanceMismatches(left: IndexEntry, right: IndexEntry): Prove
   // build lacks `ks` / `embedderId` / `knobs`, and a missing field must read as
   // "unknown", not crash the comparison.
   const ks = (entry: IndexEntry): string => (entry.ks ?? []).join(',')
-  add('数据集', left.dataset, right.dataset)
+  add('dataset', left.dataset, right.dataset)
   add('split', left.split, right.split)
-  add('查询数', left.queries, right.queries)
-  add('语料规模', left.documents, right.documents)
-  add('k 截断', ks(left), ks(right))
-  add('嵌入器', left.embedderId, right.embedderId)
-  add('语义能力', left.embedderSemantics, right.embedderSemantics)
-  add('判分器版本', left.judgeVersion, right.judgeVersion)
+  add('queries', left.queries, right.queries)
+  add('corpus size', left.documents, right.documents)
+  add('k cutoff', ks(left), ks(right))
+  add('embedder', left.embedderId, right.embedderId)
+  add('semantics', left.embedderSemantics, right.embedderSemantics)
+  add('judge version', left.judgeVersion, right.judgeVersion)
   return out
 }
 
@@ -230,15 +230,15 @@ export interface HardLineVerdict {
 export function hardLineVerdicts(entry: IndexEntry): HardLineVerdict[] {
   const out: HardLineVerdict[] = []
   const noAbility = entry.embedderSemantics === 'none'
-    ? '嵌入器自报语义能力=0(hashEmbedder 之类的确定性兜底):F1 能力门控下 hybrid 恒等于 lexical,该硬线在此配置下无法被证明'
+    ? 'embedder self-reports semantics=0 (a deterministic fallback like hashEmbedder): under the F1 ability gate hybrid is identical to lexical, so this hard line cannot be proven in this configuration'
     : null
   // A report can lack the delta for two very different reasons, and saying
   // "you only ran one config" about a full-matrix report from an older schema
   // would send the reader looking in the wrong place.
   const matrix = ['lexical+rerank', 'hybrid+no-rerank', 'hybrid+rerank'].every((config) => entry.rows[config] !== undefined)
   const missingReason = matrix
-    ? '报告写于该硬线列存在之前(旧 schema 缺字段):重跑一次即可得到判定'
-    : '报告缺少 4 行配置矩阵(--only 单配置跑),跨配置硬线无从计算'
+    ? 'report was written before this hard-line column existed (old schema lacks the field): rerun once to get a verdict'
+    : 'report lacks the 4-row config matrix (a single-config --only run), so cross-config hard lines cannot be computed'
   const verdict = (line: string, delta: number | null | undefined, ok: boolean | undefined): HardLineVerdict => {
     if (delta === undefined || delta === null) return { line, delta: null, state: 'unproven', reason: missingReason }
     if (noAbility !== null) return { line, delta, state: 'unproven', reason: noAbility }
@@ -321,10 +321,10 @@ export function evaluateDiff(left: IndexEntry, right: IndexEntry): DiffReport {
   const comparable = mismatches.length === 0
   const unproven: string[] = []
   if (!comparable) {
-    unproven.push(`口径不同(${mismatches.map((row) => row.field).join('、')}):本次只列数字,不作通过/回退判定`)
+    unproven.push(`provenance differs (${mismatches.map((row) => row.field).join(', ')}): this run only lists the numbers, no pass/regress verdict`)
   }
   if (right.embedderSemantics === 'none') {
-    unproven.push('无能力嵌入器:两条硬线在本次配置下都无法被证明(需要 --embedder http)')
+    unproven.push('no-ability embedder: neither hard line can be proven in this configuration (needs --embedder http)')
   }
   const direction = (metric: string): 'quality' | 'cost' | 'observe' =>
     OBSERVATION.has(metric) ? 'observe' : LOWER_IS_BETTER.has(metric) ? 'cost' : 'quality'
@@ -340,10 +340,10 @@ export function evaluateDiff(left: IndexEntry, right: IndexEntry): DiffReport {
       const kind = direction(metric)
       const worse = kind === 'cost' ? delta > 0.005 : delta < -0.005
       const better = kind === 'cost' ? delta < -0.005 : delta > 0.005
-      const flag = !comparable ? ' · 口径不同,不作判定'
-        : kind === 'observe' ? ' · 观察'
-          : worse ? (kind === 'cost' ? ' ✗ 变慢' : ' ✗ 回退')
-            : better ? (kind === 'cost' ? ' ✓ 更快' : ' ✓ 提升') : ''
+      const flag = !comparable ? ' · provenance differs, no verdict'
+        : kind === 'observe' ? ' · observe'
+          : worse ? (kind === 'cost' ? ' ✗ slower' : ' ✗ regress')
+            : better ? (kind === 'cost' ? ' ✓ faster' : ' ✓ improve') : ''
       rows.push({
         config, metric, previous, value, delta, kind, flag,
         regresses: comparable && kind === 'quality' && worse,
@@ -362,7 +362,7 @@ export function evaluateDiff(left: IndexEntry, right: IndexEntry): DiffReport {
     for (const row of after) {
       if (row.state === 'unproven') continue
       row.state = 'unproven'
-      row.reason = '口径不同,本次对比不构成判定'
+      row.reason = 'provenance differs, this comparison yields no verdict'
     }
   }
   return { mismatches, comparable, rows, before, after, unproven, regressed }
@@ -380,33 +380,33 @@ async function diff(a: string, b: string): Promise<number> {
   const left = find(a)
   const right = find(b)
   if (left === undefined || right === undefined) {
-    console.error(`找不到报告:${left === undefined ? a : ''} ${right === undefined ? b : ''}(用 clue bench list 看 id)`)
+    console.error(`report not found: ${left === undefined ? a : ''} ${right === undefined ? b : ''} (see ids via clue bench list)`)
     return 2
   }
   const report = evaluateDiff(left, right)
   console.log(`${left.dataset}(${left.generatedAt.slice(0, 19)}) → ${right.dataset}(${right.generatedAt.slice(0, 19)})`)
   if (!hasProvenance(left) || !hasProvenance(right)) {
-    console.log('  ⚠ 索引是旧版本写的(缺 k 截断/嵌入器字段),口径校验不完整 —— 先跑 `clue bench index` 重建索引')
+    console.log('  ⚠ the index was written by an older version (missing k cutoff/embedder fields), so the provenance check is incomplete — run `clue bench index` first to rebuild it')
   }
   if (!report.comparable) {
-    console.log('  ⚠ 口径不同,本次对比不构成判定:')
-    for (const row of report.mismatches) console.log(`      ${row.field}: 之前 ${row.left} · 之后 ${row.right}`)
+    console.log('  ⚠ provenance differs, this comparison yields no verdict:')
+    for (const row of report.mismatches) console.log(`      ${row.field}: before ${row.left} · after ${row.right}`)
   }
   const printLine = (label: string, verdict: HardLineVerdict, decisive: boolean): void => {
     const delta = verdict.delta === null ? '    -    ' : `${verdict.delta >= 0 ? '+' : ''}${verdict.delta.toFixed(4)}`
-    const mark = verdict.state === 'pass' ? '✓ 通过'
-      : verdict.state === 'fail' ? '✗ 未通过'
-        : `? 未证明 — ${verdict.reason}`
-    const note = !decisive && verdict.state === 'fail' ? '(基线未通过 — 仅作对照,不计入退出码)' : ''
-    console.log(`  [硬线] ${label} ${verdict.line} = ${delta}  ${mark}${note}`)
+    const mark = verdict.state === 'pass' ? '✓ pass'
+      : verdict.state === 'fail' ? '✗ fail'
+        : `? unproven — ${verdict.reason}`
+    const note = !decisive && verdict.state === 'fail' ? ' (baseline failed — for reference only, not counted toward the exit code)' : ''
+    console.log(`  [hard line] ${label} ${verdict.line} = ${delta}  ${mark}${note}`)
   }
-  for (const verdict of report.before) printLine('之前', verdict, false)
-  for (const verdict of report.after) printLine('之后', verdict, true)
+  for (const verdict of report.before) printLine('before', verdict, false)
+  for (const verdict of report.after) printLine('after', verdict, true)
   for (const row of report.rows) {
     console.log(`  ${row.config.padEnd(24)} ${row.metric.padEnd(12)} ${row.previous} → ${row.value} (${row.delta >= 0 ? '+' : ''}${row.delta.toFixed(4)})${row.flag}`)
   }
-  for (const reason of report.unproven) console.log(`  ⚠ 未证明: ${reason}`)
-  console.log(`  判定: ${report.regressed ? '✗ 未通过(见上面的 ✗ 行)' : report.unproven.length === 0 ? '✓ 通过' : '? 未证明(见上面的 ⚠ 行;退出码不因此变化)'}`)
+  for (const reason of report.unproven) console.log(`  ⚠ unproven: ${reason}`)
+  console.log(`  verdict: ${report.regressed ? '✗ fail (see the ✗ rows above)' : report.unproven.length === 0 ? '✓ pass' : '? unproven (see the ⚠ rows above; the exit code does not change because of this)'}`)
   return report.regressed ? 1 : 0
 }
 
@@ -423,11 +423,11 @@ async function clean(scope: 'datasets' | 'runs' | 'cache' | 'all'): Promise<numb
   for (const [label, dir] of targets) {
     const before = await stat(dir).then((info) => info.size).catch(() => 0)
     await rm(dir, { recursive: true, force: true })
-    console.log(`已删除 evals/${label}${before === 0 ? '(本来就不存在)' : ''}`)
+    console.log(`removed evals/${label}${before === 0 ? ' (did not exist)' : ''}`)
   }
   const kept = await stat(GOLDENS).catch(() => null)
-  console.log(`保留 evals/goldens(${kept === null ? '尚未创建' : '人写的金标集,要版本化'}) · 缓存目录 ${path.relative(REPO, CACHE)} 也清了的话下次判分会重新调用模型`)
-  console.log(`提示:报告里的耐久数字副本在 docs/评测结果.md,清理不会丢结论`)
+  console.log(`kept evals/goldens (${kept === null ? 'not created yet' : 'human-written golden set, keep it versioned'}) · if the cache dir ${path.relative(REPO, CACHE)} was removed as well, the next judging run will call the model again`)
+  console.log(`note: durable copies of the report numbers live in docs/评测结果.md — cleanup does not lose any conclusions`)
   return 0
 }
 
@@ -442,34 +442,34 @@ export async function benchMain(argv: string[]): Promise<number> {
     case undefined:
     case 'help':
     case '--help':
-      console.log(`用法: clue bench <命令>
+      console.log(`usage: clue bench <command>
 
-  index                     汇总 evals/runs/*.json → evals/runs/INDEX.json
-  list                     列出索引里的报告(数据集/查询数/嵌入/判分版本/是否通过)
-  diff <a> <b>             两份报告逐指标对比(回退即 exit 1)
+  index                     summarize evals/runs/*.json → evals/runs/INDEX.json (time series)
+  list                      list every report in the index (dataset/queries/embedder/judge version/pass)
+  diff <a> <b>              compare two reports metric by metric (a regression exits 1)
   clean --datasets|--runs|--cache|--all
-                           清理评测产物(数据/报告/判分缓存;金标集与文档结论保留)
+                            remove evaluation artifacts (datasets/reports/judge cache; goldens and doc conclusions are kept)
 
-取数与跑分仍是专用脚本(数据格式与长耗时都不同,不藏在 dispatcher 后面):
+fetching and scoring stay dedicated scripts (their data formats and runtimes differ; not hidden behind a dispatcher):
   node scripts/bench-beir.mjs --dataset <nfcorpus|scifact|coir-cosqa> …
   node scripts/fetch-coir.mjs --task cosqa --cap 1200
   node scripts/bench-rag.mjs --records 3 [--judge-provider qwen --judge-model qwen3.8-max]
 
-产物都在 evals/(已 gitignore),可整体删除;耐久数字与结论在 docs/评测结果.md`)
+artifacts all live under evals/ (gitignored) and can be removed wholesale; durable numbers and conclusions are in docs/评测结果.md`)
       return 0
     case 'index': return index()
     case 'list': return list()
     case 'diff': {
       const [a, b] = rest
-      if (a === undefined || b === undefined) { console.error('diff 需要两份报告(id 或文件名,见 clue bench list)'); return 2 }
+      if (a === undefined || b === undefined) { console.error('diff needs two reports (id or file name, see clue bench list)'); return 2 }
       return diff(a, b)
     }
     case 'clean': {
-      if (scope === null) { console.error('clean 需要 --datasets | --runs | --cache | --all'); return 2 }
+      if (scope === null) { console.error('clean needs one of --datasets | --runs | --cache | --all'); return 2 }
       return clean(scope)
     }
     default:
-      console.error(`未知 bench 子命令:${verb}(index|list|diff|clean)`)
+      console.error(`unknown bench subcommand: ${verb} (index|list|diff|clean)`)
       return 2
   }
 }

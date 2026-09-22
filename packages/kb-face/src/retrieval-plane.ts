@@ -186,7 +186,7 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
         identifierSubtokens: tuning.identifierSubtokens,
       })
     if (process.env.CLUE_LEXICAL_INDEX_DEBUG === '1') {
-      warn(`[r1-debug] 索引候选=${lexical.indexes.length} 状态=${lexical.status} 备注=${lexical.note}`)
+      warn(`[r1-debug] index candidates=${lexical.indexes.length} status=${lexical.status} note=${lexical.note}`)
     }
     const retriever = createHybridRetriever(stores.project, stores.global, {
       ...(lexical.indexes.length > 0 ? { lexicalIndexes: lexical.indexes } : {}),
@@ -224,7 +224,7 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
         onRankError: (error: unknown) => {
           ranklogFailures += 1
           lastRanklogError = error instanceof Error ? error.message : String(error)
-          warn(`ranklog sink 抛错(不影响检索) — 目标文件 ${lastRanklogFile}: ${lastRanklogError}`)
+          warn(`ranklog sink threw (retrieval unaffected) — target file ${lastRanklogFile}: ${lastRanklogError}`)
         },
         onRank: async (line: {
           at: string
@@ -245,7 +245,7 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
           } catch (error) {
             ranklogFailures += 1
             lastRanklogError = error instanceof Error ? error.message : String(error)
-            warn(`ranklog 写入失败(不影响检索) — 目标文件 ${file}: ${lastRanklogError}`)
+            warn(`ranklog write failed (retrieval unaffected) — target file ${file}: ${lastRanklogError}`)
           }
         },
       } : {}),

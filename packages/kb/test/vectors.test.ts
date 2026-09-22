@@ -111,7 +111,7 @@ test('writeVectorIndex 拒绝 meta 与矩阵不一致(损坏要在写时就暴�
   const { store } = await world(t)
   await assert.rejects(
     () => writeVectorIndex(store.dir, { kind: 'entries' }, vectorMetaFor({ embedderVersion: 'v', dim: 4, idOrder: ['k-a'], unitsHash: 'f', builtAt: 'now' }), Float32Array.from([1, 0])),
-    /矩阵/,
+    /matrix holds/,
   )
 })
 

@@ -21,17 +21,17 @@ import { fileURLToPath } from 'node:url'
 
 const USAGE = `clue — ClueHarness(M0/M1/M2/M3)
 
-用法:
-  clue                      交互对话(启动完整 agent 组合)
-  clue web [--port N]       网页界面(dsh web 壳 + ClueHarness 知识库面板,默认端口 3090)
-  clue render <page.html>   渲染验证(结构树/基准比对;详见 clue render --help)
-  clue kb <命令>            知识库(增删查/状态机/审批队列;详见 clue kb help)
-  clue recall [--chunks n]  检索召回/消融评测(合成语料 + 六类查询 + 硬护栏;见 clue recall --help)
-  clue bench <命令>         公开基准评测的产物管理(索引/对比/清理;见 clue bench help)
-  clue --help               本帮助
+Usage:
+  clue                      interactive chat (boots the full agent composition)
+  clue web [--port N]       web surface (dsh web shell + ClueHarness knowledge base panel, default port 3090)
+  clue render <page.html>   render verification (structure tree / baseline comparison; see clue render --help)
+  clue kb <command>         knowledge base (add/remove/query, state machine, approval queue; see clue kb help)
+  clue recall [--chunks n]  retrieval recall / ablation harness (synthetic corpus + six query classes + hard guardrails; see clue recall --help)
+  clue bench <command>      artifact management for public benchmark runs (index/compare/cleanup; see clue bench help)
+  clue --help               this help
 
-向量与精排配置在 clue kb 面:clue kb embed-config / embed / doctor / query --explain(见 clue kb help)
-  clue --version            版本号`
+Vector and rerank configuration lives on the clue kb side: clue kb embed-config / embed / doctor / query --explain (see clue kb help)
+  clue --version            version number`
 
 function readVersion(): string {
   const manifest = JSON.parse(
@@ -86,6 +86,6 @@ if (command === '--help' || command === '-h') {
     process.exitCode = 1
   }
 } else {
-  console.error(`clue: 未知命令 "${command}"\n\n${USAGE}`)
+  console.error(`clue: unknown command "${command}"\n\n${USAGE}`)
   process.exitCode = 2
 }

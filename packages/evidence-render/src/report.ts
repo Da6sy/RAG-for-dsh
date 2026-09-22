@@ -23,25 +23,25 @@ export function serializeDiffText(
   options: { stale?: boolean; unconfirmed?: boolean } = {},
 ): string {
   const lines: string[] = []
-  lines.push(`差异报告 — ${report.target}`)
+  lines.push(`diff report — ${report.target}`)
   if (options.stale === true) {
-    lines.push('⚠ 基准已过期:绑定的源文件内容变了,以下差异可能包含"代码本来就该变"的部分;确认后请用 --record 重建基准。')
+    lines.push('⚠ baseline is stale: the bound source files changed, so the diff below may include changes the code was supposed to make; after reviewing, rebuild the baseline with --record.')
   }
   if (options.unconfirmed === true) {
-    lines.push('⚠ 基准尚未经人工确认(--confirm),比对结果仅供参考。')
+    lines.push('⚠ baseline has not been human-confirmed (--confirm) yet; treat this comparison as reference only.')
   }
   if (report.identical) {
-    lines.push('与基准完全一致:没有结构、位置、尺寸、可见性或检查项变化。')
+    lines.push('identical to the baseline: no structure, position, size, visibility or assertion changes.')
     return `${lines.join('\n')}\n`
   }
-  lines.push(`共 ${report.entries.length} 处变化:`)
+  lines.push(`${report.entries.length} changes:`)
   for (const entry of report.entries) {
     lines.push(`${SEVERITY_ICON[entry.severity]} [${entry.kind}] ${entry.label}: ${entry.detail}`)
   }
   const errors = report.entries.filter((e) => e.severity === 'error').length
   const warns = report.entries.filter((e) => e.severity === 'warn').length
   lines.push('')
-  lines.push(`小结: ${errors} 项严重 · ${warns} 项警告 · ${report.entries.length - errors - warns} 项提示`)
+  lines.push(`summary: ${errors} error · ${warns} warn · ${report.entries.length - errors - warns} info`)
   return `${lines.join('\n')}\n`
 }
 
@@ -51,16 +51,16 @@ export function serializeDiffText(
  * @returns multi-line text (no trailing newline duplication).
  */
 export function serializeAssertionsText(snapshot: LayoutSnapshot): string {
-  const lines: string[] = ['检查:']
+  const lines: string[] = ['checks:']
   if (snapshot.assertions.length === 0) {
-    lines.push('  (未运行断言)')
+    lines.push('  (no assertions ran)')
     return lines.join('\n')
   }
   for (const assertion of snapshot.assertions) {
-    const expected = assertion.expected !== null ? `  期望: ${assertion.expected}` : ''
-    lines.push(`  ${assertion.pass ? '✓' : '✗'} [${assertion.severity}] ${assertion.name}  实际: ${assertion.actual}${expected}`)
+    const expected = assertion.expected !== null ? `  expected: ${assertion.expected}` : ''
+    lines.push(`  ${assertion.pass ? '✓' : '✗'} [${assertion.severity}] ${assertion.name}  actual: ${assertion.actual}${expected}`)
   }
   const failed = snapshot.assertions.filter((a) => !a.pass).length
-  if (failed > 0) lines.push(`  (${failed} 项未通过)`)
+  if (failed > 0) lines.push(`  (${failed} failed)`)
   return lines.join('\n')
 }

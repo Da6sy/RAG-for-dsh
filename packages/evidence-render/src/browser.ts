@@ -90,10 +90,10 @@ export async function launchRenderBrowser(): Promise<RenderBrowser> {
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause)
     throw new Error(
-      `无法启动 Chromium: ${actionableLine(message)}\n`
-      + '  浏览器二进制: `npx playwright install chromium`\n'
-      + `  系统库(Arch/WSL Arch 等 Playwright 不自动装库的发行版): ${ARCH_DEPS_HINT}\n`
-      + '  (WSL Ubuntu/Debian 可用 `npx playwright install --with-deps chromium` 一步到位)',
+      `cannot launch Chromium: ${actionableLine(message)}\n`
+      + '  browser binary: `npx playwright install chromium`\n'
+      + `  system libs (distros where Playwright does not install them automatically, e.g. Arch/WSL Arch): ${ARCH_DEPS_HINT}\n`
+      + '  (WSL Ubuntu/Debian: `npx playwright install --with-deps chromium` does it in one step)',
     )
   }
   return {

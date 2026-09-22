@@ -476,7 +476,7 @@ async function fuseChunkChannels(
       return null
     }
     const [queryVector] = await vector.embedder.embed([queryTokens.join(' ')])
-    if (queryVector === undefined) throw new Error('embedder 未返回查询向量')
+    if (queryVector === undefined) throw new Error('chunks: embedder returned no query vector')
     const depth = vector.recallDepth ?? 20
     const vectorHits = searchVectors(index, queryVector, { limit: depth })
     const bySeq = new Map(chunks.map((chunk) => [chunk.seq, chunk]))
@@ -593,14 +593,33 @@ export async function redlinesForDoc(store: KbStore, docId: string): Promise<KbR
   return out
 }
 
-/** The anchor string every二级 answer carries (`docId 行 a-b · heading`). */
-export function anchorLabel(hit: Pick<ChunkHit, 'docId' | 'lines' | 'headingPath' | 'quoteAnchor'>): string {
-  const heading = hit.headingPath === '' ? '(无标题)' : hit.headingPath
-  return `${hit.docId} 行 ${hit.lines.start}-${hit.lines.end} · ${heading} · “${quoteAnchorOf(hit.quoteAnchor, 40)}”`
+/**
+ * The anchor string every二级 answer carries (`docId 行 a-b · heading`).
+ *
+ * `lang` is the shared-renderer doctrine again: the model blocks and the web
+ * panel read Chinese, the console reads English, and the default keeps every
+ * existing caller byte-identical.
+ * @param hit - the chunk identity.
+ * @param lang - `zh` (default) or `en`.
+ * @returns the anchor line fragment.
+ */
+export function anchorLabel(
+  hit: Pick<ChunkHit, 'docId' | 'lines' | 'headingPath' | 'quoteAnchor'>,
+  lang: 'zh' | 'en' = 'zh',
+): string {
+  const en = lang === 'en'
+  const heading = hit.headingPath === '' ? (en ? '(untitled)' : '(无标题)') : hit.headingPath
+  const quote = `${quoteAnchorOf(hit.quoteAnchor, 40)}`
+  return en
+    ? `${hit.docId} lines ${hit.lines.start}-${hit.lines.end} · ${heading} · “${quote}”`
+    : `${hit.docId} 行 ${hit.lines.start}-${hit.lines.end} · ${heading} · “${quote}”`
 }
 
 /** The honest receipt when an entry has no document at all (proposal §4). */
 export const NO_DOC_NOTICE = '该知识无原文层(entry 未挂载 doc),正文即全部内容。'
+
+/** The same receipt for the console (English). */
+export const NO_DOC_NOTICE_EN = 'this entry has no document layer (nothing mounted), the body is all there is.'
 
 /**
  * The tier query text for a "pure read" caller: the same tokenizer retrieval

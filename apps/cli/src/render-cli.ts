@@ -15,17 +15,17 @@
  */
 import { inspectPage, type InspectMode } from '@clue-harness/evidence-render'
 
-const USAGE = `用法: clue render <page.html> [选项]
-  --project <dir>     项目根目录(默认当前目录)
-  --home <dir>        中心 home(基准存 <home>/baselines/<工作区键>;默认 $CLUE_HOME 或 ~/.clue)
-  --viewport <WxH>    视口(默认 1440x900)
-  --dpr <n>           设备像素比(默认 1)
-  --record            把本次采集存为基准(待人工确认)
-  --confirm           人工确认现有基准(不启动浏览器)
-  --show              仅输出单次结构树+检查(不比对)
-  --mask <selector>   屏蔽易变区域文本(可重复)
-  --json <file>       同时把快照 JSON 写到文件
-默认模式为 compare:有基准就比对,没有基准退化为 show 并提示 --record。`
+const USAGE = `Usage: clue render <page.html> [options]
+  --project <dir>     project root directory (default: current directory)
+  --home <dir>        central home (baselines live in <home>/baselines/<workspace key>; default: $CLUE_HOME or ~/.clue)
+  --viewport <WxH>    viewport (default: 1440x900)
+  --dpr <n>           device pixel ratio (default: 1)
+  --record            save this capture as the baseline (pending human confirmation)
+  --confirm           human-confirm the existing baseline (does not launch a browser)
+  --show              print the one-off structure tree + checks only (no comparison)
+  --mask <selector>   mask text in volatile regions (repeatable)
+  --json <file>       also write the snapshot JSON to a file
+Default mode is compare: with a baseline it compares; without one it degrades to show and suggests --record.`
 
 interface ParsedArgs {
   page: string
@@ -52,14 +52,14 @@ function parseArgs(argv: string[]): ParsedArgs {
     const arg = argv[i]
     const next = (): string => {
       const value = argv[++i]
-      if (value === undefined) throw new Error(`选项 ${arg} 缺少参数\n\n${USAGE}`)
+      if (value === undefined) throw new Error(`render: option ${arg} requires an argument\n\n${USAGE}`)
       return value
     }
     switch (arg) {
       case '--project': project = next(); break
       case '--viewport': {
         const match = next().match(/^(\d+)x(\d+)$/)
-        if (match === null) throw new Error(`--viewport 需要 WxH 格式\n\n${USAGE}`)
+        if (match === null) throw new Error(`render: --viewport requires WxH format\n\n${USAGE}`)
         viewport = { width: Number(match[1]), height: Number(match[2]) }
         break
       }
@@ -72,12 +72,12 @@ function parseArgs(argv: string[]): ParsedArgs {
       case '--home': home = next(); break
       case '--help': case '-h': throw new HelpRequested()
       default:
-        if (arg.startsWith('-')) throw new Error(`未知选项: ${arg}\n\n${USAGE}`)
-        if (page !== null) throw new Error(`只接受一个页面参数(已有 ${page},又见 ${arg})\n\n${USAGE}`)
+        if (arg.startsWith('-')) throw new Error(`render: unknown option ${arg}\n\n${USAGE}`)
+        if (page !== null) throw new Error(`render: only one page argument is accepted (got ${page}, then ${arg})\n\n${USAGE}`)
         page = arg
     }
   }
-  if (page === null) throw new Error(`缺少页面参数\n\n${USAGE}`)
+  if (page === null) throw new Error(`render: missing page argument\n\n${USAGE}`)
   return { page, project, viewport, dpr, mode, masks, jsonOut, home }
 }
 

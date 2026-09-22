@@ -312,7 +312,7 @@ export function buildSyntheticSet(options: SyntheticOptions = {}): SyntheticSet 
   // Default stays the legacy three so the original harness's numbers (and its
   // pinned tests) keep meaning exactly what they meant.
   const kinds = (options.kinds ?? LEGACY_KINDS) as QueryKind[]
-  if (kinds.length === 0) throw new Error('buildSyntheticSet: kinds 不能为空')
+  if (kinds.length === 0) throw new Error('buildSyntheticSet: kinds must not be empty')
   for (let i = 0; i < queryCount; i += 1) {
     const doc = docs[Math.floor(rand() * docs.length) % docs.length] as SyntheticChunk
     const kind = kinds[i % kinds.length] as QueryKind
@@ -512,10 +512,10 @@ async function run(args: ParsedArgs): Promise<RecallReport> {
     timing: { ingestSeconds, searchSeconds, msPerQuery: rows.length === 0 ? 0 : (searchSeconds * 1000) / rows.length },
     selfCheck: { verifiedAgainstQueryChunks: `${verified}/${verifiedTotal}` },
     caveats: [
-      '合成数据集:查询由生成器构造(exact 逐字/exact 同义改写/entity 实体),用于回归对照,不代表真实用户提问分布',
-      '语料是合成的中文技术文本;retriever 是全文关键词(bigram),无 embedding',
-      '只覆盖二级(原文分片)检索;一级条目检索需要人工撰写的知识库',
-      'exact 类是上限(应接近 100%),paraphrase 类才是真实难点',
+      'synthetic set: queries are generator-built (exact / paraphrase / entity) as a regression baseline; they do not reflect real user question distributions',
+      'the corpus is synthetic Chinese technical prose; the retriever is full-text keyword (bigram) matching with no embedding',
+      'covers level-2 (chunk) retrieval only; level-1 entry retrieval needs a human-written knowledge base',
+      'the exact class is the ceiling (should approach 100%); paraphrase is the real challenge',
     ],
   }
 }
@@ -525,27 +525,27 @@ function printReport(report: RecallReport): void {
   const pct = (v: number): string => `${(v * 100).toFixed(1)}%`
   const ks = report.ks
   console.log('')
-  console.log(`语料 ${report.corpus.documents} 篇 / ${report.corpus.chunkRows} 个分片 · 查询 ${report.queries.total} 条(${report.queries.kinds.join('/')})`)
-  console.log(`耗时: ingest ${report.timing.ingestSeconds.toFixed(1)}s · 检索 ${report.timing.searchSeconds.toFixed(2)}s(${report.timing.msPerQuery.toFixed(2)} ms/查询)`)
-  console.log(`自检: queryChunks 抽检 ${report.selfCheck.verifiedAgainstQueryChunks}`)
+  console.log(`corpus: ${report.corpus.documents} documents / ${report.corpus.chunkRows} chunks · queries: ${report.queries.total} (${report.queries.kinds.join('/')})`)
+  console.log(`timing: ingest ${report.timing.ingestSeconds.toFixed(1)}s · search ${report.timing.searchSeconds.toFixed(2)}s (${report.timing.msPerQuery.toFixed(2)} ms/query)`)
+  console.log(`self-check: queryChunks spot-check ${report.selfCheck.verifiedAgainstQueryChunks}`)
   const table = (label: string, block: SummaryBlock): void => {
     console.log('')
-    console.log(`${label}(n=${block.queries})`)
+    console.log(`${label} (n=${block.queries})`)
     console.log(`  ${'K'.padEnd(4)}${ks.map((k) => `recall@${k}`.padEnd(12)).join('')}${ks.map((k) => `nDCG@${k}`.padEnd(11)).join('')}MRR`)
     console.log(`  ${''.padEnd(4)}${ks.map((k) => pct(block.recall[k]).padEnd(12)).join('')}${ks.map((k) => block.ndcg[k].toFixed(3).padEnd(11)).join('')}${block.mrr.toFixed(3)}`)
   }
-  table('总体', report.summary.overall)
+  table('overall', report.summary.overall)
   for (const [kind, block] of Object.entries(report.summary.byKind)) {
-    const label = kind === 'exact' ? '逐字引用(上限)' : kind === 'paraphrase' ? '同义改写(真难点)' : '实体检索'
+    const label = kind === 'exact' ? 'exact (ceiling)' : kind === 'paraphrase' ? 'paraphrase (the real challenge)' : 'entity'
     table(label, block)
   }
   if (report.misses.length > 0) {
     console.log('')
-    console.log(`漏检样例(${report.misses.length} 条):`)
-    for (const miss of report.misses) console.log(`  [${miss.kind}] 「${miss.text}」 → 目标 ${miss.gold} 排名 ${miss.rank ?? '未命中'}`)
+    console.log(`miss examples (${report.misses.length}):`)
+    for (const miss of report.misses) console.log(`  [${miss.kind}] "${miss.text}" → gold ${miss.gold} rank ${miss.rank ?? 'not found'}`)
   }
   console.log('')
-  for (const caveat of report.caveats) console.log(`注: ${caveat}`)
+  for (const caveat of report.caveats) console.log(`note: ${caveat}`)
 }
 
 /**
@@ -556,31 +556,31 @@ function printReport(report: RecallReport): void {
 export async function recallMain(argv: readonly string[]): Promise<number> {
   const args = parseArgs(argv)
   if (args.help === 'true') {
-    console.log(`用法: clue recall [选项]
+    console.log(`usage: clue recall [options]
 
-  --chunks n     语料段数(默认 600)
-  --queries n    查询条数(默认 300)
-  --k 1,5,10,20  截断点(默认 1,5,10,20)
-  --seed n       随机种子(默认 20260913;同种子 ⇒ 同结果)
-  --verify n     用真 queryChunks 抽检几条(默认 5)
-  --json         只输出 JSON 报告
+  --chunks n     corpus size in documents (default 600)
+  --queries n    number of queries (default 300)
+  --k 1,5,10,20  cutoffs for recall@K (default 1,5,10,20)
+  --seed n       RNG seed (default 20260913; same seed ⇒ same results)
+  --verify n     spot-check n queries against the real queryChunks (default 5)
+  --json         print the machine-readable JSON report only
 
-提示词 A/B(V3,用已配置的对话模型写 query):
-  --prompt-ab       对比"关键词堆"与"意图句"两种提示词写出的查询各自的 recall
-  --samples n       取样文档数(默认 24)· --batch n 每次模型调用带几篇(默认 4)
-  --provider p --model m   覆盖默认路由(默认取 agent-default-model 的那条)
+prompt A/B (V3; the configured chat model writes the queries):
+  --prompt-ab       compare the recall of queries written under two prompt doctrines: a keyword pile vs an intent sentence
+  --samples n       documents to sample (default 24) · --batch n documents per model call (default 4)
+  --provider p --model m   override the default route (defaults to the agent-default-model entry)
 
-消融台(V2,给了任一下列开关就走消融模式):
-  --channel lexical|vector|hybrid   召回通道(默认跑矩阵:词法/混合 × 精排开关)
-  --rerank on|off                   精排开关(off = 复现今日排序,可回滚)
-  --profile tool|pre-step|gate      通道 profile
-  --embedder hash|http              嵌入来源;http 需先 clue kb embed-config 配好并实测维度
-  --kinds a,b,c                     查询类别(默认含 cross-lingual/negation/identifier)
-  --depth n                         每路召回深度(默认 50)
+ablation harness (V2; any of the flags below switches to ablation mode):
+  --channel lexical|vector|hybrid   recall channels (default runs the matrix: lexical/hybrid × rerank on/off)
+  --rerank on|off                   rerank switch (off = reproduce today's ranking, i.e. the rollback path)
+  --profile tool|pre-step|gate      channel profile
+  --embedder hash|http              embedding source; http needs clue kb embed-config completed first, with the dim actually measured
+  --kinds a,b,c                     query classes (default includes cross-lingual/negation/identifier)
+  --depth n                         per-channel recall depth (default 50)
 
-合成语料 + 三类查询(逐字/同义/实体),秒级跑完,无网络无缓存。
-指标:recall@K / nDCG@K / MRR,总体与分类别分别报告。
-消融模式额外给出:每配置一行 + 相对纯词法基线的 delta + 硬护栏判定。`)
+synthetic corpus + three query classes (exact/paraphrase/entity); finishes in seconds, no network, no cache.
+metrics: recall@K / nDCG@K / MRR, reported overall and per class.
+ablation mode additionally prints: one row per configuration + delta against the pure-lexical baseline + hard-guardrail verdicts.`)
     return 0
   }
   const ablationRequested = args.channel !== undefined || args.rerank !== undefined
@@ -629,7 +629,7 @@ async function runPromptAbMain(args: ParsedArgs): Promise<number> {
     try {
       const config = readEmbeddingConfig(embedHost.ctx)
       if (!embeddingReady(config)) {
-        console.error('clue recall --prompt-ab --embedder http: 嵌入未就绪(先 clue kb embed-config auto)')
+        console.error('clue recall --prompt-ab --embedder http: embedding not ready (run clue kb embed-config auto first)')
         await embedHost.close()
         return 2
       }
@@ -683,8 +683,8 @@ async function runAblationMain(args: ParsedArgs): Promise<number> {
     try {
       const config = readEmbeddingConfig(host.ctx)
       if (!embeddingReady(config)) {
-        console.error(`clue recall --embedder http: 嵌入未就绪(${config.baseUrl === '' ? '缺 baseUrl' : config.dim <= 0 ? '维度未实测' : '配置不完整'})`)
-        console.error('  先跑 clue kb embed-config auto(或 set + test),再重跑。')
+        console.error(`clue recall --embedder http: embedding not ready (${config.baseUrl === '' ? 'missing baseUrl' : config.dim <= 0 ? 'dim never measured' : 'incomplete config'})`)
+        console.error('  run clue kb embed-config auto (or set + test) first, then re-run')
         await host.close()
         return 2
       }
