@@ -29,3 +29,9 @@ Thumbs.db
 # 评测数据与报告(单独存放,可整体删除)
 evals/datasets/
 evals/runs/
+evals/cache/
+
+# 文档与个人文件不进仓库(本地另存:../clue-harness-archive-noncode/)
+docs/
+*.docx
+*.pdf
