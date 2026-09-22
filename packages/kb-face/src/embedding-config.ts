@@ -149,10 +149,16 @@ export const RetrievalSchema = z.object({
    * exactly (the rollback switch, pinned by a test).
    */
   lexicalScorer: z.union([z.const('bm25'), z.const('weights')]).default(RETRIEVAL_DEFAULTS.lexicalScorer),
-  /** D1 (`docs/开发记录.md`): lexical feature scale. */
-  lexicalNormalization: z.union([z.const('candidates'), z.const('absolute')]).default(RETRIEVAL_DEFAULTS.lexicalNormalization),
+  /**
+   * D1/D2's scale switches, `auto` by default (落地计划 §2-2): the
+   * absolute/calibrated scales apply when the semantic channel really
+   * participates (`hybrid`) and stay off for a pure-lexical run. An explicit
+   * value always wins — that is the switch a single-variable A/B and a rollback
+   * use (落地计划 §5-4).
+   */
+  lexicalNormalization: z.union([z.const('auto'), z.const('candidates'), z.const('absolute')]).default(RETRIEVAL_DEFAULTS.lexicalNormalization),
   /** D2: semantic feature scale. */
-  semanticScale: z.union([z.const('raw'), z.const('calibrated')]).default(RETRIEVAL_DEFAULTS.semanticScale),
+  semanticScale: z.union([z.const('auto'), z.const('raw'), z.const('calibrated')]).default(RETRIEVAL_DEFAULTS.semanticScale),
   /** D2's calibration bounds (per embedder family, not per corpus). */
   semanticFloor: z.number().default(RETRIEVAL_DEFAULTS.semanticFloor),
   semanticCeil: z.number().default(RETRIEVAL_DEFAULTS.semanticCeil),

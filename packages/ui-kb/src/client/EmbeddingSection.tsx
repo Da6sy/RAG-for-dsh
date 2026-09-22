@@ -129,7 +129,7 @@ export function EmbeddingSection(): JSX.Element {
     missingFeatureMode: string
   }>({
     rerank: true, ranklog: true, llmRerank: false, lexical: '1', vector: '1', weights: {},
-    lexicalNormalization: 'candidates', semanticScale: 'raw', semanticFloor: '0.3', semanticCeil: '0.8', missingFeatureMode: 'zero',
+    lexicalNormalization: 'auto', semanticScale: 'auto', semanticFloor: '0.3', semanticCeil: '0.8', missingFeatureMode: 'zero',
   })
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [keyInput, setKeyInput] = useState('')
@@ -632,6 +632,7 @@ export function EmbeddingSection(): JSX.Element {
                   disabled={busy || !data.available}
                   onChange={(event: { target: { value: string } }) => setTuningDraft((previous) => ({ ...previous, lexicalNormalization: event.target.value }))}
                 >
+                  <option value="auto">auto(混合走绝对尺度,纯词法维持旧档)</option>
                   <option value="candidates">candidates(按候选集最好的一条归一)</option>
                   <option value="absolute">absolute(按池内分位饱和,旧档不受影响)</option>
                 </select>
@@ -644,6 +645,7 @@ export function EmbeddingSection(): JSX.Element {
                   disabled={busy || !data.available}
                   onChange={(event: { target: { value: string } }) => setTuningDraft((previous) => ({ ...previous, semanticScale: event.target.value }))}
                 >
+                  <option value="auto">auto(混合走标定,纯词法维持旧档)</option>
                   <option value="raw">raw(原始余弦)</option>
                   <option value="calibrated">calibrated(按 floor/ceil 映射到 0–1)</option>
                 </select>

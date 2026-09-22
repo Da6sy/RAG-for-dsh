@@ -456,10 +456,16 @@ try {
       // a POOL quantile, i.e. an approximation of the corpus-level one the plan
       // really wants. A report that enables `absolute` must say so, or the number
       // will be read as if it were corpus-calibrated.
-      ...(knobs.lexicalNormalization === 'absolute'
+      // 落地计划 §2-2 之后默认是 `auto`:混合行按通道推断成 absolute+calibrated,
+      // 纯词法行保持 candidates+raw。报告必须说清哪一行落在哪个档位,否则读者会把
+      // 两行的差当成"同一配置的噪声"。
+      ...(knobs.lexicalNormalization === undefined || knobs.lexicalNormalization === 'auto'
+        ? ['D1/D2 为 auto:hybrid 行按通道用 absolute+calibrated,lexical 行保持 candidates+raw(落地计划 §2-2)']
+        : []),
+      ...(knobs.lexicalNormalization === 'absolute' || knobs.lexicalNormalization === undefined || knobs.lexicalNormalization === 'auto'
         ? ['D1 的 scale_q 目前取**召回池**内正分的 p90(池 <3 条时退化为最大值):这是语料级分位数的近似,报告里的 absolute 数字按"近似"读']
         : []),
-      ...(knobs.semanticScale === 'calibrated'
+      ...(knobs.semanticScale === 'calibrated' || knobs.semanticScale === undefined || knobs.semanticScale === 'auto'
         ? [`D2 的 floor/ceil = ${knobs.semanticFloor ?? RETRIEVAL_DEFAULTS.semanticFloor}/${knobs.semanticCeil ?? RETRIEVAL_DEFAULTS.semanticCeil},是**嵌入器家族的两点标定**,不是按本语料调的`]
         : []),
       ...(extraCaveat === null ? [] : [extraCaveat]),

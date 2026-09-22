@@ -63,7 +63,7 @@ import {
   type RerankResult,
 } from './rerank.ts'
 import { normalizeQuery, resolveProfile, type ChannelProfile, type NormalizedQuery } from './profiles.ts'
-import { RETRIEVAL_DEFAULTS } from './defaults.ts'
+import { RETRIEVAL_DEFAULTS, resolveLexicalNormalization, resolveSemanticScale } from './defaults.ts'
 import { llmRerank as runLlmRerank, type LlmRankPort, type LlmRerankOutcome } from './llm-rerank.ts'
 
 /** Which recall channels participate. */
@@ -137,9 +137,9 @@ export interface HybridConfig {
   /** Feature weights (§8.2). */
   featureWeights?: Partial<RerankFeatureWeights>
   /** D1: what `bm25ish` is relative to (`candidates` = today, `absolute` = pool scale). */
-  lexicalNormalization?: 'candidates' | 'absolute'
+  lexicalNormalization?: 'auto' | 'candidates' | 'absolute'
   /** D2: whether the cosine is calibrated onto [0,1] (`raw` = today). */
-  semanticScale?: 'raw' | 'calibrated'
+  semanticScale?: 'auto' | 'raw' | 'calibrated'
   /** D2's calibration bounds (from the embedder family, not per corpus). */
   semanticFloor?: number
   semanticCeil?: number
@@ -219,7 +219,7 @@ export interface HybridRetrieval {
  * (`defaults.ts`), never re-typed here: two copies of a default is how a
  * benchmark silently measured the wrong configuration (F0 of the F-plan).
  */
-export { RETRIEVAL_DEFAULTS } from './defaults.ts'
+export { RETRIEVAL_DEFAULTS, resolveLexicalNormalization, resolveSemanticScale } from './defaults.ts'
 export const DEFAULT_RECALL_DEPTH = RETRIEVAL_DEFAULTS.recallDepth
 export const DEFAULT_RERANK_CANDIDATES = RETRIEVAL_DEFAULTS.rerankCandidates
 
@@ -299,6 +299,20 @@ export function createHybridRetriever(
   const channelStateNote = abilityGated
     ? '嵌入器自报语义能力=0(确定性兜底),按 F1 不进入融合 — 本次为纯词法结果'
     : null
+  /**
+   * 落地计划 §2-2 (按通道启用 D1/D2): the scale decisions belong HERE, because
+   * this is the only place that knows which channels ACTUALLY ran — `auto` must
+   * be resolved after the F1 ability gate, not before it (a gated hybrid IS a
+   * lexical run, and it must get the lexical档位).
+   */
+  const lexicalNormalization = resolveLexicalNormalization(
+    config.lexicalNormalization ?? RETRIEVAL_DEFAULTS.lexicalNormalization,
+    effectiveChannels,
+  )
+  const semanticScale = resolveSemanticScale(
+    config.semanticScale ?? RETRIEVAL_DEFAULTS.semanticScale,
+    effectiveChannels,
+  )
   const lexicalOnly = effectiveChannels === 'lexical' && !rerankEnabled
   // Invariant 9 is satisfied by CONSTRUCTION, not by imitation: the exact
   // today's-behavior configuration IS the shipped full-text retriever.
@@ -647,8 +661,11 @@ export function createHybridRetriever(
         trustThreshold: config.trustThreshold ?? project?.config.trustThreshold ?? global?.config.trustThreshold ?? 20,
         now,
         ...(config.featureWeights !== undefined ? { weights: config.featureWeights } : {}),
-        ...(config.lexicalNormalization !== undefined ? { lexicalNormalization: config.lexicalNormalization } : {}),
-        ...(config.semanticScale !== undefined ? { semanticScale: config.semanticScale } : {}),
+        // The RESOLVED values, never `auto`: `rerankOne` must not have to know
+        // about channels, and an unresolved `auto` reaching it would silently
+        // mean "candidates" (the wrong answer for a hybrid run).
+        lexicalNormalization,
+        semanticScale,
         ...(config.semanticFloor !== undefined ? { semanticFloor: config.semanticFloor } : {}),
         ...(config.semanticCeil !== undefined ? { semanticCeil: config.semanticCeil } : {}),
         ...(config.missingFeatureMode !== undefined ? { missingFeatureMode: config.missingFeatureMode } : {}),

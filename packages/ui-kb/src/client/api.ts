@@ -668,8 +668,8 @@ export interface RetrievalTuningPayload {
    * able to show which档位 is in force — a switch nobody can see is how the F0
    * "phantom knob" happened.
    */
-  lexicalNormalization: 'candidates' | 'absolute'
-  semanticScale: 'raw' | 'calibrated'
+  lexicalNormalization: 'auto' | 'candidates' | 'absolute'
+  semanticScale: 'auto' | 'raw' | 'calibrated'
   semanticFloor: number
   semanticCeil: number
   missingFeatureMode: 'zero' | 'absent'
