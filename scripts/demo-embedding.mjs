@@ -263,7 +263,12 @@ try {
   const tuningCard = section.locator('.clue-card').filter({ hasText: '检索调优' }).first()
   await tuningCard.getByText('量纲与名次').first().click()
   await page.waitForTimeout(400)
-  const scaleSelect = tuningCard.locator('select').first()
+  // Scope by LABEL, never by index: the card has several selects now (档位三件、
+  // 词频口径、通道权重含义), and "the first select" broke the moment one was added
+  // in front of it — a locator that depends on field order is a test that fails
+  // for the wrong reason.
+  const scaleField = (card) => card.locator('.clue-field').filter({ hasText: '词法尺度' }).first()
+  const scaleSelect = scaleField(tuningCard).locator('select')
   check('量纲与名次折叠面板里有档位下拉(D1/D2/D3 的开关可见)', (await tuningCard.locator('select').count()) >= 3)
   await scaleSelect.selectOption('absolute')
   await page.waitForTimeout(200)
@@ -285,8 +290,9 @@ try {
   const reloaded = page.locator('.clue-sec').first()
   await reloaded.locator('.clue-card').filter({ hasText: '检索调优' }).first().getByText('量纲与名次').first().click()
   await page.waitForTimeout(400)
+  const reloadedTuning = reloaded.locator('.clue-card').filter({ hasText: '检索调优' }).first()
   check('刷新后页面回显保存的档位(而不是回到默认)',
-    (await reloaded.locator('.clue-card').filter({ hasText: '检索调优' }).first().locator('select').first().inputValue()) === 'absolute')
+    (await reloadedTuning.locator('.clue-field').filter({ hasText: '词法尺度' }).first().locator('select').inputValue()) === 'absolute')
 
   // (5) DESIGN-TOKEN CONFORMANCE: the page must be built from dsh's own
   // measurements and tokens, not from a lookalike palette. Every number below
