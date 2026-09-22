@@ -49,10 +49,11 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import {
-  bm25Fields,
+  bm25CountFields,
   type Bm25FieldWeights,
   type LexicalStats,
   type PrecomputedFields,
+  type TermFrequency,
 } from './bm25.ts'
 import { entryTextAfterRedlines } from './redline.ts'
 import { tokenizeCounts } from './tokenize.ts'
@@ -561,6 +562,25 @@ export function lexicalStatsFrom(index: LexicalIndex): LexicalStats {
   }
 }
 
+/**
+ * The statistics under a term-frequency mode (F4②): the averages must match the
+ * length basis the scorer divides by, and both notions are already in the index
+ * (`dl` distinct, `tl` total), so switching modes rebuilds nothing.
+ * @param index - the loaded index.
+ * @param termFrequency - `presence` (distinct lengths) or `count` (total lengths).
+ * @returns the statistics BM25 scores with.
+ */
+export function lexicalStatsFor(index: LexicalIndex, termFrequency: TermFrequency): LexicalStats {
+  if (termFrequency === 'presence') return lexicalStatsFrom(index)
+  const base = lexicalStatsFrom(index)
+  return {
+    ...base,
+    avgTitle: index.meta.avgTotal[0],
+    avgTag: index.meta.avgTotal[1],
+    avgText: index.meta.avgTotal[2],
+  }
+}
+
 /** One candidate as the scoring path needs it. */
 export interface LexicalCandidate {
   id: string
@@ -579,16 +599,27 @@ export interface LexicalCandidate {
  * @param queryTokens - the query's tokens.
  * @returns the candidates, in ascending id order (deterministic).
  */
-export function lexicalCandidates(index: LexicalIndex, queryTokens: readonly string[]): LexicalCandidate[] {
-  const byId = new Map<string, { facts: LexicalEntryFacts; title: Set<string>; tag: Set<string>; text: Set<string> }>()
+export function lexicalCandidates(
+  index: LexicalIndex,
+  queryTokens: readonly string[],
+  termFrequency: TermFrequency = 'presence',
+): LexicalCandidate[] {
+  const byId = new Map<string, {
+    facts: LexicalEntryFacts
+    title: Map<string, number>
+    tag: Map<string, number>
+    text: Map<string, number>
+  }>()
   for (const token of queryTokens) {
     for (const posting of index.postings[token] ?? []) {
       const facts = index.meta.entries[posting.id]
       if (facts === undefined) continue
-      const row = byId.get(posting.id) ?? { facts, title: new Set<string>(), tag: new Set<string>(), text: new Set<string>() }
-      if (posting.tf[0] > 0) row.title.add(token)
-      if (posting.tf[1] > 0) row.tag.add(token)
-      if (posting.tf[2] > 0) row.text.add(token)
+      const row = byId.get(posting.id) ?? { facts, title: new Map(), tag: new Map(), text: new Map() }
+      // The REAL counts travel with the candidate: F4② needs them, and under
+      // `presence` the scorer clamps them to 1 itself (one switch, one place).
+      if (posting.tf[0] > 0) row.title.set(token, posting.tf[0])
+      if (posting.tf[1] > 0) row.tag.set(token, posting.tf[1])
+      if (posting.tf[2] > 0) row.text.set(token, posting.tf[2])
       byId.set(posting.id, row)
     }
   }
@@ -598,10 +629,12 @@ export function lexicalCandidates(index: LexicalIndex, queryTokens: readonly str
       id,
       facts: row.facts,
       fields: {
-        lengths: { title: row.facts.dl[0], tag: row.facts.dl[1], text: row.facts.dl[2] },
-        title: row.title,
-        tag: row.tag,
-        text: row.text,
+        // Length basis follows the SAME switch: distinct tokens today, total
+        // tokens under `count` (both are in the meta table, so nothing rebuilds).
+        lengths: termFrequency === 'count'
+          ? { title: row.facts.tl[0], tag: row.facts.tl[1], text: row.facts.tl[2] }
+          : { title: row.facts.dl[0], tag: row.facts.dl[1], text: row.facts.dl[2] },
+        counts: { title: row.title, tag: row.tag, text: row.text },
       },
     }))
 }

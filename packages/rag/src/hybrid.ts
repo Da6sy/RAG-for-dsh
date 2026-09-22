@@ -65,10 +65,12 @@ import {
 import { normalizeQuery, resolveProfile, type ChannelProfile, type NormalizedQuery } from './profiles.ts'
 import { RETRIEVAL_DEFAULTS, resolveLexicalNormalization, resolveSemanticScale } from './defaults.ts'
 import {
+  lexicalStatsFor,
   lexicalStatsFrom,
   mergeLexicalIndexes,
   queryKb,
   type LexicalIndex,
+  type TermFrequency,
 } from '@clue-harness/kb'
 import { llmRerank as runLlmRerank, type LlmRankPort, type LlmRerankOutcome } from './llm-rerank.ts'
 
@@ -166,6 +168,12 @@ export interface HybridConfig {
   lexicalIndexes?: readonly LexicalIndex[]
   /** R1: how the index step went, so the result can say whether the corpus was scanned. */
   lexicalIndexNote?: string
+  /**
+   * F4② (`docs/落地计划-剩余工程.md` §2-4): `presence` (shipped) or `count`.
+   * One switch moves the term frequencies and the length basis together, and the
+   * statistics, the `bm25ish` feature and the delegated path all follow it.
+   */
+  termFrequency?: TermFrequency
   /** The embedder in effect (absent = lexical only, honestly annotated). */
   embedder?: Embedder
   /** ClueHarness home — where the shared embed cache and rebuild writes live. */
@@ -369,6 +377,7 @@ export function createHybridRetriever(
     // --rerank off` is exactly the configuration the plan names as the way to
     // reproduce pre-R2 behavior (R2 of docs/开发记录.md).
     ...(config.lexicalScorer !== undefined ? { lexicalScorer: config.lexicalScorer } : {}),
+    ...(config.termFrequency !== undefined ? { termFrequency: config.termFrequency } : {}),
     // R1: the delegated rollback path gets the SAME index, so turning reranking
     // off stays a quality switch rather than becoming a performance cliff.
     ...(config.lexicalIndexes !== undefined ? { lexicalIndexes: config.lexicalIndexes } : {}),
@@ -566,6 +575,7 @@ export function createHybridRetriever(
 
     const weights: RetrievalWeights = { title: 3, tag: 2, text: 1, ...(config.weights ?? {}) }
     const lexicalScorer: LexicalScorer = config.lexicalScorer ?? RETRIEVAL_DEFAULTS.lexicalScorer
+    const termFrequency: TermFrequency = config.termFrequency ?? RETRIEVAL_DEFAULTS.termFrequency
     /**
      * R1: with an index, the corpus is never materialized.
      *
@@ -604,13 +614,13 @@ export function createHybridRetriever(
     // One stats pass per retrieval serves BOTH levels: the lexical channel's
     // BM25F and the reranker's `bm25ish` feature normalize the same numbers.
     const corpusStats = mergedIndex !== null
-      ? lexicalStatsFrom(mergedIndex)
+      ? lexicalStatsFor(mergedIndex, termFrequency)
       : (lexicalScorer === 'bm25' || rerankEnabled
         ? buildLexicalStats(members.map((member) => ({
           title: member.entry.title,
           tags: member.entry.tags,
           text: entryTextAfterRedlines(member.entry),
-        })))
+        })), termFrequency)
         : undefined)
 
     // ── lexical channel ────────────────────────────────────────────────────
@@ -624,6 +634,7 @@ export function createHybridRetriever(
           text: normalized.lexical,
           limit: recallDepth,
           noTouch: true,
+          termFrequency,
           lexicalIndexes: config.lexicalIndexes as readonly LexicalIndex[],
           ...(options.includeExpired !== undefined ? { includeExpired: options.includeExpired } : {}),
           ...(options.includeGlobal !== undefined ? { includeGlobal: options.includeGlobal } : {}),
@@ -642,6 +653,7 @@ export function createHybridRetriever(
             tier: member.entry.tier,
             ...scoreEntry(member.entry, queryTokens, weights, {
               scorer: lexicalScorer,
+              termFrequency,
               ...(corpusStats !== undefined ? { stats: corpusStats } : {}),
             }),
           }))
@@ -823,6 +835,7 @@ export function createHybridRetriever(
         ...(config.semanticFloor !== undefined ? { semanticFloor: config.semanticFloor } : {}),
         ...(config.semanticCeil !== undefined ? { semanticCeil: config.semanticCeil } : {}),
         ...(config.missingFeatureMode !== undefined ? { missingFeatureMode: config.missingFeatureMode } : {}),
+        termFrequency,
         profile,
       })
       for (const result of results) {

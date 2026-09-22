@@ -202,6 +202,7 @@ export function createRetrievalPlane(ctx: Context, options: RetrievalPlaneOption
       semanticFloor: tuning.semanticFloor,
       semanticCeil: tuning.semanticCeil,
       missingFeatureMode: tuning.missingFeatureMode,
+      termFrequency: tuning.termFrequency,
       trustThreshold: stores.project.config.trustThreshold,
       ...(useVector ? { embedder: liveEmbedder() } : {}),
       ...(home !== undefined ? { home } : {}),

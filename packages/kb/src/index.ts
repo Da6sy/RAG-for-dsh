@@ -40,8 +40,10 @@ export {
 export {
   BM25_B,
   BM25_K1,
+  bm25CountFields,
   bm25Fields,
   bm25fScore,
+  bm25fScoreFrom,
   buildLexicalStats,
   displayScore,
   idf,
@@ -49,9 +51,11 @@ export {
   type Bm25FieldWeights,
   type Bm25Fields,
   type Bm25Score,
+  type Bm25CountFields,
   type LexicalStats,
   type PrecomputedFields,
   type StatsDoc,
+  type TermFrequency,
 } from './bm25.ts'
 export { tokenize, tokenizeCounts } from './tokenize.ts'
 export {
@@ -63,6 +67,7 @@ export {
   forgetLexicalIndex,
   lexicalCandidates,
   lexicalIndexDir,
+  lexicalStatsFor,
   lexicalStatsFrom,
   loadLexicalIndex,
   mergeLexicalIndexes,

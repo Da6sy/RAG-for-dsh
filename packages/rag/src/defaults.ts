@@ -63,6 +63,13 @@ export const RETRIEVAL_DEFAULTS = {
   semanticCeil: 0.8,
   /** D3: how a feature whose channel did not recall the candidate is treated. */
   missingFeatureMode: 'zero' as 'zero' | 'absent',
+  /**
+   * F4② (落地计划 §2-4): how BM25 reads a field's term frequency — `presence`
+   * (shipped: a token counts once) or `count` (the real frequency). It moves the
+   * length basis with it (distinct tokens vs total tokens), because the plan
+   * measured them as ONE variable; the statistics follow from the same switch.
+   */
+  termFrequency: 'presence' as 'presence' | 'count',
 } as const
 
 /** The type of the table (so a schema can be typed from it). */

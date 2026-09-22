@@ -127,9 +127,11 @@ export function EmbeddingSection(): JSX.Element {
     semanticCeil: string
     /** D3: 缺失值的语义档位。 */
     missingFeatureMode: string
+    /** F4②: 词频口径(presence 是今天,count 是真词频)。 */
+    termFrequency: string
   }>({
     rerank: true, ranklog: true, llmRerank: false, lexical: '1', vector: '1', weights: {},
-    lexicalNormalization: 'auto', semanticScale: 'auto', semanticFloor: '0.3', semanticCeil: '0.8', missingFeatureMode: 'zero',
+    lexicalNormalization: 'auto', semanticScale: 'auto', semanticFloor: '0.3', semanticCeil: '0.8', missingFeatureMode: 'zero', termFrequency: 'presence',
   })
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [keyInput, setKeyInput] = useState('')
@@ -167,6 +169,7 @@ export function EmbeddingSection(): JSX.Element {
         semanticFloor: String(payload.retrieval.semanticFloor),
         semanticCeil: String(payload.retrieval.semanticCeil),
         missingFeatureMode: payload.retrieval.missingFeatureMode,
+        termFrequency: payload.retrieval.termFrequency,
       })
       setBudgetDraft({
         batchSize: String(payload.config.batchSize),
@@ -293,6 +296,7 @@ export function EmbeddingSection(): JSX.Element {
     || Number(tuningDraft.semanticFloor) !== retrieval.semanticFloor
     || Number(tuningDraft.semanticCeil) !== retrieval.semanticCeil
     || tuningDraft.missingFeatureMode !== retrieval.missingFeatureMode
+    || tuningDraft.termFrequency !== retrieval.termFrequency
 
   const staleCount = vector.indexes.filter((index) => index.stale || index.unreadable).length
 
@@ -663,6 +667,18 @@ export function EmbeddingSection(): JSX.Element {
                 </select>
               </div>
               <div className="clue-field">
+                <span className="clue-field-label">词频口径</span>
+                <select
+                  className="clue-input"
+                  value={tuningDraft.termFrequency}
+                  disabled={busy || !data.available}
+                  onChange={(event: { target: { value: string } }) => setTuningDraft((previous) => ({ ...previous, termFrequency: event.target.value }))}
+                >
+                  <option value="presence">presence(出现即一次,今天)</option>
+                  <option value="count">count(真词频,长度口径同为总词数)</option>
+                </select>
+              </div>
+              <div className="clue-field">
                 <span className="clue-field-label">标定 floor / ceil</span>
                 <span className="clue-field-inline" style={{ gap: 8 }}>
                   <Input
@@ -708,6 +724,7 @@ export function EmbeddingSection(): JSX.Element {
                 semanticFloor: Number(tuningDraft.semanticFloor),
                 semanticCeil: Number(tuningDraft.semanticCeil),
                 missingFeatureMode: tuningDraft.missingFeatureMode,
+                termFrequency: tuningDraft.termFrequency,
                 ...(Object.keys(weights).length > 0 ? { featureWeights: weights } : {}),
               }, 'retrieval')
             }}

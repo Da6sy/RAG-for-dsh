@@ -30,8 +30,11 @@
  */
 import {
   DEFAULT_WEIGHTS,
+  bm25fScoreFrom,
+  bm25CountFields,
   bm25Fields,
   bm25fScore,
+  type TermFrequency,
   buildLexicalStats,
   entryTextAfterRedlines,
   idf as kbIdf,
@@ -246,6 +249,8 @@ export interface RerankContext {
    * feature normalizes over "recalled by this channel" only.
    */
   missingFeatureMode?: 'zero' | 'absent'
+  /** F4②: presence (shipped) or real counts — must match how `stats` was built. */
+  termFrequency?: TermFrequency
   /** D4: the number of candidates the semantic channel recalled (rank normalizer). */
   semanticPoolSize?: number
   /** D4: the number of candidates in the fused window (rank normalizer). */
@@ -292,16 +297,28 @@ export function bm25Raw(
   queryTokens: readonly string[],
   stats: CorpusStats,
   fieldWeights: RetrievalWeights,
+  termFrequency: TermFrequency = 'presence',
 ): number {
   // Delegated to the engine's BM25F: the formula has ONE implementation
   // (`packages/kb/src/bm25.ts`), and this feature is now literally "the first
   // level's score, normalized" rather than a parallel term-weighting scheme.
-  return bm25fScore(
-    bm25Fields({ title: entry.title, tags: entry.tags, text: entryTextAfterRedlines(entry) }),
-    queryTokens,
-    stats,
-    fieldWeights,
-  ).score
+  const fields = { title: entry.title, tags: entry.tags, text: entryTextAfterRedlines(entry) }
+  return (termFrequency === 'count'
+    // The count form carries real frequencies AND total-token lengths, so the
+    // feature that mirrors the first level mirrors it under either mode.
+    ? bm25fScoreFrom({
+      lengths: (() => {
+        const counts = bm25CountFields(fields)
+        const total = (map: ReadonlyMap<string, number>): number => {
+          let sum = 0
+          for (const value of map.values()) sum += value
+          return sum
+        }
+        return { title: total(counts.title), tag: total(counts.tag), text: total(counts.text) }
+      })(),
+      counts: bm25CountFields(fields),
+    }, queryTokens, stats, fieldWeights, 'count')
+    : bm25fScore(bm25Fields(fields), queryTokens, stats, fieldWeights)).score
 }
 
 /** Collapse whitespace and case for verbatim phrase matching. */
@@ -362,7 +379,7 @@ export function rerankOne(candidate: RerankCandidate, context: RerankContext, bm
   const now = context.now ?? new Date()
   const entry = candidate.entry
 
-  const raw = bm25Raw(entry, context.queryTokens, context.stats, fieldWeights)
+  const raw = bm25Raw(entry, context.queryTokens, context.stats, fieldWeights, context.termFrequency ?? 'presence')
   const lexicalMode = context.lexicalNormalization ?? 'candidates'
   const bm25ish = lexicalMode === 'absolute'
     // D1: corpus-level saturation. `bm25Normalizer` carries the POOL scale in
@@ -513,7 +530,7 @@ export function rerankOne(candidate: RerankCandidate, context: RerankContext, bm
  */
 export function rerankAll(candidates: readonly RerankCandidate[], context: RerankContext): RerankResult[] {
   const fieldWeights = context.fieldWeights ?? DEFAULT_WEIGHTS
-  const raws = candidates.map((candidate) => bm25Raw(candidate.entry, context.queryTokens, context.stats, fieldWeights))
+  const raws = candidates.map((candidate) => bm25Raw(candidate.entry, context.queryTokens, context.stats, fieldWeights, context.termFrequency ?? 'presence'))
   let best = 0
   for (const raw of raws) best = Math.max(best, raw)
   /**

@@ -240,3 +240,35 @@ test('R1 版本号只有一个出处(与 embedderVersion 同规矩)', () => {
   // The stamp lives in types.ts and nowhere else; the index's meta carries it.
   assert.match(lexicalIndexVersion(), /^lexical-v1:k1=1\.2:b=0\.75$/)
 })
+
+// ── F4② 真词频(落地计划 §2-4):一个开关同时移动词频与长度口径 ──────────────
+test('F4② 词频口径:count 档真的改变分数,且索引路径与扫描路径仍然逐条一致', async (t) => {
+  const { store } = await world(t)
+  forgetLexicalIndex()
+  // 造一条"同一个词在正文里出现多次"的条目:presence 与 count 必须给出不同的分。
+  await store.add({ kind: 'note', title: '重复词', text: '分片 分片 分片 分片 分片 分片 重建。', tags: ['kb'] })
+  const entries = await store.list()
+  const { index } = await buildLexicalIndex({ storeDir: store.dir, entries })
+  const query = '分片'
+  const queryTokens = tokenize(query)
+  const scannedPresence = await queryKb(store, null, { text: query, limit: 5, noTouch: true, termFrequency: 'presence' })
+  const scannedCount = await queryKb(store, null, { text: query, limit: 5, noTouch: true, termFrequency: 'count' })
+  assert.notDeepEqual(
+    scannedCount.map((hit) => [String(hit.entry.id), hit.score]),
+    scannedPresence.map((hit) => [String(hit.entry.id), hit.score]),
+    'count 档必须与 presence 档给出不同的分数,否则这个开关是空转的',
+  )
+
+  const indexedPresence = await queryKb(store, null, { text: query, limit: 5, noTouch: true, termFrequency: 'presence', lexicalIndexes: [index] })
+  const indexedCount = await queryKb(store, null, { text: query, limit: 5, noTouch: true, termFrequency: 'count', lexicalIndexes: [index] })
+  assert.deepEqual(
+    indexedPresence.map((hit) => [String(hit.entry.id), hit.score, hit.matched.join(',')]),
+    scannedPresence.map((hit) => [String(hit.entry.id), hit.score, hit.matched.join(',')]),
+    'presence 档:索引路径 == 扫描路径',
+  )
+  assert.deepEqual(
+    indexedCount.map((hit) => [String(hit.entry.id), hit.score, hit.matched.join(',')]),
+    scannedCount.map((hit) => [String(hit.entry.id), hit.score, hit.matched.join(',')]),
+    'count 档:索引路径也必须 == 扫描路径 —— 索引里存的是真词频与总词数,两条路必须同源',
+  )
+})

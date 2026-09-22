@@ -673,6 +673,8 @@ export interface RetrievalTuningPayload {
   semanticFloor: number
   semanticCeil: number
   missingFeatureMode: 'zero' | 'absent'
+  /** F4②: `presence` (shipped) or `count` (real term frequencies). */
+  termFrequency: 'presence' | 'count'
 }
 
 /** V1: one derived index's health. */

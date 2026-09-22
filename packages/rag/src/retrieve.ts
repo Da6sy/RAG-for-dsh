@@ -30,6 +30,7 @@ import {
   type KbStore,
   type LexicalIndex,
   type LexicalScorer,
+  type TermFrequency,
   type QueryHit,
   type RetrievalWeights,
 } from '@clue-harness/kb'
@@ -80,6 +81,8 @@ export interface RetrieverConfig {
    * speed, same answer".
    */
   lexicalIndexes?: readonly LexicalIndex[]
+  /** F4②: presence (shipped) or real counts — forwarded to the first level. */
+  termFrequency?: TermFrequency
   /**
    * Score multiplier applied to text-matched bound hits (their promoted
    * score is what the annotation explains). Default 1.5. Set to 1 to keep
@@ -148,6 +151,7 @@ export function createFulltextRetriever(
         text: query,
         limit: bindingRecall ? limit * 3 : limit,
         ...(config.lexicalIndexes !== undefined ? { lexicalIndexes: config.lexicalIndexes } : {}),
+        ...(config.termFrequency !== undefined ? { termFrequency: config.termFrequency } : {}),
         ...(options.includeExpired !== undefined ? { includeExpired: options.includeExpired } : {}),
         ...(options.includeGlobal !== undefined ? { includeGlobal: options.includeGlobal } : {}),
         ...(config.weights !== undefined ? { weights: config.weights } : {}),

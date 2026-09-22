@@ -124,6 +124,8 @@ const knobs = {
   ...(args['semantic-scale'] !== undefined ? { semanticScale: String(args['semantic-scale']) } : {}),
   // D3/D4: the tri-state switch and the two rank features (weights 0 by default).
   ...(args['missing-mode'] !== undefined ? { missingFeatureMode: String(args['missing-mode']) } : {}),
+  // F4②: presence (shipped) vs count (real term frequencies).
+  ...(args['term-frequency'] !== undefined ? { termFrequency: String(args['term-frequency']) } : {}),
   ...(args['semantic-floor'] !== undefined ? { semanticFloor: Number(args['semantic-floor']) } : {}),
   ...(args['semantic-ceil'] !== undefined ? { semanticCeil: Number(args['semantic-ceil']) } : {}),
   // D4's weights are the two rank features; they ship at 0, so an A/B has to be

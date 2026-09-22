@@ -23,7 +23,7 @@
  *
  * @module @clue-harness/kb/bm25
  */
-import { tokenize } from './tokenize.ts'
+import { tokenize, tokenizeCounts } from './tokenize.ts'
 
 /**
  * The BM25 saturation constant. THE only literal of its kind in the repo
@@ -39,6 +39,33 @@ export interface Bm25Fields {
   title: readonly string[]
   tag: readonly string[]
   text: readonly string[]
+}
+
+/**
+ * The three fields WITH their occurrence counts (F4② of `docs/落地计划-剩余工程.md`).
+ *
+ * `Bm25Fields` (token arrays) stays the plain form callers already speak; this is
+ * what the scorer actually consumes, because a real term frequency needs counts
+ * and the same tokenizer now produces them for free.
+ */
+export interface Bm25CountFields {
+  title: ReadonlyMap<string, number>
+  tag: ReadonlyMap<string, number>
+  text: ReadonlyMap<string, number>
+}
+
+/**
+ * How a field's term frequency is read (F4②: ONE switch for tf AND the length
+ * basis — the plan measured them as a single variable, since switching to counts
+ * while still dividing by the distinct-token length mixes two conventions).
+ */
+export type TermFrequency = 'presence' | 'count'
+
+/** Sum of a field's occurrence counts (the "total tokens" length notion). */
+export function totalCount(counts: ReadonlyMap<string, number>): number {
+  let sum = 0
+  for (const value of counts.values()) sum += value
+  return sum
 }
 
 /** Per-field corpus statistics BM25 needs (document frequency + average length). */
@@ -71,9 +98,22 @@ export interface StatsDoc {
  */
 export function bm25Fields(entry: { title: string; tags: readonly string[]; text: string }): Bm25Fields {
   return {
-    title: [...new Set(tokenize(entry.title))],
-    tag: [...new Set(tokenize(entry.tags.join(' ')))],
-    text: [...new Set(tokenize(entry.text))],
+    title: [...tokenizeCounts(entry.title).keys()],
+    tag: [...tokenizeCounts(entry.tags.join(' ')).keys()],
+    text: [...tokenizeCounts(entry.text).keys()],
+  }
+}
+
+/**
+ * The same fields, with counts (F4②'s input).
+ * @param entry - title/tags plus the already-redline-filtered body.
+ * @returns one token → count map per field.
+ */
+export function bm25CountFields(entry: { title: string; tags: readonly string[]; text: string }): Bm25CountFields {
+  return {
+    title: tokenizeCounts(entry.title),
+    tag: tokenizeCounts(entry.tags.join(' ')),
+    text: tokenizeCounts(entry.text),
   }
 }
 
@@ -86,17 +126,22 @@ export function bm25Fields(entry: { title: string; tags: readonly string[]; text
  * @param docs - the corpus (both tiers).
  * @returns the statistics.
  */
-export function buildLexicalStats(docs: readonly StatsDoc[]): LexicalStats {
+export function buildLexicalStats(docs: readonly StatsDoc[], termFrequency: TermFrequency = 'presence'): LexicalStats {
   const df = new Map<string, number>()
   let titleSum = 0
   let tagSum = 0
   let textSum = 0
   for (const doc of docs) {
-    const fields = bm25Fields(doc)
-    titleSum += fields.title.length
-    tagSum += fields.tag.length
-    textSum += fields.text.length
-    for (const token of new Set([...fields.title, ...fields.tag, ...fields.text])) {
+    const fields = bm25CountFields(doc)
+    // The averages must use the SAME length notion the scorer divides by —
+    // otherwise the length norm compares a distinct-token length against a
+    // total-token average (the plan's "长度口径要一起定").
+    const lengthOf = (counts: ReadonlyMap<string, number>): number =>
+      termFrequency === 'count' ? totalCount(counts) : counts.size
+    titleSum += lengthOf(fields.title)
+    tagSum += lengthOf(fields.tag)
+    textSum += lengthOf(fields.text)
+    for (const token of new Set([...fields.title.keys(), ...fields.tag.keys(), ...fields.text.keys()])) {
       df.set(token, (df.get(token) ?? 0) + 1)
     }
   }
@@ -149,14 +194,13 @@ export interface Bm25Score {
  * formula" the module header forbids.
  */
 export interface PrecomputedFields {
-  /** Distinct-token count per field (what the length normalizer divides by). */
+  /**
+   * The length the normalizer divides by — the index's `dl` (distinct tokens)
+   * under `presence`, its `tl` (total tokens) under `count`.
+   */
   lengths: { title: number; tag: number; text: number }
-  /** Query tokens that occur in the title (presence). */
-  title: ReadonlySet<string>
-  /** Query tokens that occur in the tags (presence). */
-  tag: ReadonlySet<string>
-  /** Query tokens that occur in the redline-filtered body (presence). */
-  text: ReadonlySet<string>
+  /** Query tokens that occur in each field, with their counts (0 is impossible). */
+  counts: Bm25CountFields
 }
 
 /**
@@ -185,13 +229,24 @@ export function bm25fScore(
   queryTokens: readonly string[],
   stats: LexicalStats,
   weights: Bm25FieldWeights,
+  termFrequency: TermFrequency = 'presence',
 ): Bm25Score {
+  // The plain form carries only presence, so its counts are 1s; callers that
+  // want real term frequencies pass `bm25CountFields` straight to
+  // {@link bm25fScoreFrom} (the index path does).
+  const toCounts = (tokens: readonly string[]): ReadonlyMap<string, number> =>
+    new Map(tokens.map((token) => [token, 1]))
+  const counts: Bm25CountFields = {
+    title: toCounts(fields.title),
+    tag: toCounts(fields.tag),
+    text: toCounts(fields.text),
+  }
+  const lengthOf = (map: ReadonlyMap<string, number>): number =>
+    termFrequency === 'count' ? totalCount(map) : map.size
   return bm25fScoreFrom({
-    lengths: { title: fields.title.length, tag: fields.tag.length, text: fields.text.length },
-    title: new Set(fields.title),
-    tag: new Set(fields.tag),
-    text: new Set(fields.text),
-  }, queryTokens, stats, weights)
+    lengths: { title: lengthOf(counts.title), tag: lengthOf(counts.tag), text: lengthOf(counts.text) },
+    counts,
+  }, queryTokens, stats, weights, termFrequency)
 }
 
 /**
@@ -205,15 +260,45 @@ export function bm25fScore(
  * @param weights - field weights.
  * @returns the raw BM25 score (unrounded) and the matched tokens.
  */
+/**
+ * A document's fields in the form the scorer consumes, under one mode.
+ *
+ * The SCAN path uses this so that `presence` and `count` differ only in the mode
+ * argument: under `count` the frequencies are real AND the lengths are total
+ * token counts, which is the pair the plan measured as one variable.
+ * @param entry - title/tags plus the already-redline-filtered body.
+ * @param termFrequency - `presence` (shipped) or `count`.
+ * @returns the lengths (basis per mode) and the counts.
+ */
+export function precomputedFrom(
+  entry: { title: string; tags: readonly string[]; text: string },
+  termFrequency: TermFrequency = 'presence',
+): PrecomputedFields {
+  const counts = bm25CountFields(entry)
+  const lengthOf = (map: ReadonlyMap<string, number>): number =>
+    termFrequency === 'count' ? totalCount(map) : map.size
+  return {
+    lengths: { title: lengthOf(counts.title), tag: lengthOf(counts.tag), text: lengthOf(counts.text) },
+    counts,
+  }
+}
+
 export function bm25fScoreFrom(
   fields: PrecomputedFields,
   queryTokens: readonly string[],
   stats: LexicalStats,
   weights: Bm25FieldWeights,
+  termFrequency: TermFrequency = 'presence',
 ): Bm25Score {
-  const title = fields.title
-  const tag = fields.tag
-  const text = fields.text
+  const title = fields.counts.title
+  const tag = fields.counts.tag
+  const text = fields.counts.text
+  // `presence` clamps every count to 1 (today's shipped behavior); `count` uses
+  // the real frequency — ONE switch, and the stats' averages moved with it.
+  const tf = (count: number | undefined): number => {
+    if (count === undefined || count <= 0) return 0
+    return termFrequency === 'count' ? count : 1
+  }
   const norm = (length: number, average: number): number =>
     1 - BM25_B + BM25_B * (average <= 0 ? 1 : length / average)
   const titleNorm = norm(fields.lengths.title, stats.avgTitle)
@@ -226,9 +311,20 @@ export function bm25fScoreFrom(
   const matched: string[] = []
   for (const token of queryTokens) {
     let hit = 0
-    if (title.has(token)) hit += saturation(weights.title, titleNorm)
-    if (tag.has(token)) hit += saturation(weights.tag, tagNorm)
-    if (text.has(token)) hit += saturation(weights.text, textNorm)
+    // BM25F's real shape: the field frequencies are summed BEFORE saturation
+    // (that is what makes it "F" and not "three BM25s added together"). Under
+    // `presence` this reduces to the sum of the fields' saturations, which is
+    // exactly what shipped.
+    if (termFrequency === 'count') {
+      const combined = weights.title * tf(title.get(token))
+        + weights.tag * tf(tag.get(token))
+        + weights.text * tf(text.get(token))
+      if (combined > 0) hit = (BM25_K1 + 1) * combined / (BM25_K1 + combined)
+    } else {
+      if (tf(title.get(token)) > 0) hit += saturation(weights.title, titleNorm)
+      if (tf(tag.get(token)) > 0) hit += saturation(weights.tag, tagNorm)
+      if (tf(text.get(token)) > 0) hit += saturation(weights.text, textNorm)
+    }
     if (hit === 0) continue
     score += idf(token, stats) * hit
     matched.push(token)

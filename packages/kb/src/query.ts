@@ -25,7 +25,7 @@
  * @module @clue-harness/kb/query
  */
 import { tokenize } from './tokenize.ts'
-import { bm25Fields, bm25fScore, buildLexicalStats, type LexicalStats } from './bm25.ts'
+import { buildLexicalStats, precomputedFrom, type LexicalStats, type TermFrequency } from './bm25.ts'
 import type { KbStore } from './store.ts'
 import { readChunks } from './docs.ts'
 import type { KbEntry, KbEntryId, KbKind, KbRedline } from './types.ts'
@@ -40,6 +40,12 @@ export interface QueryOptions {
    * is still the reference implementation.
    */
   lexicalIndexes?: readonly LexicalIndex[]
+  /**
+   * F4② (`docs/落地计划-剩余工程.md` §2-4): `presence` (shipped) or `count`.
+   * It moves the field frequencies AND the length basis together — the plan
+   * measured them as one variable; the statistics follow automatically.
+   */
+  termFrequency?: TermFrequency
   /** Query text. */
   text: string
   kinds?: KbKind[]
@@ -139,7 +145,7 @@ export interface QueryHit {
  */
 import { entryTextAfterRedlines, redlinedRatio } from './redline.ts'
 import { bm25fScoreFrom, type PrecomputedFields } from './bm25.ts'
-import { lexicalCandidates, lexicalStatsFrom, mergeLexicalIndexes, type LexicalIndex } from './lexical-index.ts'
+import { lexicalCandidates, lexicalStatsFor, mergeLexicalIndexes, type LexicalIndex } from './lexical-index.ts'
 export { entryTextAfterRedlines, isRedlinedChar, redlinedRatio } from './redline.ts'
 
 /**
@@ -173,7 +179,13 @@ export function scoreEntry(
   entry: KbEntry,
   queryTokens: readonly string[],
   weights: RetrievalWeights,
-  options: { scorer?: LexicalScorer; stats?: LexicalStats; fields?: PrecomputedFields } = {},
+  options: {
+    scorer?: LexicalScorer
+    stats?: LexicalStats
+    fields?: PrecomputedFields
+    /** F4②: presence (today) or real counts; the stats must match (see buildLexicalStats). */
+    termFrequency?: TermFrequency
+  } = {},
 ): { score: number; matched: string[] } {
   const scorer: LexicalScorer = options.scorer ?? 'weights'
   let raw: number
@@ -185,22 +197,22 @@ export function scoreEntry(
     // re-tokenizing it. The arithmetic is the same function the scanning path
     // calls (`bm25fScoreFrom`), and the post-processing below is shared — one
     // ranking law, two ways of reaching it.
-    const scored = bm25fScoreFrom(options.fields, queryTokens, options.stats, weights)
+    const scored = bm25fScoreFrom(options.fields, queryTokens, options.stats, weights, options.termFrequency ?? 'presence')
     raw = scored.score
     matched = scored.matched
   } else if (scorer === 'bm25') {
     // BM25F: the formula lives in bm25.ts, one implementation for both levels
     // (this one and the reranker's `bm25ish` feature). Stats are required; a
     // caller that forgot them gets the old behavior rather than a wrong score.
+    const fields = { title: entry.title, tags: entry.tags, text: entryTextAfterRedlines(entry) }
+    const mode = options.termFrequency ?? 'presence'
     if (options.stats === undefined) {
-      const fields = bm25Fields({ title: entry.title, tags: entry.tags, text: entryTextAfterRedlines(entry) })
-      const stats = buildLexicalStats([{ title: entry.title, tags: entry.tags, text: entryTextAfterRedlines(entry) }])
-      const scored = bm25fScore(fields, queryTokens, stats, weights)
+      const stats = buildLexicalStats([fields], mode)
+      const scored = bm25fScoreFrom(precomputedFrom(fields, mode), queryTokens, stats, weights, mode)
       raw = scored.score
       matched = scored.matched
     } else {
-      const fields = bm25Fields({ title: entry.title, tags: entry.tags, text: entryTextAfterRedlines(entry) })
-      const scored = bm25fScore(fields, queryTokens, options.stats, weights)
+      const scored = bm25fScoreFrom(precomputedFrom(fields, mode), queryTokens, options.stats, weights, mode)
       raw = scored.score
       matched = scored.matched
     }
@@ -359,8 +371,9 @@ export async function queryKb(
    * such an entry's score is zero by arithmetic, not by convention).
    */
   if (indexes.length > 0 && scorer === 'bm25') {
+    const termFrequency = options.termFrequency ?? 'presence'
     const index = mergeLexicalIndexes(indexes)
-    const stats = lexicalStatsFrom(index)
+    const stats = lexicalStatsFor(index, termFrequency)
     /**
      * PASS 1 — score from the index alone, without reading a single entry.
      *
@@ -371,12 +384,12 @@ export async function queryKb(
      * was the dominant cost left after the scan was removed.
      */
     const scored: Array<{ id: string; tier: KbEntry['tier']; score: number; matched: string[] }> = []
-    for (const candidate of lexicalCandidates(index, queryTokens)) {
+    for (const candidate of lexicalCandidates(index, queryTokens, termFrequency)) {
       const facts = candidate.facts
       if (facts.status === 'discarded') continue
       if (facts.status === 'expired' && options.includeExpired !== true) continue
       if (options.kinds !== undefined && !options.kinds.includes(facts.kind)) continue
-      const raw = bm25fScoreFrom(candidate.fields, queryTokens, stats, weights)
+      const raw = bm25fScoreFrom(candidate.fields, queryTokens, stats, weights, termFrequency)
       const { score, matched } = applyGovernanceFactors(facts, raw.score, raw.matched, scorer)
       if (score === 0 || matched.length === 0) continue
       scored.push({ id: candidate.id, tier: facts.tier, score, matched })
@@ -425,17 +438,22 @@ export async function queryKb(
       corpus.push(entry)
     }
   }
+  const termFrequency: TermFrequency = options.termFrequency ?? 'presence'
   const stats = scorer === 'bm25'
     ? buildLexicalStats(corpus.map((entry) => ({
       title: entry.title,
       tags: entry.tags,
       text: entryTextAfterRedlines(entry),
-    })))
+    })), termFrequency)
     : undefined
 
   const hits: QueryHit[] = []
   for (const entry of corpus) {
-    const { score, matched } = scoreEntry(entry, queryTokens, weights, { scorer, ...(stats !== undefined ? { stats } : {}) })
+    const { score, matched } = scoreEntry(entry, queryTokens, weights, {
+      scorer,
+      termFrequency,
+      ...(stats !== undefined ? { stats } : {}),
+    })
     if (score === 0 || matched.length === 0) continue
     hits.push({ entry, score, matched, annotations: annotationsFor(entry) })
   }

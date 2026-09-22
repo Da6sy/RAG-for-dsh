@@ -162,6 +162,11 @@ export const RetrievalSchema = z.object({
   /** D2's calibration bounds (per embedder family, not per corpus). */
   semanticFloor: z.number().default(RETRIEVAL_DEFAULTS.semanticFloor),
   semanticCeil: z.number().default(RETRIEVAL_DEFAULTS.semanticCeil),
+  /**
+   * F4② (落地计划 §2-4): `presence` (shipped) or `count` — real term
+   * frequencies, with the length basis moving with them.
+   */
+  termFrequency: z.union([z.const('presence'), z.const('count')]).default(RETRIEVAL_DEFAULTS.termFrequency),
   /** D3: `zero` (today) folds "not recalled" into 0; `absent` keeps the tri-state. */
   missingFeatureMode: z.union([z.const('zero'), z.const('absent')]).default(RETRIEVAL_DEFAULTS.missingFeatureMode),
   featureWeights: z.object({
