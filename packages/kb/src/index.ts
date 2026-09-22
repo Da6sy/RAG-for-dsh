@@ -65,6 +65,7 @@ export {
   lexicalIndexDir,
   lexicalStatsFrom,
   loadLexicalIndex,
+  mergeLexicalIndexes,
   LEXICAL_FIELD_ORDER,
   LEXICAL_INDEX_DIRNAME,
   LEXICAL_META_FILE,

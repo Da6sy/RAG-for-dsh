@@ -612,6 +612,58 @@ export function lexicalCandidates(index: LexicalIndex, queryTokens: readonly str
  */
 export const LEXICAL_FIELD_ORDER: readonly (keyof Bm25FieldWeights)[] = ['title', 'tag', 'text']
 
+/**
+ * Merge the indexes of several tiers into ONE (R1: a query spans tiers).
+ *
+ * The merge is exact, not an approximation: entries are distinct across tiers
+ * (ids are ULIDs minted per tier), so the union's `df` is the sum of the tiers'
+ * per-token list lengths, and the averages are weighted by entry counts. A
+ * query must see the same corpus statistics whether it reads one index or two —
+ * anything else would make the tier layout a ranking parameter.
+ * @param indexes - the loaded indexes (project first, then global).
+ * @returns one index over the union.
+ */
+export function mergeLexicalIndexes(indexes: readonly LexicalIndex[]): LexicalIndex {
+  if (indexes.length === 1) return indexes[0] as LexicalIndex
+  const postings: Record<string, LexicalPosting[]> = {}
+  const entries: Record<string, LexicalEntryFacts> = {}
+  let count = 0
+  const avgDistinct: FieldTriple = [0, 0, 0]
+  const avgTotal: FieldTriple = [0, 0, 0]
+  const dirs: string[] = []
+  for (const index of indexes) {
+    if (index.meta.entryCount === 0) continue
+    dirs.push(index.dir)
+    count += index.meta.entryCount
+    avgDistinct[0] += index.meta.avgDistinct[0] * index.meta.entryCount
+    avgDistinct[1] += index.meta.avgDistinct[1] * index.meta.entryCount
+    avgDistinct[2] += index.meta.avgDistinct[2] * index.meta.entryCount
+    avgTotal[0] += index.meta.avgTotal[0] * index.meta.entryCount
+    avgTotal[1] += index.meta.avgTotal[1] * index.meta.entryCount
+    avgTotal[2] += index.meta.avgTotal[2] * index.meta.entryCount
+    Object.assign(entries, index.meta.entries)
+    for (const [token, list] of Object.entries(index.postings)) {
+      const target = postings[token]
+      if (target === undefined) postings[token] = [...list]
+      else postings[token] = [...target, ...list].sort((a, b) => a.id.localeCompare(b.id))
+    }
+  }
+  if (count === 0) return indexes[0] as LexicalIndex
+  return {
+    dir: dirs.join('+'),
+    meta: {
+      indexVersion: (indexes[0] as LexicalIndex).meta.indexVersion,
+      builtAt: (indexes[0] as LexicalIndex).meta.builtAt,
+      entryCount: count,
+      avgDistinct: [avgDistinct[0] / count, avgDistinct[1] / count, avgDistinct[2] / count],
+      avgTotal: [avgTotal[0] / count, avgTotal[1] / count, avgTotal[2] / count],
+      entries,
+      fingerprint: '',
+    },
+    postings,
+  }
+}
+
 /** Full verification: recompute every projection hash from the entries on disk. */
 export async function fingerprintLexicalIndex(storeDir: string): Promise<{ ok: boolean; note: string }> {
   const files = await readFiles(lexicalIndexDir(storeDir))

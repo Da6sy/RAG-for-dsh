@@ -21,9 +21,9 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { openProjectStore, type KbStore } from '../src/store.ts'
+import { openGlobalStore, openProjectStore, type KbStore } from '../src/store.ts'
 import { bm25fScoreFrom, buildLexicalStats, type LexicalStats } from '../src/bm25.ts'
-import { entryTextAfterRedlines, scoreEntry } from '../src/query.ts'
+import { entryTextAfterRedlines, queryKb, scoreEntry } from '../src/query.ts'
 import { tokenize } from '../src/tokenize.ts'
 import { DEFAULT_WEIGHTS } from '../src/query.ts'
 import {
@@ -34,6 +34,7 @@ import {
   lexicalIndexDir,
   lexicalStatsFrom,
   loadLexicalIndex,
+  mergeLexicalIndexes,
 } from '../src/lexical-index.ts'
 import { lexicalIndexVersion } from '../src/types.ts'
 
@@ -186,6 +187,53 @@ test('R1 指纹:能证明索引描述了现场;现场被外部改动后就不再
   const drifted = await fingerprintLexicalIndex(store.dir)
   assert.equal(drifted.ok, false)
   assert.match(drifted.note, /指纹不符/)
+})
+
+test('R1 端到端:queryKb 带索引与不带索引逐条同分同序(第一级的等价性)', async (t) => {
+  const { store } = await world(t)
+  forgetLexicalIndex()
+  const entries = await store.list()
+  const { index } = await buildLexicalIndex({ storeDir: store.dir, entries })
+  const queries = ['分片 重建', '对比度 标签', '焦点', 'chunker 版本号']
+  for (const text of queries) {
+    const scanned = await queryKb(store, null, { text, limit: 5, noTouch: true })
+    const indexed = await queryKb(store, null, { text, limit: 5, noTouch: true, lexicalIndexes: [index] })
+    assert.deepEqual(
+      indexed.map((hit) => [String(hit.entry.id), hit.score, hit.matched.join(',')]),
+      scanned.map((hit) => [String(hit.entry.id), hit.score, hit.matched.join(',')]),
+      `查询「${text}」在两条路径上必须完全一致`,
+    )
+  }
+})
+
+test('R1 多层级:两个索引合并后的统计量与"把两层当一个语料"逐条一致', async (t) => {
+  const { store } = await world(t)
+  const global = await openGlobalStore(path.join(path.dirname(store.dir), 'h'))
+  await global.add({ kind: 'fact', title: '全局的对比度约定', text: '全局库里的对比度说明。', tags: ['a11y'] })
+  const projectEntries = await store.list()
+  const globalEntries = await global.list()
+  const built = await buildLexicalIndex({ storeDir: store.dir, entries: projectEntries })
+  const builtGlobal = await buildLexicalIndex({ storeDir: global.dir, entries: globalEntries })
+  const merged = mergeLexicalIndexes([built.index, builtGlobal.index])
+  const scan = buildLexicalStats([...projectEntries, ...globalEntries].map((entry) => ({
+    title: entry.title,
+    tags: entry.tags,
+    text: entryTextAfterRedlines(entry),
+  })))
+  assert.equal(merged.meta.entryCount, scan.total)
+  assert.equal(merged.meta.avgDistinct[0], scan.avgTitle)
+  assert.equal(merged.meta.avgDistinct[2], scan.avgText)
+  const mergedStats = lexicalStatsFrom(merged)
+  assert.equal(mergedStats.total, scan.total)
+  for (const [token, df] of scan.df) assert.equal(mergedStats.df.get(token), df, `token ${token} 的 df 必须一致`)
+
+  const scanned = await queryKb(store, global, { text: '对比度 约定', limit: 5, noTouch: true })
+  const indexed = await queryKb(store, global, { text: '对比度 约定', limit: 5, noTouch: true, lexicalIndexes: [merged] })
+  assert.deepEqual(
+    indexed.map((hit) => [String(hit.entry.id), hit.score]),
+    scanned.map((hit) => [String(hit.entry.id), hit.score]),
+    '跨两层查询也必须逐条一致(否则层级布局就成了排序参数)',
+  )
 })
 
 test('R1 版本号只有一个出处(与 embedderVersion 同规矩)', () => {

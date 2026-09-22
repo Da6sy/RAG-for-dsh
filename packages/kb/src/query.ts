@@ -28,9 +28,18 @@ import { tokenize } from './tokenize.ts'
 import { bm25Fields, bm25fScore, buildLexicalStats, type LexicalStats } from './bm25.ts'
 import type { KbStore } from './store.ts'
 import { readChunks } from './docs.ts'
-import type { KbEntry, KbKind, KbRedline } from './types.ts'
+import type { KbEntry, KbEntryId, KbKind, KbRedline } from './types.ts'
 
 export interface QueryOptions {
+  /**
+   * R1 (落地计划 §2-1): validated inverted indexes, project tier first.
+   *
+   * When present, the first level never materializes the corpus: the statistics
+   * come from the index and only the entries that actually contain one of the
+   * query's tokens are loaded and scored. Absent/empty ⇒ the scan path, which
+   * is still the reference implementation.
+   */
+  lexicalIndexes?: readonly LexicalIndex[]
   /** Query text. */
   text: string
   kinds?: KbKind[]
@@ -129,6 +138,8 @@ export interface QueryHit {
  * scope), because `query.ts` is where they have always been imported from.
  */
 import { entryTextAfterRedlines, redlinedRatio } from './redline.ts'
+import { bm25fScoreFrom, type PrecomputedFields } from './bm25.ts'
+import { lexicalCandidates, lexicalStatsFrom, mergeLexicalIndexes, type LexicalIndex } from './lexical-index.ts'
 export { entryTextAfterRedlines, isRedlinedChar, redlinedRatio } from './redline.ts'
 
 /**
@@ -162,13 +173,22 @@ export function scoreEntry(
   entry: KbEntry,
   queryTokens: readonly string[],
   weights: RetrievalWeights,
-  options: { scorer?: LexicalScorer; stats?: LexicalStats } = {},
+  options: { scorer?: LexicalScorer; stats?: LexicalStats; fields?: PrecomputedFields } = {},
 ): { score: number; matched: string[] } {
   const scorer: LexicalScorer = options.scorer ?? 'weights'
   let raw: number
   let matched: string[]
 
-  if (scorer === 'bm25') {
+  if (scorer === 'bm25' && options.fields !== undefined && options.stats !== undefined) {
+    // R1: the inverted index already knows which query tokens live in which
+    // field and how long each field is, so a candidate can be scored WITHOUT
+    // re-tokenizing it. The arithmetic is the same function the scanning path
+    // calls (`bm25fScoreFrom`), and the post-processing below is shared — one
+    // ranking law, two ways of reaching it.
+    const scored = bm25fScoreFrom(options.fields, queryTokens, options.stats, weights)
+    raw = scored.score
+    matched = scored.matched
+  } else if (scorer === 'bm25') {
     // BM25F: the formula lives in bm25.ts, one implementation for both levels
     // (this one and the reranker's `bm25ish` feature). Stats are required; a
     // caller that forgot them gets the old behavior rather than a wrong score.
@@ -306,6 +326,40 @@ export async function queryKb(
   if (project !== null) tiers.push(project)
   if (global !== null && options.includeGlobal !== false) tiers.push(global)
 
+  const scorer: LexicalScorer = options.scorer ?? 'bm25'
+  const indexes = options.lexicalIndexes ?? []
+  /**
+   * R1: the indexed path. Same filters, same filters' ORDER, same scores — but
+   * the corpus is never materialized and an entry that contains none of the
+   * query's tokens is never read (BM25F is a sum over the query's tokens, so
+   * such an entry's score is zero by arithmetic, not by convention).
+   */
+  if (indexes.length > 0 && scorer === 'bm25') {
+    const index = mergeLexicalIndexes(indexes)
+    const stats = lexicalStatsFrom(index)
+    const indexed: QueryHit[] = []
+    for (const candidate of lexicalCandidates(index, queryTokens)) {
+      const facts = candidate.facts
+      if (facts.status === 'discarded') continue
+      if (facts.status === 'expired' && options.includeExpired !== true) continue
+      if (options.kinds !== undefined && !options.kinds.includes(facts.kind)) continue
+      // The index records the tier, but a lookup falls back to the other one:
+      // the entry id is the identity, and "which store owns it" must never be
+      // the reason a hit disappears (a mis-recorded tier would otherwise be a
+      // silent ranking change).
+      const preferred = facts.tier === 'global' ? global : project
+      const other = facts.tier === 'global' ? project : global
+      const entry = preferred === null
+        ? (other === null ? null : await other.get(candidate.id as KbEntryId))
+        : (await preferred.get(candidate.id as KbEntryId)) ?? (other === null ? null : await other.get(candidate.id as KbEntryId))
+      if (entry === null) continue
+      const { score, matched } = scoreEntry(entry, queryTokens, weights, { scorer, stats, fields: candidate.fields })
+      if (score === 0 || matched.length === 0) continue
+      indexed.push({ entry, score, matched, annotations: annotationsFor(entry) })
+    }
+    return finishQuery(indexed, { project, global, options, at, limit })
+  }
+
   // The corpus is MATERIALIZED first so BM25 can see the corpus statistics
   // (df + per-field average lengths) before it scores anything. The filters and
   // their order are unchanged — this is the same loop, split in two.
@@ -318,7 +372,6 @@ export async function queryKb(
       corpus.push(entry)
     }
   }
-  const scorer: LexicalScorer = options.scorer ?? 'bm25'
   const stats = scorer === 'bm25'
     ? buildLexicalStats(corpus.map((entry) => ({
       title: entry.title,
@@ -334,6 +387,31 @@ export async function queryKb(
     hits.push({ entry, score, matched, annotations: annotationsFor(entry) })
   }
 
+  return finishQuery(hits, { project, global, options, at, limit })
+}
+
+/**
+ * The "on the way out" half, shared by the scanning and the indexed path.
+ *
+ * Extracted in R1 so the indexed path cannot quietly skip a step (freshness
+ * checks, the reference touch, doc facts, the deterministic sort and the limit)
+ * — the two paths must differ in HOW they find candidates, never in what they
+ * do with them.
+ * @param hits - scored candidates (each carrying its own entry and score).
+ * @param context - the stores, the query options and the clock.
+ * @returns the finished, limited hit list.
+ */
+async function finishQuery(
+  hits: readonly QueryHit[],
+  context: {
+    project: KbStore | null
+    global: KbStore | null
+    options: QueryOptions
+    at: string
+    limit: number
+  },
+): Promise<QueryHit[]> {
+  const { project, global, options, at, limit } = context
   // Binding freshness is checked on the way out: a hit on a stale-bound entry
   // must arrive annotated (this is the M2 acceptance "改绑定文件→自动待复核").
   // M9-1: doc drift is the same act one layer down — checkDocs re-hashes the
