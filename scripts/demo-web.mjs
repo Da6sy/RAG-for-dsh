@@ -257,6 +257,9 @@ try {
     // with "delete it". The bytes must land in the trash, not in /dev/null.
     await registry.delete(hostWorkspace.id)
     await page.getByText('知识库', { exact: true }).first().click()
+    // 孤儿名单是面板**挂载时**读的一次快照;工作区是在面板已经打开之后才被删掉的,
+    // 所以必须按一次「刷新」——这不是产品缺陷,而是"名单不会自己变"的诚实行为。
+    await page.getByRole('button', { name: '刷新' }).first().click()
     const orphan = page.locator('.clue-orphan', { hasText: '靶场演示项目' }).first()
     await orphan.waitFor({ state: 'visible', timeout: 10_000 })
     log('删除工作区后: 面板弹出「是否一并删除知识库」提问(而不是悄悄留一行,也不是自动删)')
