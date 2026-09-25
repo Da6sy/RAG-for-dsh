@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const assetsDir = path.join(repoRoot, 'docs', 'assets')
 
-if (!existsSync(path.join(repoRoot, 'packages/ui-kb/lib/client.js'))) {
+if (!existsSync(path.join(repoRoot, 'plugins/ui-kb/lib/client.js'))) {
   console.error('demo-web: 先跑 `npm run build:ui` 构建浏览器 bundle')
   process.exit(2)
 }

@@ -32,7 +32,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const clientBundle = fileURLToPath(new URL('../../../packages/ui-kb/lib/client.js', import.meta.url))
+const clientBundle = fileURLToPath(new URL('../../../plugins/ui-kb/lib/client.js', import.meta.url))
 
 test('M3c contract: the real web composition boots, serves the shell, our bundle, and the KB API', { timeout: 180_000 }, async (t) => {
   if (!existsSync(clientBundle)) {

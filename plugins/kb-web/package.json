@@ -5,7 +5,8 @@
   "type": "module",
   "description": "The web host face of the knowledge base (M3c/M6/M9): same-origin JSON routes under /api/clue-kb on the dsh webserver — approval center, KB browser, entry ledgers, the原文/分片 routes (GET /doc, GET /chunks) and the human redline/split acts (POST /entry/redline, POST /entry/split) — plus the M6 AI-polish one-shot (host-layer llm call, engine stays model-free) and audited text adoption. Integration layer — imports dsh (webserver, llm) and the kb/rag engines directly.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./cordis.patch.yml": "./cordis.patch.yml"
   },
   "dependencies": {
     "@clue-harness/kb": "*",
@@ -21,5 +22,10 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   }
 }

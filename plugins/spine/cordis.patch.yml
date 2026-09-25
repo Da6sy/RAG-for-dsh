@@ -1,0 +1,17 @@
+# The knowledge/agent spine: mounts llm + session + system-prompt + tools +
+# agents + retry + agent-loop on ctx, so the kb plugins below have somewhere to
+# attach. Without it a bare `dsh-base` composition has no agent loop to plug
+# into.
+#
+# Add this package to your profile's `dsh.profile.bundles` (after the dsh
+# bundles it extends) or copy the row into the profile's cordis.patch.yml.
+- insert:
+    - id: clue-spine
+      name: '@clue-harness/spine'
+      config:
+        persona: >-
+          Before writing code that touches project conventions or previously
+          problematic areas, search the knowledge base (kb_search); propose
+          durable lessons with kb_propose — promotion to trusted is always a
+          human decision. Keep answers brief and factual; verify claims when
+          you can.

@@ -5,7 +5,7 @@
  *
  * - **Business packages** (kb, kb-loop, evidence, rag, ui) never import dsh
  *   packages directly. They import their dsh-facing vocabulary from here.
- * - **Composition layers** (`packages/spine`, `apps/*`) MAY import dsh
+ * - **Composition layers** (`plugins/spine`, `apps/*`) MAY import dsh
  *   packages directly — mounting dsh services is their whole job.
  * - When the pinned dsh version changes (quarterly), this file is the first
  *   and usually only place that needs updating; the contract snapshot tests

@@ -35,3 +35,6 @@ evals/cache/
 docs/
 *.docx
 *.pdf
+
+# 演示脚本的截图落点(文档不进仓库,截图同样不进)
+/docs/

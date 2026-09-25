@@ -1,0 +1,8 @@
+# The knowledge-base HTTP face: same-origin JSON routes under /api/clue-kb on
+# the webserver's public route contract (the browser half talks to these).
+#
+# Needs a webserver host: put it in a profile whose bundles include the dsh web
+# app (`@deepseek-ai/dsh-web-app`).
+- insert:
+    - id: clue-kb-web
+      name: '@clue-harness/kb-web'

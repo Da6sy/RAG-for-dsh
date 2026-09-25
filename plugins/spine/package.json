@@ -5,7 +5,8 @@
   "type": "module",
   "description": "The ClueHarness assembly spine: mounts the minimal dsh service set (llm, session, system-prompt, tools, agent registry, retry, agent loop) as one Cordis plugin. The app composition adds adapters and providers around it.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./cordis.patch.yml": "./cordis.patch.yml"
   },
   "dependencies": {
     "@deepseek-ai/dsh-agent": "0.1.1-rc.2",
@@ -21,5 +22,10 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   }
 }

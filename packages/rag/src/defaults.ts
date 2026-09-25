@@ -2,7 +2,7 @@
  * The ONE table of retrieval defaults (F0 of `docs/开发记录.md`).
  *
  * Why this file exists: the same knob had a default written in TWO places — the
- * settings namespace (`packages/kb-face/src/embedding-config.ts`, what the
+ * settings namespace (`plugins/kb-face/src/embedding-config.ts`, what the
  * product reads) and the retriever's own fallbacks (`hybrid.ts`, what an
  * offline harness reads when it passes nothing). Measured consequence: changing
  * the settings default moved NOTHING in `scripts/bench-beir.mjs`, and three

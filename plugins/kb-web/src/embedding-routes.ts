@@ -5,7 +5,7 @@
  * that decides between them. This is **path B**, and the reason is a verified
  * contract fact rather than a preference: our browser bundle's externals are
  * exactly the dsh client baseline (react family, cordis, ui-slots,
- * ui-primitives, runtime — see `packages/ui-kb/build.mjs`), while dsh's own
+ * ui-primitives, runtime — see `plugins/ui-kb/build.mjs`), while dsh's own
  * Models page reaches settings/credentials through the client capability plane.
  * Path B keeps the page on the same-origin JSON channel every other ClueHarness
  * panel already uses, so it needs no new external, no Remote codegen, and no

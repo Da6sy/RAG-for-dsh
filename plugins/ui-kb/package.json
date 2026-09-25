@@ -8,7 +8,8 @@
     ".": "./src/index.ts",
     "./client": "./lib/client.js",
     "./src/*": "./src/*",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
   },
   "files": [
     "lib/client.js",
@@ -16,19 +17,23 @@
     "src"
   ],
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
-      "platform": "web",
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-ui-sidebar",
         "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-tool"
-      ]
+      ],
+      "platform": "web"
     }
   },
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "prepare": "node build.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1"
@@ -43,6 +48,7 @@
     "@deepseek-ai/dsh-client-ui-slots": "0.1.1-rc.2",
     "@deepseek-ai/dsh-client-ui-tool": "0.1.1-rc.2",
     "@types/react": "~18.3.1",
-    "react": "^18.2.0"
+    "react": "^18.2.0",
+    "esbuild": "0.28.2"
   }
 }

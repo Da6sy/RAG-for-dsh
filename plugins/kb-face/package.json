@@ -12,7 +12,8 @@
     "./retrieval-plane": "./src/retrieval-plane.ts",
     "./chat-host": "./src/chat-host.ts",
     "./embedding-catalog": "./src/embedding-catalog.ts",
-    "./eval-ports": "./src/eval-ports.ts"
+    "./eval-ports": "./src/eval-ports.ts",
+    "./cordis.patch.yml": "./cordis.patch.yml"
   },
   "dependencies": {
     "@clue-harness/eval": "*",
@@ -40,5 +41,10 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   }
 }

@@ -1,0 +1,11 @@
+# The knowledge-base host service: ctx.kb, the kb_search / kb_propose / kb_cite
+# tools, retrieval-first pre-step injection, file-change tracking, and the
+# turn-stopping evidence gate.
+#
+# `cwd` is the default workspace anchor; a session's validated workspace cwd
+# selects which project KB its tools, injection and gate work in.
+- insert:
+    - id: clue-kb-face
+      name: '@clue-harness/kb-face'
+      config:
+        cwd: !!js process.cwd()

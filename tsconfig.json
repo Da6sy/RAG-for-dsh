@@ -1,5 +1,12 @@
 {
   "extends": "./tsconfig.base.json",
-  "include": ["packages/*/src/**/*.ts", "apps/*/src/**/*.ts", "apps/*/test/**/*.ts"],
-  "exclude": ["packages/ui-kb/src/**"]
+  "include": [
+    "packages/*/src/**/*.ts",
+    "plugins/*/src/**/*.ts",
+    "apps/*/src/**/*.ts",
+    "apps/*/test/**/*.ts"
+  ],
+  "exclude": [
+    "plugins/ui-kb/src/**"
+  ]
 }

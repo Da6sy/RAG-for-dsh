@@ -1,0 +1,17 @@
+# The browser half: knowledge/approval settings sections, kb_search /
+# kb_propose / kb_cite citation cards, the session knowledge drawer, and the
+# theme layer. A `dsh.client` module — the modules node half scans this
+# package's declaration, serves its built lib/client.js, and lists it in the
+# browser boot graph (run `npm run build:ui` once after install).
+#
+# The brand marks are SINGLE-occupant slots, so the official brand must stand
+# down or two registrants collide on one slot (the conflict is the design).
+# The patch schema is: an entry with `id` overrides that row, `insert:` appends
+# rows. (There is no `disable:`/`override:` key — an unknown one is ignored with
+# a warning, which is how a row silently fails to disable.)
+- id: ui-brand-official
+  disabled: true
+
+- insert:
+    - id: ui-clue-kb
+      name: '@clue-harness/ui-kb'
