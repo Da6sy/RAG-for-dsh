@@ -8,9 +8,15 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { openProjectStore, type KbStore } from '../src/index.ts'
+import { openProjectStore, readSignals, windowScore, type KbStore } from '../src/index.ts'
 
-const NOW = new Date('2026-09-10T00:00:00.000Z')
+// The clock must be the REAL one: resolveApproval/score/recordSignal default to
+// `new Date()` in the implementation, so a frozen NOW mixes two timelines —
+// once the calendar drifts more than `windowDays` past the frozen date, every
+// signal recorded by daysAgo() falls out of the window and the suite breaks
+// (observed: started failing on 2026-10-10, exactly 30 days after the freeze).
+// Everything in this file is relative, so the real clock is the honest one.
+const NOW = new Date()
 const daysAgo = (n: number, from: Date = NOW): string => new Date(from.getTime() - n * 24 * 60 * 60 * 1000).toISOString()
 
 async function lab(): Promise<{ root: string; store: KbStore }> {
@@ -136,4 +142,36 @@ test('double resolution of one request is refused (single-shot decisions)', asyn
   const request = await store.requestApproval(entry.id, 'promote', '测试', 99)
   await store.resolveApproval(request.id, true)
   await assert.rejects(() => store.resolveApproval(request.id, true), /is already resolved/)
+})
+
+test('sweep 的批量窗口分与逐条口径逐数一致(批量化的等价性)', async (t) => {
+  const { root, store } = await lab()
+  t.after(() => rm(root, { recursive: true, force: true }))
+
+  // Four baskets landing on four different edges: discard (≤ -20), promote
+  // (≥ 20), quiet middle, and no signals at all.
+  const toDiscard = await store.add({ kind: 'pitfall', title: '该遗弃的', text: '强负分' })
+  for (let i = 0; i < 4; i += 1) await store.recordSignal(toDiscard.id, 'user-reject', '实测不成立', daysAgo(3 - (i % 3)))
+  const toPromote = await store.add({ kind: 'fact', title: '该入队的', text: '高分候选' })
+  for (let i = 0; i < 3; i += 1) await store.recordSignal(toPromote.id, 'human-confirm', '确认', daysAgo(1))
+  for (let i = 0; i < 2; i += 1) await store.recordSignal(toPromote.id, 'evidence-pass', '渲染断言通过', daysAgo(1))
+  const quiet = await store.add({ kind: 'fact', title: '中间态', text: '一条弱信号' })
+  await store.recordSignal(quiet.id, 'implicit-use', '用过一次', daysAgo(2))
+  const silent = await store.add({ kind: 'fact', title: '无信号', text: '什么都没有' })
+
+  // Expectations are computed with the PER-ENTRY function (still the exported
+  // API) — sweep's decisions now come from the batched map, so this test is
+  // the proof that the two口径 can never drift apart.
+  const ledger = await readSignals(path.join(store.dir, 'signals.jsonl'))
+  const perEntry = (id: (typeof toDiscard)['id']): number => windowScore(ledger, id, NOW, store.config.windowDays).score
+  assert.equal(perEntry(toDiscard.id), -24)
+  assert.equal(perEntry(toPromote.id), 21)
+  assert.equal(perEntry(quiet.id), 1)
+  assert.equal(perEntry(silent.id), 0)
+
+  const result = await store.sweep(NOW)
+  assert.deepEqual([...result.discarded].sort(), [toDiscard.id], '遗弃决策必须与逐条口径一致')
+  assert.deepEqual(result.promotions.map((r) => String(r.entryId)), [String(toPromote.id)], '提升入队必须与逐条口径一致')
+  assert.equal((await store.get(quiet.id))?.status, 'candidate', '中间态不动')
+  assert.equal((await store.get(silent.id))?.status, 'candidate', '无信号不动')
 })

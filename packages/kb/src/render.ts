@@ -70,8 +70,12 @@ export function renderHitLine(
   const head = `- [${hit.entry.id}|${flags}|${hit.entry.kind}] ${hit.entry.title}: `
   let line = `${head}${text}`
   for (const annotation of hit.annotations) line += ` (${annotation})`
+  // The doc note lives in `hit.annotations` when the hit came through queryKb
+  // (annotationsFor adds it there). Append it here only for hits built WITHOUT
+  // annotations (rag's synthesized binding-recall hits) — otherwise the line
+  // would show 「含原文 N 段」 twice (pinned by a regression test).
   const docNote = docAnnotation(hit)
-  if (docNote !== null) line += ` (${docNote})`
+  if (docNote !== null && !hit.annotations.includes(docNote)) line += ` (${docNote})`
   // The fit test measures the PROSE (head + body), not the mandatory metadata:
   // a long id or a pile of annotations must not cost the block its breadth,
   // and must not drop an otherwise useful line either. `minChars` of 0 (the

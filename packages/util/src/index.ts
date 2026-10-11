@@ -86,15 +86,6 @@ export async function workspaceKey(projectRoot: string, home: string = clueHome(
   throw new Error(`workspace key still collides after 1000 probes: ${root}`)
 }
 
-/**
- * The central project-tier KB directory of one workspace: `<home>/kb/<key>`.
- * @param projectRoot - any path spelling of the workspace.
- * @param home - ClueHarness home override.
- * @returns absolute directory path (not created here).
- */
-export async function workspaceKbDir(projectRoot: string, home: string = clueHome()): Promise<string> {
-  return path.join(home, 'kb', await workspaceKey(projectRoot, home))
-}
 
 /**
  * The central render-baseline directory of one workspace: `<home>/baselines/<key>`.

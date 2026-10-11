@@ -181,3 +181,15 @@ test('parse refuses a malformed snapshot', () => {
 test('stableStringify sorts object keys recursively', () => {
   assert.equal(stableStringify({ b: 1, a: { d: [3, { f: 6, e: 5 }] } }, 0), '{"a":{"d":[3,{"e":5,"f":6}]},"b":1}')
 })
+
+test('checks:false 时不带断言块(报表自己渲染断言,避免一个块出现两遍)', () => {
+  const full = serializeSnapshotText(fixture())
+  const bare = serializeSnapshotText(fixture(), { checks: false })
+  assert.ok(full.includes('checks:'))
+  assert.ok(!bare.includes('checks:'), '省略断言块后不应出现 checks 段')
+  assert.ok(!bare.includes('搜索按钮可被 Tab 选中'), '断言内容也不应出现')
+  // 树与页头原样保留,尾部直接接 marker hints(没有孤儿空行)。
+  assert.ok(bare.startsWith('page search.html'))
+  assert.ok(bare.includes('├─ 顶部栏'))
+  assert.ok(bare.includes('marker hints:'))
+})

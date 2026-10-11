@@ -37,6 +37,7 @@ process.env.DSH_HOME = path.join(workdir, 'dsh-home')
 process.env.CLUE_HOME = path.join(workdir, 'clue-home')
 
 let web
+let browser
 try {
   // ── seed: a spec document + two knowledge entries mounted on it ─────────
   const { openProjectStore } = await import('@clue-harness/kb')
@@ -127,7 +128,7 @@ try {
 
   // ── drive a real browser ────────────────────────────────────────────────
   const { chromium } = await import('playwright')
-  const browser = await chromium.launch({ headless: true, chromiumSandbox: false })
+  browser = await chromium.launch({ headless: true, chromiumSandbox: false })
   const page = await browser.newPage({ viewport: { width: 1440, height: 980 } })
   const errors = []
   page.on('pageerror', error => errors.push(String(error)))
@@ -290,8 +291,9 @@ try {
   if (errors.length > 0) throw new Error(`浏览器报错: ${errors.slice(0, 3).join(' | ')}`)
   log('浏览器无 pageerror')
   log('M9-5 演示通过: 徽章 → 分片浏览器 → 划除(显示+检索双过滤) → 拆分(superseded) → 提升为可信 → 审批工作台(待复核/候选)')
-  await browser.close()
 } finally {
+  // 浏览器也必须在 finally 里关:中间任何一步断言失败,进程退出后浏览器进程会孤儿残留。
+  if (browser !== undefined) await browser.close().catch(() => {})
   // `runWeb` hands back { ctx, port, url, shutdown, done } — there is no
   // `close` (the M9 leftover this line used to call), so the old
   // `web.close?.().catch(...)` threw a TypeError in cleanup and masked the

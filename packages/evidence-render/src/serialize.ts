@@ -153,9 +153,12 @@ function assertionLine(assertion: AssertionResult): string {
  * Serialize a snapshot to the human/model-readable text tree (§4.4 sample
  * shape). Deterministic: identical snapshots produce identical bytes.
  * @param snapshot - the capture to render.
+ * @param options - `checks: false` omits the assertions block (for callers
+ *   that render it separately with the richer `serializeAssertionsText`,
+ *   so the report never shows the same block twice).
  * @returns multi-line text ending with a newline.
  */
-export function serializeSnapshotText(snapshot: LayoutSnapshot): string {
+export function serializeSnapshotText(snapshot: LayoutSnapshot, options: { checks?: boolean } = {}): string {
   const lines: string[] = []
   const scroll = snapshot.page.needsScroll ? ' (needs scroll)' : ''
   lines.push(
@@ -164,12 +167,14 @@ export function serializeSnapshotText(snapshot: LayoutSnapshot): string {
   )
   lines.push('')
   renderTree(snapshot.modules, '', lines)
-  lines.push('')
-  lines.push('checks:')
-  if (snapshot.assertions.length === 0) {
-    lines.push('  (no assertions ran)')
-  } else {
-    for (const assertion of snapshot.assertions) lines.push(assertionLine(assertion))
+  if (options.checks !== false) {
+    lines.push('')
+    lines.push('checks:')
+    if (snapshot.assertions.length === 0) {
+      lines.push('  (no assertions ran)')
+    } else {
+      for (const assertion of snapshot.assertions) lines.push(assertionLine(assertion))
+    }
   }
   if (snapshot.markerHints.length > 0) {
     lines.push('')

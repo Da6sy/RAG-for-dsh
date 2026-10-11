@@ -11,6 +11,7 @@
  * @module @clue-harness/evidence-render/diff
  */
 import type { LayoutSnapshot, ModuleNode } from './types.ts'
+import { CONTRAST_MIN } from './assert.ts'
 
 /** Tunables for change significance. */
 export interface DiffOptions {
@@ -231,11 +232,11 @@ export function diffSnapshots(
     const cBefore = old.style.contrastRatio
     const cAfter = node.style.contrastRatio
     if (cBefore !== null && cAfter !== null && Math.abs(cAfter - cBefore) > opts.contrastEpsilon) {
-      const broke = cBefore >= 4.5 && cAfter < 4.5
+      const broke = cBefore >= CONTRAST_MIN && cAfter < CONTRAST_MIN
       push({
         kind: 'contrast', moduleId: id, label: entry.path,
         severity: broke ? 'error' : 'info',
-        detail: `text contrast ${cBefore.toFixed(1)} → ${cAfter.toFixed(1)}${broke ? ' (dropped below the 4.5 readability line)' : ''}`,
+        detail: `text contrast ${cBefore.toFixed(1)} → ${cAfter.toFixed(1)}${broke ? ' (dropped below the ${CONTRAST_MIN} readability line)' : ''}`,
       })
     }
 

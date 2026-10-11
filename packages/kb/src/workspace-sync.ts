@@ -315,19 +315,9 @@ export async function listTrash(
   return out
 }
 
-/** The side-table document shape the CLI prints when asked for the truth. */
-export async function readSideTable(home: string = clueHome()): Promise<WorkspaceRecord[]> {
-  return readWorkspaces(home)
-}
-
 /** Where the side table lives (exported for the CLI's footer). */
 export function sideTableFile(home: string = clueHome()): string {
   return path.join(home, 'workspaces.json')
-}
-
-/** Drop the file when a test wants the pre-state (internal helper, unused at runtime). */
-export async function resetSideTable(home: string = clueHome()): Promise<void> {
-  await rm(sideTableFile(home), { force: true })
 }
 
 export { WORKSPACES_REGISTRY_VERSION, atomicWriteJson, readJsonOrNull, workspaceKey }

@@ -1072,7 +1072,6 @@ export function apply(ctx: Context, config: Config = {}): void {
       '知识库纪律:涉及项目约定、UI 修改或曾出过问题的区域,先用 kb_search 检索再动手;'
       + (queryStyle() === 'intent' ? QUERY_DOCTRINE_INTENT : QUERY_DOCTRINE_KEYWORDS)
       + '学到新的项目事实(约定/坑/决策)用 kb_propose 提案——你只能提案,提升为可信由人批准;'
-      + '学到新的项目事实(约定/坑/决策)用 kb_propose 提案——你只能提案,提升为可信由人批准;'
       + '实际采用某条知识作为改动或结论的依据后,用 kb_cite 声明其 id——归因与信号按引用记账,检索到过但没用上的不要引用。'
       + '分工:代码现场真值走 glob/grep/read(这个函数长什么样、被谁调用);'
       + '历史判断与理据走 kb_search(哪条知识)→ kb_detail(原文哪一段,带 docId/行号锚点)。'

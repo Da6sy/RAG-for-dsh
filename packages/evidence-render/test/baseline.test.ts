@@ -161,7 +161,9 @@ test('§9 回归:改了页面引用的外部 CSS,基准必须变 stale', async (
   for (const asset of externalAssetsOf(pageHtml)) {
     hashes[asset.replace(/^\.\//, '')] = await sourceHash(path.join(root, asset.replace(/^\.\//, '')))
   }
-  const saved = await saveBaseline(root, snapshot(pageRel), hashes)
+  // The temp HOME is mandatory: without it saveBaseline writes into the REAL
+  // ~/.clue/baselines (polluting the user's baselines; EACCES under sandbox).
+  const saved = await saveBaseline(root, snapshot(pageRel), hashes, path.join(root, 'home'))
   const record = saved.record
   assert.deepEqual(Object.keys(record.sourceHashes).sort(), ['search.html', 'style.css'])
 

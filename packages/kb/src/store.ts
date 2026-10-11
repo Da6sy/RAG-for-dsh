@@ -88,6 +88,7 @@ import {
   discardThreshold,
   readSignals,
   windowScore,
+  windowScores,
   type SignalInput,
 } from './signals.ts'
 // The redline ratio lives with the retrieval semantics it changes (query.ts):
@@ -825,6 +826,11 @@ export class KbStore {
    */
   async sweep(now: Date = new Date()): Promise<{ expired: KbEntryId[]; discarded: KbEntryId[]; purged: KbEntryId[]; promotions: ApprovalRequest[]; docDrift: DocDrift[] }> {
     const signals = await readSignals(this.signalsFile)
+    // 窗口分数一次全算出来(批量口径:一次扫描整本账),而不是逐条 windowScore
+    // 重扫账本(逐条口径是 O(条目数 × 信号数),2000 条 × 16000 条信号要把账本上
+    // 每行 Date.parse 3200 万次)。两种口径的数值定义一致,等价性由测试钉住。
+    const scoreById = windowScores(signals, now, this.config.windowDays)
+    const scoreOf = (id: KbEntryId): number => scoreById.get(String(id)) ?? 0
     const expired: KbEntryId[] = []
     const discarded: KbEntryId[] = []
     const purged: KbEntryId[] = []
@@ -834,7 +840,12 @@ export class KbStore {
     // Flagging is idempotent; the snapshots are never rewritten.
     const docDrift = await this.checkAllDocs(at)
 
-    for (const entry of await this.list()) {
+    // 只把全部条目读一遍:原本 sweep 自己 list() 一次、suggestPromotions 里又
+    // list({status:'candidate'}) 一次,2000 条库上等于把全部条目文件读两遍。
+    // 这里读一次、用内存快照过滤,语义与原来逐字一致(见下方 settled 集合)。
+    const all = await this.list()
+    const settled = new Set<string>()
+    for (const entry of all) {
       // M9-4: `superseded` is a TERMINAL, provenance-bearing state — it is
       // excluded from every sweep edge below (no score act, no idle expiry,
       // no retention purge). A discarded entry's knowledge may be forgotten;
@@ -844,10 +855,11 @@ export class KbStore {
       //    crossed the bound → discard WITHOUT a queue (entering discard is
       //    machine-driven; LEAVING it needs the human — the user's rule).
       if (entry.status === 'candidate' || entry.status === 'trusted' || entry.status === 'expired') {
-        const { score } = windowScore(signals, entry.id, now, this.config.windowDays)
+        const score = scoreOf(entry.id)
         if (score <= discardThreshold(this.config)) {
           await this.save(applyTransition(entry, 'discarded', 'strong-negative', `窗口分数 ${score} ≤ ${discardThreshold(this.config)}`, at))
           discarded.push(entry.id)
+          settled.add(String(entry.id))
           continue
         }
       }
@@ -857,6 +869,7 @@ export class KbStore {
         if (!Number.isNaN(anchor) && now.getTime() - anchor > this.config.expireAfterDays * DAY_MS) {
           await this.save(applyTransition(entry, 'expired', 'expire-idle', `超过 ${this.config.expireAfterDays} 天未被引用`, at))
           expired.push(entry.id)
+          settled.add(String(entry.id))
           continue
         }
       }
@@ -866,10 +879,13 @@ export class KbStore {
         if (!Number.isNaN(discardedAt) && now.getTime() - discardedAt > this.config.discardRetentionDays * DAY_MS) {
           await rm(this.entryFile(entry.id), { force: true })
           purged.push(entry.id)
+          settled.add(String(entry.id))
         }
       }
     }
-    const promotions = await this.suggestPromotions(now, signals)
+    // 刚刚转变过的条目按新状态排除(快照里它们还写着旧状态),其余语义不变。
+    const remaining = all.filter((entry) => !settled.has(String(entry.id)) && entry.status === 'candidate')
+    const promotions = await this.suggestPromotions(now, signals, remaining)
     return { expired, discarded, purged, promotions, docDrift }
   }
 
@@ -878,12 +894,16 @@ export class KbStore {
    * direct promotion). Suppressed while an equal pending request exists, or
    * a promotion was rejected inside the window ( ignored twice → quieter).
    */
-  async suggestPromotions(now: Date = new Date(), signals?: SignalRecord[]): Promise<ApprovalRequest[]> {
+  async suggestPromotions(now: Date = new Date(), signals?: SignalRecord[], entries?: readonly KbEntry[]): Promise<ApprovalRequest[]> {
     const ledger = signals ?? await readSignals(this.signalsFile)
+    // 同 sweep:批量口径一次算完,逐条口径与它的数值定义一致(等价性测试钉住)。
+    const scoreById = windowScores(ledger, now, this.config.windowDays)
     const approvals = (await readJsonOrNull<ApprovalRequest[]>(this.approvalsFile)) ?? []
     const created: ApprovalRequest[] = []
-    for (const entry of await this.list({ status: 'candidate' })) {
-      const { score } = windowScore(ledger, entry.id, now, this.config.windowDays)
+    // sweep 会把它刚读过的快照传进来,免得为同一份名单再读一遍全部文件。
+    const pool = (entries ?? await this.list({ status: 'candidate' })).filter((entry) => entry.status === 'candidate')
+    for (const entry of pool) {
+      const score = scoreById.get(String(entry.id)) ?? 0
       if (score < this.config.trustThreshold) continue
       const pending = approvals.some((a) => a.entryId === entry.id && a.action === 'promote' && a.resolvedAt === null)
       if (pending) continue

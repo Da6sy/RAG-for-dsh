@@ -262,3 +262,19 @@ test('M9-1: 文档层目录结构就是提案写的那三个(entries/docs/chunks
   assert.ok(await stat(path.join(store.dir, 'docs', `${String(snap.record.docId)}.meta.json`)))
   assert.ok(await stat(path.join(store.dir, 'chunks', `${String(snap.record.docId)}.jsonl`)))
 })
+
+test('回归: 原文标注只出现一次(annotationsFor 与 renderHitLine 不再各加一遍)', () => {
+  const docNote = '含原文 3 段,细节用 kb_detail 下钻'
+  const base = {
+    entry: { id: 'k-doc', status: 'trusted', needsReview: false, kind: 'fact', title: '带原文', text: '正文。', doc: { docId: 'd-x' } },
+    score: 5,
+    matched: [],
+    annotations: [docNote],
+    docHeadingCount: 3,
+  }
+  const withAnnotations = renderHitLine(base as never, 400, 0)
+  assert.equal(withAnnotations?.split(docNote).length - 1, 1, '标注已在 annotations 里时不得再加一遍')
+  // Synthesized hits (no annotations) still get the note — that is renderHitLine's job.
+  const bare = renderHitLine({ ...base, annotations: [] } as never, 400, 0)
+  assert.equal(bare?.split(docNote).length - 1, 1, '合成命中兜底显示一次')
+})

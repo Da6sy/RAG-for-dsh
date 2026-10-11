@@ -13,6 +13,9 @@
  */
 import type { AssertionResult, LayoutSnapshot, ModuleNode } from './types.ts'
 
+/** WCAG AA 正文对比度下限(4.5)——唯一出处;diff 与断言都从这儿取。 */
+export const CONTRAST_MIN = 4.5
+
 /** Walk the tree in document order (repeat expansions included). */
 function walk(nodes: readonly ModuleNode[], visit: (node: ModuleNode) => void): void {
   for (const node of nodes) {
@@ -77,10 +80,10 @@ export function runBuiltinAssertions(snapshot: LayoutSnapshot): AssertionResult[
     // Readability floor for text-bearing modules (WCAG AA for normal text).
     if (node.style.contrastRatio !== null) {
       out.push(result(
-        `${node.label} text contrast ≥ 4.5`,
-        node.style.contrastRatio >= 4.5,
+        `${node.label} text contrast ≥ ${CONTRAST_MIN}`,
+        node.style.contrastRatio >= CONTRAST_MIN,
         `measured ${node.style.contrastRatio.toFixed(1)}`,
-        '≥ 4.5',
+        `≥ ${CONTRAST_MIN}`,
         node.style.contrastRatio >= 3 ? 'warn' : 'error',
       ))
     }

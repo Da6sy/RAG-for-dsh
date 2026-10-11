@@ -151,7 +151,9 @@ export async function inspectPage(options: InspectOptions): Promise<InspectResul
     await writeFile(options.jsonOut, `${serializeSnapshotJson(snapshot)}\n`, 'utf8')
   }
 
-  const snapshotText = serializeSnapshotText(snapshot)
+  // The tree omits its own checks block here: the report renders assertions
+  // once, through serializeAssertionsText (which adds the "(N failed)" count).
+  const snapshotText = serializeSnapshotText(snapshot, { checks: false })
   const assertionsText = serializeAssertionsText(snapshot)
   const failedError = snapshot.assertions.some((a) => !a.pass && a.severity === 'error')
 
