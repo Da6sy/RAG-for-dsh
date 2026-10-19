@@ -1,7 +1,7 @@
 # Dependencies
 node_modules/
 
-# Build artifacts (M0 runs from source via tsx; build faces come later)
+# Build artifacts (browser halves are built with esbuild)
 lib/
 dist/
 *.tsbuildinfo
@@ -11,7 +11,7 @@ dist/
 .clue/
 .env
 
-# Dogfood/web runtime state (M8 workspace binding; session dirs from `clue web`)
+# Dogfood/web runtime state (local session dirs; not part of the dsh plugins)
 .dogfood-home/
 .dsh-home/
 .clue-sessions/
@@ -26,15 +26,10 @@ dist/
 Thumbs.db
 *Zone.Identifier
 
-# 评测数据与报告(单独存放,可整体删除)
-evals/datasets/
-evals/runs/
+# Eval runtime cache (not part of the plugin source)
 evals/cache/
 
 # 文档与个人文件不进仓库(本地另存:../clue-harness-archive-noncode/)
 docs/
 *.docx
 *.pdf
-
-# 演示脚本的截图落点(文档不进仓库,截图同样不进)
-/docs/

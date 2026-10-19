@@ -283,7 +283,7 @@ export class KbApiError extends Error {
 export function describeKbError(cause: unknown): string {
   if (cause instanceof KbApiError) {
     if (cause.status === 404 && /方法不匹配|未知端点/.test(cause.message)) {
-      return '宿主侧还没有这条路由:重启 clue web / dsh web 后刷新页面再试一次。'
+      return '宿主侧还没有这条路由:重启 dsh web 后刷新页面再试一次。'
     }
     return cause.message
   }

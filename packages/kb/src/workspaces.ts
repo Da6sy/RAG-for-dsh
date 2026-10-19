@@ -37,7 +37,7 @@ export const WORKSPACES_REGISTRY_VERSION = 1
 /**
  * How a workspace entered the side table. M9.1: `registry` is the only origin
  * the settings panel shows — it means "the host has this workspace right now".
- * `auto`/`migrate` come from a CLI touching a path, `manual` from `clue kb
+ * `auto`/`migrate` come from a host touching a path, `manual` from the settings panel
  * workspace add`. Those rows are real data but NOT panel rows: the host's
  * workspace registry owns visibility (see `workspace-sync.ts`).
  */
@@ -265,7 +265,7 @@ export async function writeWorkspaces(records: readonly WorkspaceRecord[], home:
 }
 
 /**
- * Add a workspace BY HAND (the settings panel's 添加 / `clue kb workspace add`).
+ * Add a workspace BY HAND (the settings panel's 添加 action).
  * @param projectRoot - the directory to register.
  * @param label - optional display name (default: directory basename).
  * @param home - ClueHarness home override.

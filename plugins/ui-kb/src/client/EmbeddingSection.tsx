@@ -334,7 +334,7 @@ export function EmbeddingSection(): JSX.Element {
 
       {!data.available && (
         <div className="clue-notice">
-          宿主没有挂载设置/凭据服务 ⇒ 本页只能读默认值,无法保存。用 <code>clue kb embed-config</code> 系列命令配置。
+          宿主没有挂载设置/凭据服务 ⇒ 本页只能读默认值,无法保存。请在有设置/凭据服务的 dsh 实例里配置。
         </div>
       )}
       {notice !== null && <div className="clue-notice">{notice}</div>}
@@ -820,6 +820,7 @@ export function EmbeddingSection(): JSX.Element {
         description={risk?.description ?? ''}
         acknowledgeLabel={risk?.acknowledge ?? ''}
         cancelLabel="取消"
+        closeLabel="关闭"
         confirmLabel={risk?.action ?? '确认'}
         acknowledged={acknowledged}
         disabled={busy}

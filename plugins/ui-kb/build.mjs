@@ -2,7 +2,7 @@
  * The ui-kb browser bundle build (esbuild).
  *
  * Artifact contract — byte-for-byte the shape dsh's own published client
- * bundles carry (verified against @deepseek-ai/dsh-client-ui-goal@0.1.1-rc.2
+ * bundles carry (verified against @deepseek-ai/dsh-client-ui-goal@0.2.0-rc.2
  * lib/client.js): a CJS closure factory handed to `window.__ModuleLoader__.load`,
  * externals resolved through the module table's `require`, everything else
  * inlined. The client-modules node half serves this file at
@@ -46,7 +46,6 @@ await build({
     '@deepseek-ai/cordis',
     '@deepseek-ai/dsh-client-ui-slots',
     '@deepseek-ai/dsh-client-ui-primitives',
-    '@deepseek-ai/dsh-client-runtime/client',
   ],
   // Browser bundles inline node-idiom deps that read process.env.NODE_ENV
   // (react's cjs branches); the artifacts default to production, matching

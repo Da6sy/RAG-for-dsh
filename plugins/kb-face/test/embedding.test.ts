@@ -22,9 +22,7 @@ import http from 'node:http'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
-import FileSettingsProvider from '@deepseek-ai/dsh-settings-file'
-import CredentialsLocal from '@deepseek-ai/dsh-credentials-local'
+import type { Context } from '@deepseek-ai/cordis'
 import {
   EMBEDDING_NAMESPACE,
   RETRIEVAL_NAMESPACE,
@@ -35,25 +33,22 @@ import {
   readEmbeddingConfig,
   readRetrievalConfig,
   recordMeasuredDim,
-  registerEmbeddingSettings,
   resolveEmbeddingKey,
   storeEmbeddingKey,
   unsetEmbeddingKey,
   validateEmbeddingPatch,
   writeEmbeddingConfig,
 } from '../src/embedding-config.ts'
+import { openEmbeddingHost } from '../src/embedding-host.ts'
 import { EmbedError, createHttpEmbedder, embeddingsUrl, endpointHost, parseEmbeddingsResponse, testConnection } from '../src/http-embedder.ts'
 
 /** A minimal host context: dsh's own settings + credentials providers. */
 async function host(t: { after(fn: () => unknown): void }): Promise<{ ctx: Context; home: string }> {
   const home = await mkdtemp(path.join(tmpdir(), 'clue-embed-face-'))
   t.after(() => rm(home, { recursive: true, force: true }))
-  const ctx = new Context()
-  ctx.plugin(FileSettingsProvider as never, { dshHome: home, watch: false } as never)
-  ctx.plugin(CredentialsLocal as never, { dshHome: home, watch: false } as never)
-  await new Promise((resolve) => setTimeout(resolve, 300))
-  registerEmbeddingSettings(ctx)
-  return { ctx, home }
+  const opened = await openEmbeddingHost({ dshHome: home })
+  t.after(() => opened.close())
+  return { ctx: opened.ctx, home }
 }
 
 /** A local OpenAI-compatible endpoint whose behavior the test dictates. */
@@ -180,7 +175,7 @@ test('回归: 检索调优保存写进 clue-kb-retrieval,且不污染 clue-kb-em
   assert.deepEqual(result.retrieval?.missingFeatureMode, 'absent', '写入结果要带回检索 section,页面才能回显')
 
   // 另一侧必须干净：孤儿键会让"这份文档到底哪段生效"变得无法判断。
-  const document = await readFile(path.join(home, 'settings.yaml'), 'utf8')
+  const document = await readFile(path.join(home, 'profiles', 'clue-kb', 'cordis.patch.yml'), 'utf8')
   const embeddingSection = document.split('clue-kb-retrieval')[0] ?? ''
   for (const orphan of ['rrfK', 'channelWeights', 'featureWeights', 'missingFeatureMode', 'lexicalNormalization']) {
     assert.ok(!embeddingSection.includes(orphan), `嵌入 section 不得出现检索键 ${orphan}`)
@@ -224,7 +219,7 @@ test('不变量 10: 密钥只进密钥库,设置文档与一切摘要里都没�
 
   // The settings document is the one a user syncs and commits: it must carry
   // the REFERENCE only.
-  const settingsDoc = await readFile(path.join(home, 'settings.yaml'), 'utf8')
+  const settingsDoc = await readFile(path.join(home, 'profiles', 'clue-kb', 'cordis.patch.yml'), 'utf8')
   assert.equal(settingsDoc.includes(secret), false)
   assert.match(settingsDoc, /apiKeyEnv: CLUE_TEST_EMBEDDING_KEY/)
 

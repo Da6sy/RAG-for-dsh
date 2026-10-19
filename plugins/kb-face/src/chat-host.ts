@@ -21,11 +21,9 @@
  *
  * @module @clue-harness/kb-face/chat-host
  */
-import { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import { LlmRuntime, createUserMessage, type Message } from '@deepseek-ai/dsh-llm'
-import { apply as applyDeepSeek } from '@deepseek-ai/dsh-llm-deepseek'
-import FileSettingsProvider from '@deepseek-ai/dsh-settings-file'
-import CredentialsLocal from '@deepseek-ai/dsh-credentials-local'
+import { openEmbeddingHost } from './embedding-host.ts'
 import { clueHostHome } from '@clue-harness/util'
 import type { LlmRankPort } from '@clue-harness/rag'
 
@@ -86,28 +84,12 @@ async function waitForService(ctx: Context, name: string, timeoutMs = 3000): Pro
  */
 export async function openChatHost(options: { dshHome?: string; provider?: string; model?: string } = {}): Promise<ChatHost> {
   const dshHome = options.dshHome ?? clueHostHome()
-  const ctx = new Context()
-  const fibers = [
-    ctx.plugin(FileSettingsProvider as never, { dshHome, watch: false } as never),
-    ctx.plugin(CredentialsLocal as never, { dshHome, watch: false } as never),
-  ] as unknown as Array<{ dispose?: () => Promise<void> | void }>
-  const settingsReady = await waitForService(ctx, 'settings')
-  if (!settingsReady) throw new Error(`chat host: cannot open the settings service (${dshHome})`)
-  fibers.push(ctx.plugin(LlmRuntime as never, {} as never) as unknown as { dispose?: () => Promise<void> | void })
+  const host = await openEmbeddingHost({ dshHome })
+  const ctx = host.ctx
   if (!await waitForService(ctx, 'llm')) throw new Error('chat host: cannot mount ctx.llm (the host llm runtime never came up)')
-  // The adapter layers its entry config under the `llm-deepseek` settings
-  // section and resolves its key per request (its own contract).
-  applyDeepSeek(ctx, {} as never)
-  // The pi-ai twin too: the plan's risk table asks for a judge from a DIFFERENT
-  // family than the answerer, and those routes (qwen/glm/pixel…) only exist once
-  // this row is mounted — without it a cross-family judge fails with
-  // `no adapter registered for provider "qwen"`.
-  try {
-    const { apply: applyPiAi } = await import('@deepseek-ai/dsh-llm-pi-ai')
-    applyPiAi(ctx, {} as never)
-  } catch {
-    // A composition without pi-ai still answers with the DeepSeek route.
-  }
+  // Provider adapters come from the profile entries mounted by the embedding
+  // host. Their live Config sections also make the minimal host and the full
+  // composition share provider settings.
   await new Promise((resolve) => setTimeout(resolve, 50))
 
   const route = { provider: options.provider ?? DEFAULT_CHAT_ROUTE.provider, model: options.model ?? DEFAULT_CHAT_ROUTE.model }
@@ -147,7 +129,7 @@ export async function openChatHost(options: { dshHome?: string; provider?: strin
         // prepared, which is what makes "prepare then dispatch" safe.
         const stream = prepared.stream({
           ...prepared.config,
-          messages: [createUserMessage({ content: [{ type: 'text', text: request.prompt }], source: { kind: 'plugin', plugin: 'clue-chat-host' } }) as Message],
+          messages: [createUserMessage({ content: [{ type: 'text', text: request.prompt }], source: { kind: 'clue-chat-host' } }) as Message],
           ...(request.system !== undefined ? { system: request.system } : {}),
           signal: controller.signal,
         })
@@ -163,11 +145,7 @@ export async function openChatHost(options: { dshHome?: string; provider?: strin
         clearTimeout(timeout)
       }
     },
-    close: async () => {
-      // Disposing the fibers drains in-flight work and closes the file
-      // watchers, so the process can exit without a lingering handle.
-      for (const fiber of fibers) await fiber.dispose?.()
-    },
+    close: host.close,
   }
 }
 

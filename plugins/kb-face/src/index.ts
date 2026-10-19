@@ -684,7 +684,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   function turnOfMessage(session: Session, messageId: string): number | null {
     let currentTurn: number | null = null
     let found: number | null = null
-    for (const event of session.events) {
+    for (const event of session.snapshotEvents()) {
       if (event.type === 'turn/start') currentTurn = event.data.turn
       else if (event.type === 'assistant/message') {
         const id = (event.data as { message?: { id?: unknown } }).message?.id
@@ -873,7 +873,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         hits: hits.map((hit) => {
           // M9-4: the returned body is the text AFTER redlines (划除不只是遮
           // 显示:被作废的段不进任何一条返回路径). The raw text stays in the
-          // entry file for governance (`clue kb show` prints it verbatim).
+          // entry file for governance (the entry detail prints it verbatim).
           const body = entryTextAfterRedlines(hit.entry)
           return {
             id: hit.entry.id,
@@ -1134,7 +1134,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         perEntryChars: resolved.injectPerEntryChars,
         minChars: resolved.injectMinEntryChars,
       }) }],
-      source: { kind: 'plugin', plugin: name },
+      source: { kind: 'clue-kb' },
     })
     return { kind: 'enter', messages: [...decision.messages, context] }
   })
@@ -1310,7 +1310,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (captureNotes.length > 0) text = `${text}\n\n${captureNotes.join('\n')}`
     agent.inject(createUserMessage({
       content: [{ type: 'text', text }, ...imageBlocks],
-      source: { kind: 'plugin', plugin: name },
+      source: { kind: 'clue-kb' },
     }))
   })
 }

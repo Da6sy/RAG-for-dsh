@@ -10,7 +10,7 @@
  *     → sweep (expire / strong-negative / purge / promotion suggestions)
  *
  * The Cordis face (M3b) will call this same engine from turn-boundary
- * listeners; the CLI calls it from `clue kb loop`. Engine first, faces on
+ * listeners; the dsh face drives it. Engine first, faces on
  * demand — the M1/M2 precedent.
  *
  * @module @clue-harness/kb-loop/loop

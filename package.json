@@ -3,23 +3,19 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "ClueHarness — an evidence-driven agent product: self-improving knowledge base + pluggable evidence layer, built on Cordis with dsh packages as dependencies.",
+  "description": "The dsh plugin set for ClueHarness: a governed, cited knowledge base (kb-face, kb-web, ui-kb) plus the liquid-glass ui-skin appearance plugin.",
   "license": "MIT",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
   "workspaces": [
     "packages/*",
-    "plugins/*",
-    "apps/*"
+    "plugins/*"
   ],
   "scripts": {
-    "clue": "node apps/cli/src/bin.ts",
-    "web": "node apps/cli/src/bin.ts web",
-    "kb": "node apps/cli/src/bin.ts kb",
-    "build:ui": "node plugins/ui-kb/build.mjs",
-    "typecheck": "tsc -p tsconfig.json && tsc -p plugins/ui-kb/tsconfig.json",
-    "test": "node --test apps/cli/test/*.test.ts packages/*/test/*.test.ts plugins/*/test/*.test.ts"
+    "build:ui": "node plugins/ui-kb/build.mjs && node plugins/ui-skin/build.mjs",
+    "typecheck": "tsc -p tsconfig.json && tsc -p plugins/ui-kb/tsconfig.json && tsc -p plugins/ui-skin/tsconfig.json",
+    "test": "node --test packages/*/test/*.test.ts plugins/*/test/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",

@@ -84,10 +84,13 @@ export function createEmbeddingRoutes(deps: EmbeddingRoutesDeps): (
   body: Record<string, unknown>,
 ) => Promise<RouteAnswer | null> {
   const { ctx } = deps
-  // Register the namespaces here as well as in kb-face: the page must work in a
-  // composition that mounts kb-web without the agent face, and the registration
-  // is idempotent by namespace.
-  registerEmbeddingSettings(ctx)
+  // Make sure the namespaces exist here as well as in kb-face: the page must
+  // work in a composition that mounts kb-web without the agent face. dsh 0.2
+  // derives a namespace from a Loader entry, so this loads the two entry rows
+  // (the composition's bundle patch normally did it already) and is idempotent
+  // by namespace. Deliberately not awaited: the routes answer with the shipped
+  // defaults until the rows settle, exactly as a first read before the loader.
+  void registerEmbeddingSettings(ctx)
 
   /** Build a host-shaped adapter over the LIVE web context (no re-mounting). */
   const host: EmbeddingHost = {

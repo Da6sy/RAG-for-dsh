@@ -5,7 +5,7 @@
  * settings namespace (`plugins/kb-face/src/embedding-config.ts`, what the
  * product reads) and the retriever's own fallbacks (`hybrid.ts`, what an
  * offline harness reads when it passes nothing). Measured consequence: changing
- * the settings default moved NOTHING in `scripts/bench-beir.mjs`, and three
+ * the settings default moved NOTHING in the BEIR benchmark harness, and three
  * consecutive benchmark runs with materially different settings produced
  * byte-identical numbers — the harness was reading the library's fallback, not
  * the configuration under test.

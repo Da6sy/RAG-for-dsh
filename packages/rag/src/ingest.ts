@@ -1,5 +1,5 @@
 /**
- * The ingest channel (M9-3, proposal §6): `clue kb ingest <file>`.
+ * The ingest channel (M9-3, proposal §6): the knowledge import channel.
  *
  * The pipeline is deliberately boring and fully inspectable — it is the ONE
  * moment where knowledge text is sliced, and a human is meant to read the

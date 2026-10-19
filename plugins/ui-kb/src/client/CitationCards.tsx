@@ -14,8 +14,8 @@
  * @module @clue-harness/ui-kb/client/CitationCards
  */
 import { useState } from 'react'
-import type { ToolCallBlock } from '@deepseek-ai/dsh-client-runtime/client'
-import { IconCheckOutline14, IconLoadingOutline16, IconPlusOutline16, IconSearchOutline16, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { ToolCallBlock } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import { IconCheckOutlineRegular, IconLoadingOutlineMedium, IconPlusOutlineRegular, IconSearchOutlineRegular, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   actionCopy, parseArgs, parseKbCiteResult, parseKbProposeResult, parseKbSearchResult,
   shortId, stateBadge, type TextishBlock,
@@ -35,7 +35,7 @@ export interface KbViewProps {
  * @returns the raw args JSON text ('' when the window lost the call head).
  */
 function argsOf(block: ToolCallBlock): string {
-  return ('kind' in block ? block.call?.argsRaw : block.argsRaw) ?? ''
+  return ('kind' in block ? block.call?.argsRaw : 'argsRaw' in block ? block.argsRaw : '') ?? ''
 }
 
 /**
@@ -63,7 +63,7 @@ export function KbSearchCard({ block }: KbViewProps) {
     return (
       <div className="clue-cite">
         <div className="clue-cite-head">
-          <IconLoadingOutline16 size={14} />
+          <IconLoadingOutlineMedium size={14} />
           <strong>检索知识库…</strong>
           {query !== '' && <span className="clue-dim">「{query}」</span>}
         </div>
@@ -80,7 +80,7 @@ export function KbSearchCard({ block }: KbViewProps) {
         onClick={() => { setOpen(value => !value) }}
         aria-expanded={open}
       >
-        <IconSearchOutline16 size={14} />
+        <IconSearchOutlineRegular size={14} />
         <strong>知识库检索</strong>
         {query !== '' && <span className="clue-dim">「{query}」</span>}
         <span className="clue-count">
@@ -125,7 +125,7 @@ export function KbProposeCard({ block }: KbViewProps) {
     return (
       <div className="clue-cite">
         <div className="clue-cite-head">
-          <IconLoadingOutline16 size={14} />
+          <IconLoadingOutlineMedium size={14} />
           <strong>提案新知识…</strong>
         </div>
       </div>
@@ -138,7 +138,7 @@ export function KbProposeCard({ block }: KbViewProps) {
   return (
     <div className="clue-cite">
       <div className="clue-cite-head">
-        <IconPlusOutline16 size={14} />
+        <IconPlusOutlineRegular size={14} />
         <strong>知识提案</strong>
         {title !== '' && <span>「{title}」</span>}
         {failed
@@ -172,7 +172,7 @@ export function KbCiteCard({ block }: KbViewProps) {
     return (
       <div className="clue-cite">
         <div className="clue-cite-head">
-          <IconLoadingOutline16 size={14} />
+          <IconLoadingOutlineMedium size={14} />
           <strong>引用知识…</strong>
         </div>
       </div>
@@ -183,7 +183,7 @@ export function KbCiteCard({ block }: KbViewProps) {
   return (
     <div className="clue-cite">
       <div className="clue-cite-head">
-        <IconCheckOutline14 size={14} />
+          <IconCheckOutlineRegular size={14} />
         <strong>知识引用</strong>
         {failed
           ? <Chip label="调用失败" tone="bad" />

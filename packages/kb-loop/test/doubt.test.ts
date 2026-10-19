@@ -1,8 +1,8 @@
 /**
  * Doubt-ledger engine tests (M6) + the audited text-edit store method.
  * Pure engine level: real temp dirs, real KbStore, no browser, no dsh.
- * The face-level chain (dislike → capture → knowledge) lives in
- * apps/cli/test/doubt-loop.test.ts.
+ * The face-level chain (dislike → capture → knowledge) is exercised through
+ * the dsh tools, not this engine test.
  *
  * @module @clue-harness/kb-loop/test/doubt
  */

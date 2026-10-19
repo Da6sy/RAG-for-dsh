@@ -162,7 +162,7 @@ export function ChunkBrowser({ target, entry, busy, onChanged, onError }: {
   if (docId === null) {
     return (
       <div className="clue-dim">
-        该知识无原文层(正文即全部)。用 <span className="clue-mono">clue kb ingest &lt;文件&gt;</span> 导入规范原文后可挂载证据锚点。
+        该知识无原文层(正文即全部)。通过知识库导入接口导入规范原文后,可挂载证据锚点。
       </div>
     )
   }

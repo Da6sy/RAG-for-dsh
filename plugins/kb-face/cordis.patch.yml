@@ -4,8 +4,23 @@
 #
 # `cwd` is the default workspace anchor; a session's validated workspace cwd
 # selects which project KB its tools, injection and gate work in.
+#
+# The two settings rows are plain config carriers: their ids ARE the settings
+# namespaces the page reads and writes (`clue-kb-embedding`,
+# `clue-kb-retrieval`), and their exported Config schemas are those namespaces'
+# schemas. dsh 0.2's settings editor persists a plugin's config into the
+# profile's own patch file and refuses a row it cannot reach by composition —
+# so these rows must come from a LAYER applied before the profile's user patch,
+# never from a boot-time overlay. Bundling them here (this package is listed in
+# the profile's `dsh.profile.bundles`) is that layer.
 - insert:
     - id: clue-kb-face
       name: '@clue-harness/kb-face'
       config:
         cwd: !!js process.cwd()
+
+    - id: clue-kb-embedding
+      name: '@clue-harness/kb-face/embedding-entry'
+
+    - id: clue-kb-retrieval
+      name: '@clue-harness/kb-face/retrieval-entry'

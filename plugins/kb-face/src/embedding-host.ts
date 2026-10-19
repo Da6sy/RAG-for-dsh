@@ -2,28 +2,33 @@
  * A minimal settings + credentials host for NON-Cordis surfaces (V1, 原规划 §9.8).
  *
  * The settings page gets `ctx.settings` and `ctx.credentials` from the running
- * host. The CLI (`clue kb embed-config …`, `clue kb embed`, `clue kb doctor`)
- * has no host — but it must read and write the SAME document, or a
- * configuration made in one place would not exist in the other.
+ * host. The embedding worker (spawned by the host-side embedding entry) has
+ * no Cordis context of its own — but it must read and write the SAME document,
+ * or a configuration made in one place would not exist in the other.
  *
- * So the CLI mounts dsh's own providers — `@deepseek-ai/dsh-settings-file` and
- * `@deepseek-ai/dsh-credentials-local` — on a bare Cordis context, pointed at
+ * So the worker mounts dsh's own profile form stack — Config Editor and Settings —
+ * beside `@deepseek-ai/dsh-credentials-local` on a Cordis Loader context, pointed at
  * the ClueHarness host home. Nothing here reimplements storage: the YAML
  * document, its writer lock, its comment-preserving leaf diff and the
  * credential store's owner-only file are all dsh's, which is exactly the
  * "不自造一套" the plan asks for (§9.1).
  *
  * `DSH_HOME` is passed EXPLICITLY rather than read from the environment: the
- * `clue kb` path never assigns it, and inheriting an ambient `DSH_HOME` would
+ * embedding worker never assigns it, and inheriting an ambient `DSH_HOME` would
  * silently read a co-installed dsh's settings instead of ClueHarness's own.
  *
  * @module @clue-harness/kb-face/embedding-host
  */
 import { Context } from '@deepseek-ai/cordis'
-import FileSettingsProvider from '@deepseek-ai/dsh-settings-file'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { existsSync } from 'node:fs'
+import { readFile, writeFile } from 'node:fs/promises'
+import ConfigEditor from '@deepseek-ai/dsh-config-editor'
+import SettingsForms from '@deepseek-ai/dsh-settings'
 import CredentialsLocal from '@deepseek-ai/dsh-credentials-local'
-import { LlmRuntime } from '@deepseek-ai/dsh-llm'
-import { apply as applyPiAi } from '@deepseek-ai/dsh-llm-pi-ai'
+import { boot, initProfile, loadOptionalPatches, loadProfileDirectory } from '@deepseek-ai/dsh-app-boot'
 import { clueHostHome } from '@clue-harness/util'
 import { registerEmbeddingSettings } from './embedding-config.ts'
 
@@ -66,19 +71,48 @@ async function waitForService(ctx: Context, name: string, timeoutMs = 3000): Pro
  */
 export async function openEmbeddingHost(options: { dshHome?: string } = {}): Promise<EmbeddingHost> {
   const dshHome = options.dshHome ?? clueHostHome()
-  const ctx = new Context()
-  const fibers = [
-    ctx.plugin(FileSettingsProvider as never, { dshHome, watch: false } as never),
-    ctx.plugin(CredentialsLocal as never, { dshHome, watch: false } as never),
-  ] as unknown as Array<{ dispose?: () => Promise<void> | void }>
-  // The pi-ai row is what REGISTERS the `llm-pi-ai` settings namespace — the
-  // section that names the user's configured providers and their key
-  // references. Without it a minimal host can read neither, which is exactly
-  // how the embedder picker ended up offering only the built-in catalog in the
-  // CLI while the web page saw the real providers. Mounting it (dormant: it
-  // creates no route until the section supplies profiles) makes both surfaces
-  // answer the same question the same way.
-  fibers.push(ctx.plugin(LlmRuntime as never, {} as never) as unknown as { dispose?: () => Promise<void> | void })
+  const profileDir = join(dshHome, 'profiles', 'clue-kb')
+  const configPath = join(profileDir, 'cordis.yml')
+  initProfile(profileDir, [])
+  const installAnchor = fileURLToPath(new URL('../../package.json', import.meta.url))
+  const require = createRequire(import.meta.url)
+  const initialEntries = [
+    { id: 'typert', name: '@deepseek-ai/dsh-typert-registry' },
+    { id: 'llm', name: '@deepseek-ai/dsh-llm' },
+    { id: 'llm-deepseek', name: '@deepseek-ai/dsh-llm-deepseek-api-key' },
+    { id: 'llm-pi-ai', name: '@deepseek-ai/dsh-llm-pi-ai' },
+    { id: 'clue-kb-embedding', name: '@clue-harness/kb-face/embedding-entry' },
+    { id: 'clue-kb-retrieval', name: '@clue-harness/kb-face/retrieval-entry' },
+  ]
+  await writeFile(configPath, '[]\n')
+  const patchPath = join(profileDir, 'cordis.patch.yml')
+  const patch = loadOptionalPatches('clue', patchPath) ?? []
+  const presentIds = new Set(patch.flatMap(operation => operation.insert?.map(entry => entry.id) ?? []))
+  const missingEntries = initialEntries.filter(entry => !presentIds.has(entry.id))
+  if (missingEntries.length > 0) patch.push({ insert: missingEntries })
+  await writeFile(patchPath, `${JSON.stringify(patch, null, 2)}\n`)
+  const initialProfile = loadProfileDirectory('clue', profileDir, installAnchor)
+  const ctx = await boot(
+    'clue',
+    configPath,
+    initialProfile.patches,
+    async (hostContext) => {
+      hostContext.provide('profileContext', {
+        name: 'clue-kb',
+        dir: profileDir,
+        patchPath,
+        installAnchor,
+        startedBundles: [],
+        cwd: process.cwd(),
+        home: dshHome,
+        overlays: [],
+      })
+      await hostContext.plugin(ConfigEditor)
+      await hostContext.plugin(SettingsForms)
+      await hostContext.plugin(CredentialsLocal as never, { dshHome, watch: false } as never)
+    },
+    pathToFileURL(dirname(require.resolve('@deepseek-ai/dsh-llm-pi-ai/package.json'))).href,
+  )
   const [settingsReady, credentialsReady] = await Promise.all([
     waitForService(ctx, 'settings'),
     waitForService(ctx, 'credentials'),
@@ -86,26 +120,13 @@ export async function openEmbeddingHost(options: { dshHome?: string } = {}): Pro
   if (!settingsReady || !credentialsReady) {
     throw new Error(`embedding host: cannot open the settings/credentials services (${dshHome}): settings=${settingsReady} credentials=${credentialsReady}`)
   }
-  if (await waitForService(ctx, 'llm')) {
-    try {
-      applyPiAi(ctx, {} as never)
-    } catch {
-      // A composition without pi-ai (or a version that changed its shape) must
-      // not break embedding configuration: the picker then falls back to the
-      // built-in catalog, which still works.
-    }
-  }
-  registerEmbeddingSettings(ctx)
+  await registerEmbeddingSettings(ctx)
+  await ctx.loader.await()
   const settings = ctx.get('settings') as unknown as { documentPath?: string } | undefined
   return {
     ctx,
     dshHome,
     documentPath: settings?.documentPath,
-    close: async () => {
-      // Disposing the provider fibers drains queued writes and closes the file
-      // watchers, which is what makes a write performed a millisecond earlier
-      // durable and lets the process exit without a lingering handle.
-      for (const fiber of fibers) await fiber.dispose?.()
-    },
+    close: () => ctx.fiber.dispose(),
   }
 }

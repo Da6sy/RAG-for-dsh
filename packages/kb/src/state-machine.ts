@@ -86,7 +86,7 @@ export function canTransition(from: KbStatus, to: KbStatus, trigger: TransitionT
   return (ALLOWED[from]?.[to] ?? []).includes(trigger)
 }
 
-/** Every legal (from, to, trigger) triple — used by tests and `clue kb status`. */
+/** Every legal (from, to, trigger) triple — used by tests and the entry status view. */
 export function transitionTable(): Array<{ from: KbStatus; to: KbStatus; triggers: TransitionTrigger[] }> {
   const out: Array<{ from: KbStatus; to: KbStatus; triggers: TransitionTrigger[] }> = []
   for (const [from, targets] of Object.entries(ALLOWED) as Array<[KbStatus, Partial<Record<KbStatus, TransitionTrigger[]>>]>) {

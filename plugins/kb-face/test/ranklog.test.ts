@@ -18,11 +18,8 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
-import FileSettingsProvider from '@deepseek-ai/dsh-settings-file'
-import CredentialsLocal from '@deepseek-ai/dsh-credentials-local'
 import { openGlobalStore, openProjectStore } from '@clue-harness/kb'
-import { registerEmbeddingSettings } from '../src/embedding-config.ts'
+import { openEmbeddingHost } from '../src/embedding-host.ts'
 import { createRetrievalPlane, type RetrievalPlane } from '../src/retrieval-plane.ts'
 
 /** A host context plus a project with one entry, and a plane over both. */
@@ -34,11 +31,9 @@ async function world(t: { after(fn: () => unknown): void }): Promise<{
 }> {
   const home = await mkdtemp(path.join(tmpdir(), 'clue-ranklog-'))
   t.after(() => rm(home, { recursive: true, force: true }))
-  const ctx = new Context()
-  ctx.plugin(FileSettingsProvider as never, { dshHome: home, watch: false } as never)
-  ctx.plugin(CredentialsLocal as never, { dshHome: home, watch: false } as never)
-  await new Promise((resolve) => setTimeout(resolve, 300))
-  registerEmbeddingSettings(ctx)
+  const opened = await openEmbeddingHost({ dshHome: home })
+  t.after(() => opened.close())
+  const ctx = opened.ctx
   const root = path.join(home, 'proj')
   await mkdir(root, { recursive: true })
   const project = await openProjectStore(root, home)

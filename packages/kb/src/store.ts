@@ -23,7 +23,7 @@
  * buys: a workspace directory carries zero ClueHarness state, and no git
  * bookkeeping of ours ever touches it. What it costs: copying a project folder
  * no longer copies its memory — the knowledge lives in the home.
- * `clue kb migrate` imports the old in-workspace layout (it never overwrites).
+ * The migration path imports the old in-workspace layout (it never overwrites).
  *
  * Concurrency (decision #13: same-process only for now): every operation is
  * read-compute-atomic-write; no in-memory cache, so two stores over the same
@@ -533,7 +533,7 @@ export class KbStore {
   }
 
   /**
-   * Mount an existing snapshot on an entry (M9-1, `clue kb doc attach`).
+   * Mount an existing snapshot on an entry (M9-1, document attachment path).
    * Governance stays on the entry: this only records WHERE the evidence is.
    * @param id - the entry to mount evidence on.
    * @param docId - the snapshot to mount.
@@ -545,7 +545,7 @@ export class KbStore {
   async attachDoc(id: KbEntryId, docId: KbDocId | string, anchor?: DocAnchor, at: string = new Date().toISOString()): Promise<KbEntry> {
     const entry = await this.get(id)
     if (entry === null) throw new Error(`kb: entry not found: ${id}`)
-    if (!await docExists(this.dir, docId)) throw new Error(`kb: document snapshot not found: ${String(docId)} (import it with clue kb ingest first)`)
+    if (!await docExists(this.dir, docId)) throw new Error(`kb: document snapshot not found: ${String(docId)} (import it through the knowledge import API first)`)
     const anchorWithQuote = anchor === undefined
       ? undefined
       : { ...anchor, quoteAnchor: anchor.quoteAnchor ?? '' }
@@ -820,7 +820,7 @@ export class KbStore {
   // ---- maintenance: expire / discard / purge / promotion suggestions ----
 
   /**
-   * The periodic maintenance pass (M2: manual `clue kb sweep`; M3: a Cordis
+   * The periodic maintenance pass (M2: manual maintenance pass; M3: a Cordis
    * job). Order matters: score-driven edges first, then idle expiry, then
    * the retention purge — so a purge never races a fresh transition.
    */
@@ -984,7 +984,7 @@ export class KbStore {
 
   /**
    * Promote a CANDIDATE to trusted as a HUMAN act — the panel's 提升 button and
-   * `clue kb promote`.
+   * the promotion path.
    *
    * Why this exists next to the queue: `suggestPromotions` only queues a
    * request once the window score crosses `trustThreshold`, so the queue is an

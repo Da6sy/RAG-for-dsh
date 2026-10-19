@@ -31,7 +31,8 @@
  *
  * @module @clue-harness/ui-kb/client
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // Type-only SlotMap/context merges — each pulls one slot contract into this
 // program (settings.section; brand marks; tool.call.toolview). Cross-plugin
 // collaboration goes through the slot system, never a value import.

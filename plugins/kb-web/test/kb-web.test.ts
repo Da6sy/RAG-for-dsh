@@ -5,8 +5,8 @@
  * so these tests stub ONLY req/res and register-capture the route; every
  * behavior behind the handler runs on REAL KbStore instances over a temp
  * CLUE_HOME — state-machine effects, ledgers, and scoring are asserted from
- * store truth, not from response echoes. The real-composition boot proof
- * lives in apps/cli/test/web-boot.test.ts (the web surface's contract test).
+ * store truth, not from response echoes. The host-side composition itself is
+ * exercised by the dsh profile that mounts this plugin.
  *
  * @module @clue-harness/kb-web/test
  */
@@ -281,7 +281,7 @@ test('GET /entries filters by status/kind/needsReview; q switches to retrieval',
 
 test('GET /entry merges window score and the entry-sliced signal ledger', async (t) => {
   const { project, global, projectRoot } = await world(t)
-  const kept = await project.add({ kind: 'fact', title: '端口约定', text: 'clue web 默认 3090' })
+  const kept = await project.add({ kind: 'fact', title: '端口约定', text: 'dsh web 默认 3090' })
   const other = await project.add({ kind: 'fact', title: '别的条目', text: '信号不应串台' })
   await project.recordSignal(kept.id, 'human-confirm', '人工确认')
   await project.recordSignal(other.id, 'evidence-pass', '证据通过')

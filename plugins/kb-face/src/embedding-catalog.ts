@@ -32,7 +32,6 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef, type CredentialRef } from '@deepseek-ai/dsh-credentials'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 
 /** One selectable embedder. */
 export interface EmbeddingCandidate {
@@ -176,7 +175,8 @@ export async function buildEmbeddingCatalog(ctx: Context): Promise<EmbeddingCata
   // Namespaces are branded; the pi-ai section is registered by ITS plugin in the
   // full composition, so this read is best-effort (an absent namespace just
   // means we fall back to the built-in catalog).
-  const piAi = settings?.get(settingsNamespace('llm-pi-ai')) as PiAiSection | undefined
+  const piAi = settings?.describe()
+    .find(descriptor => descriptor.ns === 'llm-pi-ai')?.value as PiAiSection | undefined
   const configured = piAi?.providers ?? {}
   if (Object.keys(configured).length === 0) {
     notices.push('没有读到已配置的 `llm-pi-ai` provider(该命名空间未注册或文档里没有这一节)——下面只列内置目录与本地选项')
@@ -258,7 +258,8 @@ export async function buildEmbeddingCatalog(ctx: Context): Promise<EmbeddingCata
 
   // ── 4) the chat route the model reranker will use (V5) ──────────────────
   let chat: { provider: string; model: string } | null = null
-  const defaultModel = settings?.get(settingsNamespace('agent-default-model')) as { provider?: string; model?: string } | undefined
+  const defaultModel = settings?.describe()
+    .find(descriptor => descriptor.ns === 'agent-default-model')?.value as { provider?: string; model?: string } | undefined
   if (typeof defaultModel?.provider === 'string' && typeof defaultModel.model === 'string') {
     chat = { provider: defaultModel.provider, model: defaultModel.model }
   }

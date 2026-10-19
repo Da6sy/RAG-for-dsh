@@ -133,7 +133,7 @@ export async function listDocIds(kbDir: string): Promise<string[]> {
 
 /**
  * Every doc record of one tier, newest first (deterministic: ingestedAt desc,
- * then docId) — the `clue kb doc list` and panel order.
+ * then docId) — the document list and panel order.
  * @param kbDir - the KB tier directory.
  * @returns the records (unreadable ones are skipped, never invented).
  */

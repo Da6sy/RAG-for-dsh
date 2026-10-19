@@ -41,9 +41,9 @@ export type { Agent } from '@deepseek-ai/dsh-agent'
 // injection path (M4) both build user messages through `createUserMessage`.
 export { createUserMessage } from '@deepseek-ai/dsh-llm'
 export type { UserMessage, AssistantMessage, ContentBlock } from '@deepseek-ai/dsh-llm'
-// CallId brands tool-call identities; the kb-face integration test builds
+// ToolCallId brands tool-call identities; the kb-face integration test builds
 // mock tool-call blocks with it (M3b consumer).
-export { CallId } from '@deepseek-ai/dsh-llm'
+export { ToolCallId } from '@deepseek-ai/dsh-llm'
 
 // ---- Adapter seam (contract tests, M0) ----------------------------------
 // LlmAdapter is the abstract class every model provider extends; the M0

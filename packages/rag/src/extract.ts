@@ -1,5 +1,5 @@
 /**
- * Source-text extraction (M9-3, proposal §6): what `clue kb ingest` snapshots.
+ * Source-text extraction (M9-3, proposal §6): what the knowledge import channel snapshots.
  *
  * Two formats, deliberately simple and deterministic:
  *

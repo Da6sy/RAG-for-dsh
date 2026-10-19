@@ -12,7 +12,7 @@
  * @module @clue-harness/ui-kb/client/KbSection
  */
 import { useCallback, useEffect, useState } from 'react'
-import { Button, IconSearchOutline16, Input, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconSearchOutlineRegular, Input, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   describeKbError, kbApi,
   type EntryPayload, type KbScope, type KbTarget, type ScorePayload, type SignalPayload,
@@ -79,10 +79,9 @@ function EntryDossier({ dossier, target, busy, onReverify, onPromote, onRetire, 
   const [retireReason, setRetireReason] = useState('')
   const [retireOpen, setRetireOpen] = useState(false)
   /**
-   * M9.1 遗留: 条目**正文**的划除此前只有 CLI(`clue kb redline --chars a-b`)。
-   * The route (`POST /entry/redline`) has always been the human's; what was
-   * missing was the panel button, so a reader who spotted a wrong sentence in the
-   * dossier had to leave the page to retract it.
+   * M9.1 遗留: 条目正文的划除最初只有命令行入口;现在面板也提供这个动作。
+   * The route (`POST /entry/redline`) has always been the human's; the panel
+   * button lets a reader retract a wrong sentence without leaving the dossier.
    */
   const [redlineOpen, setRedlineOpen] = useState(false)
   const [redlineFrom, setRedlineFrom] = useState('')
@@ -471,7 +470,7 @@ export function KbSection() {
         </label>
         <Input
           className="clue-search"
-          icon={<IconSearchOutline16 size={14} />}
+          icon={<IconSearchOutlineRegular size={14} />}
           placeholder="检索(回车)…"
           value={q}
           onChange={event => { setQ(event.target.value) }}

@@ -83,7 +83,7 @@ test('M9-4: 划除段不再被检索命中;条目其余部分照常服役', asyn
   assert.equal(kept.length, 1, '未被划除的正文继续参与检索')
   assert.ok(kept[0].annotations.some((note) => note.includes('人工划除')), '命中必须自报家门:该条含划除段')
   // The raw body still LIVES in the entry (governance must be auditable —
-  // `clue kb show` prints it verbatim) but no RETURN path may hand it back
+  // the entry detail prints it verbatim) but no RETURN path may hand it back
   // unfiltered: that is 划除's "不只遮显示" half.
   const raw = await store.get(entry.id)
   assert.match(raw?.text ?? '', /shadow-legacy/, '条目原文保留被划除内容,便于人工复核')

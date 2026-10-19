@@ -21,7 +21,7 @@
  *    launched in, never on an empty global queue.
  *
  * Manual add/rename/remove are gone from the panel on purpose: they would be a
- * second list. `clue kb workspace add` still exists for scripting, and its rows
+ * second list. The settings panel's add action fills it, and its rows
  * stay visible there — they just no longer masquerade as sidebar workspaces.
  *
  * @module @clue-harness/ui-kb/client/WorkspacePicker
@@ -191,6 +191,7 @@ export function WorkspacePicker(props: {
         description="该工作区的知识条目、信号账本、审批队列与渲染基准会整体移入 ~/.clue/trash/<时间戳>/<键>。回收目录里的内容可以手工移回，但界面上不再有恢复入口。"
         acknowledgeLabel="我确认这些数据无需保留"
         cancelLabel="取消"
+        closeLabel="关闭"
         confirmLabel="移入回收目录"
         acknowledged={acknowledged}
         disabled={busy}

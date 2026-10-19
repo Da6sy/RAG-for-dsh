@@ -7,11 +7,14 @@
  * page, may not reach a log, and may not be committed. dsh already solved that
  * with two mechanisms, and we use both instead of inventing a third:
  *
- * - **Non-secret fields** live in the dsh settings document (`settings.yaml`
- *   under `$DSH_HOME`) in the namespaces `clue.kb.embedding` and
- *   `clue.kb.retrieval`. `ctx.settings.register` validates them against the
- *   schemastery schema declared HERE, so the host, the CLI and the settings page
- *   cannot disagree about what a valid configuration is.
+ * - **Non-secret fields** live in dsh's settings surface, which 0.2 made
+ *   PROFILE-scoped: a Loader entry's live Config IS the namespace, so
+ *   `clue-kb-embedding` / `clue-kb-retrieval` are the two plugin rows of the
+ *   same name (`cordis.patch.yml`), their schemas are the Config declared HERE,
+ *   and the persisted document is the active profile's own `cordis.patch.yml`
+ *   under `$DSH_HOME/profiles/<profile>/` (dsh 0.1's standalone `settings.yaml`
+ *   is gone). One schema, read by the host, the CLI and the settings page, so
+ *   none of them can disagree about what a valid configuration is.
  * - **The secret** is never a field. A configuration carries either a
  *   REFERENCE (`apiKeyEnv`, a POSIX identifier such as `SILICONFLOW_API_KEY`,
  *   resolved through `ctx.credentials.resolve`) or nothing at all — in which
@@ -47,7 +50,7 @@ import {
   type CredentialKey,
   type CredentialRef,
 } from '@deepseek-ai/dsh-credentials'
-import { settingsNamespace, type SettingsDescriptor } from '@deepseek-ai/dsh-settings'
+import type { SettingsDescriptor } from '@deepseek-ai/dsh-settings'
 import type { Context } from '@deepseek-ai/cordis'
 import { embedderVersion } from '@clue-harness/kb'
 import { DEFAULT_FEATURE_WEIGHTS, RETRIEVAL_DEFAULTS, type RerankFeatureWeights } from '@clue-harness/rag'
@@ -55,16 +58,25 @@ import { DEFAULT_FEATURE_WEIGHTS, RETRIEVAL_DEFAULTS, type RerankFeatureWeights 
 /**
  * The provider namespace (原规划 §9.2/§9.3 A) — with one RECORDED DEVIATION.
  *
- * The plan writes it as `clue.kb.embedding`. A dsh settings namespace is
- * validated against `/^[a-z][a-z0-9-]*$/` (`dsh-settings`: `settingsNamespace`),
- * so dots are illegal and the dotted spelling cannot be registered at all. The
- * contract wins (house rule: 文档与代码冲突时以代码为准并记录差异), and the legal
- * equivalent is used unchanged everywhere — one casing, one separator.
+ * The plan writes it as `clue.kb.embedding`. In dsh 0.2 a settings namespace IS
+ * a Loader entry id (`SettingsNamespace` is the branded row id, and the row's
+ * Config is the schema), so the name has to be a row we actually compose —
+ * a dotted document path has no row to attach to. The contract wins (house
+ * rule: 文档与代码冲突时以代码为准并记录差异), and the legal equivalent
+ * `clue-kb-embedding` is used unchanged everywhere — one casing, one separator,
+ * and the same string is the id of the entry the bundle patch inserts.
  */
-export const EMBEDDING_NAMESPACE = settingsNamespace('clue-kb-embedding')
+export const EMBEDDING_NAMESPACE = 'clue-kb-embedding'
 
 /** The retrieval-tuning namespace (原规划 §9.3 B; same dot→dash deviation as above). */
-export const RETRIEVAL_NAMESPACE = settingsNamespace('clue-kb-retrieval')
+export const RETRIEVAL_NAMESPACE = 'clue-kb-retrieval'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'clue-kb': { kind: 'clue-kb' }
+    'clue-chat-host': { kind: 'clue-chat-host' }
+  }
+}
 
 /** Our plugin's registered name — the SCOPE of the credential record. */
 export const CREDENTIAL_SCOPE = 'clue-kb-face'
@@ -110,45 +122,45 @@ export type RetrievalConfig = typeof DEFAULT_RETRIEVAL_CONFIG
  * measured value to the settings document and to the page.
  */
 export const EmbeddingSchema = z.object({
-  enabled: z.boolean().default(false),
-  baseUrl: z.string().default(''),
-  apiKeyEnv: z.string().default(''),
-  model: z.string().default(''),
-  dim: z.natural().default(0),
-  headers: z.dict(z.string()).default({}),
-  timeoutMs: z.natural().default(15000),
-  batchSize: z.natural().default(32),
-  concurrency: z.natural().default(1),
-  maxUnitsPerBuild: z.natural().default(2000),
-  quant: z.union([z.const('fp32'), z.const('int8')]).default('fp32'),
+  enabled: z.boolean().default(false).volatile(),
+  baseUrl: z.string().default('').volatile(),
+  apiKeyEnv: z.string().default('').volatile(),
+  model: z.string().default('').volatile(),
+  dim: z.natural().default(0).volatile(),
+  headers: z.dict(z.string()).default({}).volatile(),
+  timeoutMs: z.natural().default(15000).volatile(),
+  batchSize: z.natural().default(32).volatile(),
+  concurrency: z.natural().default(1).volatile(),
+  maxUnitsPerBuild: z.natural().default(2000).volatile(),
+  quant: z.union([z.const('fp32'), z.const('int8')]).default('fp32').volatile(),
 })
 
 /** The retrieval-tuning schema. */
 export const RetrievalSchema = z.object({
-  fusion: z.union([z.const('rrf'), z.const('weighted')]).default(RETRIEVAL_DEFAULTS.fusion),
-  rrfK: z.natural().default(RETRIEVAL_DEFAULTS.rrfK),
+  fusion: z.union([z.const('rrf'), z.const('weighted')]).default(RETRIEVAL_DEFAULTS.fusion).volatile(),
+  rrfK: z.natural().default(RETRIEVAL_DEFAULTS.rrfK).volatile(),
   channelWeights: z.object({
     lexical: z.number().default(RETRIEVAL_DEFAULTS.channelWeights.lexical),
     vector: z.number().default(RETRIEVAL_DEFAULTS.channelWeights.vector),
-  }).default({ ...RETRIEVAL_DEFAULTS.channelWeights }),
-  recallDepth: z.natural().default(RETRIEVAL_DEFAULTS.recallDepth),
-  rerankCandidates: z.natural().default(RETRIEVAL_DEFAULTS.rerankCandidates),
-  rerank: z.boolean().default(RETRIEVAL_DEFAULTS.rerank),
-  llmRerank: z.boolean().default(RETRIEVAL_DEFAULTS.llmRerank),
-  ranklog: z.boolean().default(RETRIEVAL_DEFAULTS.ranklog),
+  }).default({ ...RETRIEVAL_DEFAULTS.channelWeights }).volatile(),
+  recallDepth: z.natural().default(RETRIEVAL_DEFAULTS.recallDepth).volatile(),
+  rerankCandidates: z.natural().default(RETRIEVAL_DEFAULTS.rerankCandidates).volatile(),
+  rerank: z.boolean().default(RETRIEVAL_DEFAULTS.rerank).volatile(),
+  llmRerank: z.boolean().default(RETRIEVAL_DEFAULTS.llmRerank).volatile(),
+  ranklog: z.boolean().default(RETRIEVAL_DEFAULTS.ranklog).volatile(),
   /**
    * V3 (原规划 §11): which query-writing doctrine the `tool:kb` prompt teaches.
    * `intent` is the plan's target; `keywords` is the pre-V3 text, kept because
    * the A/B has to be able to run both and because a deployment can pin the
    * old behavior while it evaluates.
    */
-  queryStyle: z.union([z.const('intent'), z.const('keywords')]).default(RETRIEVAL_DEFAULTS.queryStyle),
+  queryStyle: z.union([z.const('intent'), z.const('keywords')]).default(RETRIEVAL_DEFAULTS.queryStyle).volatile(),
   /**
    * R2 of `docs/开发记录.md`: which first-level ranking formula
    * ships. `bm25` is the new default; `weights` reproduces the pre-R2 order
    * exactly (the rollback switch, pinned by a test).
    */
-  lexicalScorer: z.union([z.const('bm25'), z.const('weights')]).default(RETRIEVAL_DEFAULTS.lexicalScorer),
+  lexicalScorer: z.union([z.const('bm25'), z.const('weights')]).default(RETRIEVAL_DEFAULTS.lexicalScorer).volatile(),
   /**
    * D1/D2's scale switches, `auto` by default (落地计划 §2-2): the
    * absolute/calibrated scales apply when the semantic channel really
@@ -156,29 +168,29 @@ export const RetrievalSchema = z.object({
    * value always wins — that is the switch a single-variable A/B and a rollback
    * use (落地计划 §5-4).
    */
-  lexicalNormalization: z.union([z.const('auto'), z.const('candidates'), z.const('absolute')]).default(RETRIEVAL_DEFAULTS.lexicalNormalization),
+  lexicalNormalization: z.union([z.const('auto'), z.const('candidates'), z.const('absolute')]).default(RETRIEVAL_DEFAULTS.lexicalNormalization).volatile(),
   /** D2: semantic feature scale. */
-  semanticScale: z.union([z.const('auto'), z.const('raw'), z.const('calibrated')]).default(RETRIEVAL_DEFAULTS.semanticScale),
+  semanticScale: z.union([z.const('auto'), z.const('raw'), z.const('calibrated')]).default(RETRIEVAL_DEFAULTS.semanticScale).volatile(),
   /** D2's calibration bounds (per embedder family, not per corpus). */
-  semanticFloor: z.number().default(RETRIEVAL_DEFAULTS.semanticFloor),
-  semanticCeil: z.number().default(RETRIEVAL_DEFAULTS.semanticCeil),
+  semanticFloor: z.number().default(RETRIEVAL_DEFAULTS.semanticFloor).volatile(),
+  semanticCeil: z.number().default(RETRIEVAL_DEFAULTS.semanticCeil).volatile(),
   /**
    * F4② (落地计划 §2-4): `presence` (shipped) or `count` — real term
    * frequencies, with the length basis moving with them.
    */
-  termFrequency: z.union([z.const('presence'), z.const('count')]).default(RETRIEVAL_DEFAULTS.termFrequency),
+  termFrequency: z.union([z.const('presence'), z.const('count')]).default(RETRIEVAL_DEFAULTS.termFrequency).volatile(),
   /** F4① (落地计划 §2-3): subword expansion of identifiers; default off. */
-  identifierSubtokens: z.boolean().default(RETRIEVAL_DEFAULTS.identifierSubtokens),
+  identifierSubtokens: z.boolean().default(RETRIEVAL_DEFAULTS.identifierSubtokens).volatile(),
   /** F2 (落地计划 §2-5): 向量独有候选的配额上限;0 = 不限(今天)。 */
-  maxVectorOnly: z.natural().default(RETRIEVAL_DEFAULTS.maxVectorOnly),
+  maxVectorOnly: z.natural().default(RETRIEVAL_DEFAULTS.maxVectorOnly).volatile(),
   /** F3 (落地计划 §2-5): 通道权重的含义 —— `fusion`(今天) 或 `quota`(A 案)。 */
-  channelWeightMode: z.union([z.const('fusion'), z.const('quota')]).default(RETRIEVAL_DEFAULTS.channelWeightMode),
+  channelWeightMode: z.union([z.const('fusion'), z.const('quota')]).default(RETRIEVAL_DEFAULTS.channelWeightMode).volatile(),
   /** F1 (落地计划 §2-6): 语义特征归一化档位;默认 raw(今天)。 */
-  semanticNormalization: z.union([z.const('raw'), z.const('rank'), z.const('minmax')]).default(RETRIEVAL_DEFAULTS.semanticNormalization),
+  semanticNormalization: z.union([z.const('raw'), z.const('rank'), z.const('minmax')]).default(RETRIEVAL_DEFAULTS.semanticNormalization).volatile(),
   /** F1 的离散度门控阈值(在原始余弦上量);0 = 只保留"通道不可用"这一道门。 */
-  semanticGateMinSpread: z.number().default(RETRIEVAL_DEFAULTS.semanticGateMinSpread),
+  semanticGateMinSpread: z.number().default(RETRIEVAL_DEFAULTS.semanticGateMinSpread).volatile(),
   /** D3: `zero` (today) folds "not recalled" into 0; `absent` keeps the tri-state. */
-  missingFeatureMode: z.union([z.const('zero'), z.const('absent')]).default(RETRIEVAL_DEFAULTS.missingFeatureMode),
+  missingFeatureMode: z.union([z.const('zero'), z.const('absent')]).default(RETRIEVAL_DEFAULTS.missingFeatureMode).volatile(),
   featureWeights: z.object({
     bm25ish: z.number().default(DEFAULT_FEATURE_WEIGHTS.bm25ish),
     exactPhrase: z.number().default(DEFAULT_FEATURE_WEIGHTS.exactPhrase),
@@ -195,7 +207,7 @@ export const RetrievalSchema = z.object({
     fusedRank: z.number().default(DEFAULT_FEATURE_WEIGHTS.fusedRank),
     // D3's missing-value indicator — also 0.
     semanticAbsent: z.number().default(DEFAULT_FEATURE_WEIGHTS.semanticAbsent),
-  }).default({ ...DEFAULT_FEATURE_WEIGHTS }),
+  }).default({ ...DEFAULT_FEATURE_WEIGHTS }).volatile(),
 })
 
 /** Whether the settings seam is reachable from this context. */
@@ -204,47 +216,53 @@ export function hasSettings(ctx: Context): boolean {
 }
 
 /**
- * Register both namespaces on one context.
+ * Make sure both settings namespaces exist on one context.
  *
- * Idempotent by namespace: a context that already carries them (the host plugin
- * and a CLI pass over the same composition) is left alone instead of failing
- * the duplicate registration. `base` is the shipped default, so a settings
- * document with no section resolves to the product's defaults rather than to
- * `undefined`.
+ * dsh 0.2 derives a namespace from a LOADER ENTRY (the row's Config IS the
+ * schema), so "registering" means loading the two entry rows of the same names —
+ * normally the composition's bundle patch already did it, and this is the
+ * fallback for a bare host or a test harness. Idempotent by namespace: an
+ * existing descriptor is left alone instead of double-loading the row. A
+ * context with settings but no loader is left untouched and keeps answering
+ * with the shipped defaults.
  * @param ctx - a context with `ctx.settings` (host, CLI, or test harness).
  */
-export function registerEmbeddingSettings(ctx: Context): void {
+export async function registerEmbeddingSettings(ctx: Context): Promise<void> {
   const settings = ctx.get('settings')
   if (settings === undefined) return
-  // Asked every time rather than remembered in a module flag: a provider's
-  // service appears asynchronously, so an early call (a plugin's `apply`) can
-  // legitimately find nothing — and a flag set at that moment would make the
-  // namespace unregisterable forever. `describe()` is an in-memory read.
-  const namespaces = new Set(settings.describe().map((descriptor: SettingsDescriptor) => String(descriptor.ns)))
-  if (!namespaces.has(String(EMBEDDING_NAMESPACE))) {
-    settings.register(EMBEDDING_NAMESPACE, EmbeddingSchema, { base: { ...DEFAULT_EMBEDDING_CONFIG }, applies: 'live' })
+  if (ctx.loader === undefined) return
+  const descriptors = new Set(settings.describe().map((descriptor: SettingsDescriptor) => String(descriptor.ns)))
+  const entries: Array<{ id: string; name: string }> = [
+    { id: EMBEDDING_NAMESPACE, name: '@clue-harness/kb-face/embedding-entry' },
+    { id: RETRIEVAL_NAMESPACE, name: '@clue-harness/kb-face/retrieval-entry' },
+  ]
+  for (const entry of entries) {
+    if (descriptors.has(entry.id)) continue
+    await ctx.loader.create(entry as never, 'include')
   }
-  if (!namespaces.has(String(RETRIEVAL_NAMESPACE))) {
-    settings.register(RETRIEVAL_NAMESPACE, RetrievalSchema, { base: { ...DEFAULT_RETRIEVAL_CONFIG }, applies: 'live' })
-  }
+  await ctx.loader.await()
 }
 
 /**
  * The resolved provider configuration.
  *
- * Reading goes through `ctx.settings.get`, so the layering (schema defaults →
- * composition base → user document) is dsh's, not ours: a deployment can ship
- * an endpoint in the composition and let the user override one field.
+ * Reading goes through `ctx.settings.describe()`, so the layering (schema
+ * defaults → composition base → user's own patch file) is dsh's, not ours: a
+ * deployment can ship an endpoint in the composition and let the user override
+ * one field. The registration kick is asynchronous by nature (it loads entry
+ * rows), so a read never waits for it: an absent namespace answers with the
+ * shipped defaults, and the next read — once the loader settled — sees the
+ * schema.
  * @param ctx - a context with `ctx.settings`.
  * @returns the resolved configuration (defaults when nothing is stored).
  */
 export function readEmbeddingConfig(ctx: Context): EmbeddingConfig {
-  // A read REGISTERS the namespace when it can: the schema and its reader ship
-  // together, so no consumer can read a namespace nobody declared.
-  registerEmbeddingSettings(ctx)
+  // Best effort, never awaited (see the docstring): a context that can still
+  // load the namespace rows does so here; a composed one already has them.
+  void registerEmbeddingSettings(ctx)
   const settings = ctx.get('settings')
   if (settings === undefined) return { ...DEFAULT_EMBEDDING_CONFIG, headers: {} }
-  const value = settings.get(EMBEDDING_NAMESPACE) as Partial<EmbeddingConfig> | undefined
+  const value = settings.describe().find(descriptor => descriptor.ns === EMBEDDING_NAMESPACE)?.value as Partial<EmbeddingConfig> | undefined
   return {
     ...DEFAULT_EMBEDDING_CONFIG,
     ...(value ?? {}),
@@ -254,10 +272,10 @@ export function readEmbeddingConfig(ctx: Context): EmbeddingConfig {
 
 /** The resolved retrieval-tuning configuration. */
 export function readRetrievalConfig(ctx: Context): RetrievalConfig {
-  registerEmbeddingSettings(ctx)
+  void registerEmbeddingSettings(ctx)
   const settings = ctx.get('settings')
   if (settings === undefined) return { ...DEFAULT_RETRIEVAL_CONFIG }
-  const value = settings.get(RETRIEVAL_NAMESPACE) as Partial<RetrievalConfig> | undefined
+  const value = settings.describe().find(descriptor => descriptor.ns === RETRIEVAL_NAMESPACE)?.value as Partial<RetrievalConfig> | undefined
   if (value === undefined) return { ...DEFAULT_RETRIEVAL_CONFIG }
   return {
     ...DEFAULT_RETRIEVAL_CONFIG,
@@ -528,7 +546,9 @@ export function embeddingCredentialKey(): CredentialKey {
 /** The reference a configuration names, or null when it names none. */
 export function embeddingCredentialRef(config: EmbeddingConfig): CredentialRef | null {
   const name = config.apiKeyEnv.trim()
-  return name === '' ? null : credentialRef(name)
+  if (name === '') return null
+  const key = credentialKey(CREDENTIAL_SCOPE, EMBEDDING_CREDENTIAL_ID)
+  return name === String(key) ? null : credentialRef(name)
 }
 
 /** The key state a SURFACE may show (原规划 §9.4-3: never a value). */
@@ -604,7 +624,7 @@ export async function resolveEmbeddingKey(ctx: Context, config: EmbeddingConfig)
   if (ref !== null) {
     const hit = await credentials.resolve(ref)
     const value = hit?.value ?? ''
-    if (value === '') throw new Error(`embedding key: resolution failed, reference ${String(ref)} currently holds no value (write it on the settings page or via clue kb embed-config key)`)
+    if (value === '') throw new Error(`embedding key: resolution failed, reference ${String(ref)} currently holds no value (write it on the settings page)`)
     return value
   }
   const record = await credentials.readRecord(embeddingCredentialKey())

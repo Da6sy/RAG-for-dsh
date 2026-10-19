@@ -1,0 +1,8 @@
+# The appearance layer: a browser-only plugin whose CONFIGURATION is a normal
+# dsh settings section. The row id is deliberate and load-bearing — dsh's
+# settings service keys forms by profile entry id, and the browser half asks
+# `ctx.configForms.get('ui-clue-skin')` for exactly this namespace. Rename the
+# id here and the settings page (plus its persistence) goes dark.
+- insert:
+    - id: ui-clue-skin
+      name: '@clue-harness/ui-skin'

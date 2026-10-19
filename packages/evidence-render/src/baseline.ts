@@ -5,7 +5,7 @@
  * knowledge base — `<home>/baselines/<workspace-key>/` — because ClueHarness
  * keeps no state inside a workspace directory any more (the M8 experiment of
  * `<projectRoot>/.clue/render-baselines/` is retired along with the git
- * bookkeeping it required; `clue kb migrate` imports it). Evidence and
+ * bookkeeping it required; the migration path imports it). Evidence and
  * knowledge for one workspace therefore sit side by side in the home, and the
  * page key inside the directory stays project-RELATIVE (decision #7), so a
  * moved workspace re-derives the same layout.

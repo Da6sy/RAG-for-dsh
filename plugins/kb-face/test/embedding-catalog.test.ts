@@ -14,41 +14,25 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
-import FileSettingsProvider from '@deepseek-ai/dsh-settings-file'
-import CredentialsLocal from '@deepseek-ai/dsh-credentials-local'
 import { buildEmbeddingCatalog, matchCandidate } from '../src/embedding-catalog.ts'
-import { registerEmbeddingSettings } from '../src/embedding-config.ts'
+import { openEmbeddingHost } from '../src/embedding-host.ts'
 
 /** A host with dsh's settings + credentials providers, plus a pi-ai section. */
-async function host(t: { after(fn: () => unknown): void }): Promise<Context> {
+async function host(t: { after(fn: () => unknown): void }): Promise<{ ctx: Awaited<ReturnType<typeof openEmbeddingHost>>['ctx'] }> {
   const home = await mkdtemp(path.join(tmpdir(), 'clue-catalog-'))
   t.after(() => rm(home, { recursive: true, force: true }))
-  const ctx = new Context()
-  ctx.plugin(FileSettingsProvider as never, { dshHome: home, watch: false } as never)
-  ctx.plugin(CredentialsLocal as never, { dshHome: home, watch: false } as never)
-  await new Promise((resolve) => setTimeout(resolve, 300))
-  registerEmbeddingSettings(ctx)
-  return ctx
+  const opened = await openEmbeddingHost({ dshHome: home })
+  t.after(() => opened.close())
+  return opened.ctx
 }
 
 test('目录: 已配置的 provider 带真实 baseURL 与该 provider 的密钥状态', async (t) => {
   const ctx = await host(t)
-  // The pi-ai namespace is registered by its own plugin in a real composition;
-  // here we stand in for it so the merge logic is exercised.
-  const settings = ctx.get('settings') as unknown as {
-    register(ns: unknown, schema: unknown, options?: unknown): void
-  }
-  const { default: z } = await import('@deepseek-ai/schemastery')
-  const { settingsNamespace } = await import('@deepseek-ai/dsh-settings')
-  settings.register(settingsNamespace('llm-pi-ai'), z.object({
-    providers: z.dict(z.object({ apiKeyEnv: z.string().default(''), baseURL: z.string().default(''), models: z.array(z.object({ id: z.string() })).default([]) })),
-  }), { base: { providers: {} } })
-  await (ctx.get('settings') as unknown as { update(ns: unknown, patch: object): Promise<void> })
-    .update(settingsNamespace('llm-pi-ai'), { providers: {
-      ark: { apiKeyEnv: 'ARK_API_KEY', baseURL: 'https://ark.cn-beijing.volces.com/api/coding/v3', models: [{ id: 'x' }] },
-      qwenapi: { apiKeyEnv: 'QWENAPI_API_KEY', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: [{ id: 'y' }] },
-    } })
+  const settings = ctx.get('settings') as unknown as { update(ns: string, patch: object): Promise<void> }
+  await settings.update('llm-pi-ai', { providers: {
+      ark: { apiKeyEnv: 'ARK_API_KEY', api: 'openai-completions', baseURL: 'https://ark.cn-beijing.volces.com/api/coding/v3', models: [{ id: 'x' }] },
+      qwenapi: { apiKeyEnv: 'QWENAPI_API_KEY', api: 'openai-completions', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: [{ id: 'y' }] },
+  } })
 
   const catalog = await buildEmbeddingCatalog(ctx)
   const ark = catalog.groups.find((group) => group.route === 'ark')

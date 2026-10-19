@@ -223,7 +223,7 @@ export async function listVectorTargets(kbDir: string): Promise<VectorTarget[]> 
     .sort((a, b) => vectorFileStem(a).localeCompare(vectorFileStem(b)))
 }
 
-/** One index's health, as `clue kb doctor` and the settings page report it. */
+/** One index's health, as the settings page reports it. */
 export interface VectorIndexStatus {
   target: VectorTarget
   stem: string

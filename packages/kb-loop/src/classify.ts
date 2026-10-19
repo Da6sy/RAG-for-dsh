@@ -7,7 +7,7 @@
  *
  * The render surface is per-workspace configurable (M9: it lives in the
  * workspace's record inside `<home>/workspaces.json` — the old
- * `<root>/.clue/render-surface.json` file was imported by `clue kb migrate`,
+ * `<root>/.clue/render-surface.json` file was imported by the migration path,
  * so no ClueHarness state stays inside the project directory). Arrays REPLACE
  * the defaults — explicit over implicit — with sane defaults for the M1 scope
  * (plain HTML/CSS projects).
