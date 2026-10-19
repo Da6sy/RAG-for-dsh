@@ -215,11 +215,12 @@ test('surface plan: light scheme and readability-off stay in contract', () => {
   assert.ok(light.bubbleContrast > 4.5, 'light glass is friendly to dark text')
 })
 
-test('selector audit: the shipped sheet is clean; the one !important is xterm-only', () => {
+test('selector audit: the shipped sheet is clean; !important is xterm + the Windows caption probe', () => {
   assert.deepEqual(auditStylesheet(SKIN_SHEET), [])
   // xterm writes its theme background as an INLINE style; only !important can
-  // clear it. Nothing else in the sheet is allowed to use !important.
-  assert.equal(countImportant(SKIN_SHEET), 1)
+  // clear it. The second one overrides the Windows desktop preload's caption
+  // probe, whose colour is also an inline style read by setTitleBarOverlay.
+  assert.equal(countImportant(SKIN_SHEET), 2)
   const selectors = extractSelectors(SKIN_SHEET)
   assert.ok(selectors.length > 40, 'the sheet was parsed')
   assert.ok(selectors.some(selector => selector.includes('data-conversation-content')))
@@ -266,6 +267,16 @@ test('frost stays off ancestors of fixed UI (Windows controls, KB drawer, dock f
   assert.ok(bodiesFor("#root [data-slot='root'] > div > div:has(> [data-slot='sidebar'])::before").some(body => /backdrop-filter/.test(body)))
   // The right dock frosts panes, not the container that hosts fixed floats.
   assert.ok(bodiesFor('[data-dockkit-pane]').some(body => /backdrop-filter/.test(body)))
+})
+
+test('the frame track transition is pre-armed, not left to the shell effect timing', () => {
+  assert.ok(SKIN_SHEET.includes('data-cl-xs-track-animating'))
+  assert.ok(SKIN_SHEET.includes('transition: grid-template-columns var(--ds-transition-duration-slow) var(--ds-ease-in-out)'))
+})
+
+test('the Windows centre corner gets a masked glass patch', () => {
+  assert.ok(SKIN_SHEET.includes('--cl-xs-center-left'))
+  assert.ok(SKIN_SHEET.includes('radial-gradient(circle var(--dsh-windows-content-radius'))
 })
 
 test('selector audit: xterm public classes are an explicit, documented exception', () => {

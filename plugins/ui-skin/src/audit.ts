@@ -37,6 +37,10 @@ export const ALLOWED_DATA_ATTRIBUTES: readonly string[] = Object.freeze([
   // dock surfaces
   'dockkit-pane',
   'dockkit-float',
+  'dockkit-host',
+  'dockkit-empty',
+  'dockkit-divider',
+  'animating',
   // settings modal + terminal + file viewer
   'shortcut-modal',
   'sidebar-terminal',
@@ -226,6 +230,11 @@ export function auditStylesheet(css: string): AuditViolation[] {
       for (const match of selector.matchAll(/\[([a-z-]+)(?:[*^$]?=|\])/g)) {
         const attr = match[1]!
         if (attr === 'class' || attr.startsWith('data-') || attr.startsWith('aria-')) continue
+        // The Windows desktop preload's caption probe is a hidden <span> whose
+        // inline style carries `--dsw-specific-sidebar-fill`; the caption rule
+        // must override that inline value, so this one style attribute is the
+        // documented exception. Any other [style] remains forbidden.
+        if (attr === 'style' && selector.includes('--dsw-specific-sidebar-fill')) continue
         report(`attribute selector "[${attr}]" is not a stable surface`)
       }
     }

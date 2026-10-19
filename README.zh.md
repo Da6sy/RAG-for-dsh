@@ -12,7 +12,7 @@ profile 里，不是独立的命令行或应用。
 | `@clue-harness/kb-face` | 宿主 | `ctx.kb`、四个模型侧工具（`kb_search`、`kb_detail`、`kb_propose`、`kb_cite`）、检索优先的 pre-step 注入、原文漂移追踪、回合结束的证据门禁 |
 | `@clue-harness/kb-web` | 宿主（HTTP） | 同源 `/api/clue-kb/*` 路由：配置、审批、条目治理、原文与分片、嵌入、检索、导入 |
 | `@clue-harness/ui-kb` | 浏览器 | 设置页两个板块（审批中心 + 知识库面板）、引用卡片、会话头知识库抽屉、ClueHarness 品牌与主题层 |
-| `@clue-harness/ui-skin` | 宿主 + 浏览器 | 全屏背景、可调遮罩、面板毛玻璃、液态玻璃气泡、终端/文件查看玻璃化，以及设置页「外观与背景」（`ui-clue-skin` 命名空间） |
+| `@clue-harness/ui-skin` | 宿主 + 浏览器 | 全屏背景、可调遮罩、面板毛玻璃、液态玻璃气泡、终端/文件查看玻璃化、侧栏/右栏 track 动画稳定化、Windows 左上角缺口补丁，以及设置页「外观与背景」（`ui-clue-skin` 命名空间） |
 
 四个插件共享七个引擎包：`util`、`compat`、`kb`、`rag`、`kb-loop`、`evidence-render`、`eval`。引擎可以单独使用；
 `compat` 是包裹知识库所依赖的 dsh API 的薄兼容层。
@@ -99,7 +99,7 @@ npm run typecheck
 npm test
 ```
 
-`npm test` 运行 `packages/` 与 `plugins/` 里的 386 项单元/契约测试（参考机器约 7.5 秒）。浏览器那一半用 esbuild
+`npm test` 运行 `packages/` 与 `plugins/` 里的 388 项单元/契约测试（参考机器约 7.5 秒）。浏览器那一半用 esbuild
 构建。`ui-skin` 的契约测试会读取已安装的 dsh 客户端 bundle，因此 dsh 客户端包声明在它的 devDependencies 里。
 
 ## 技术栈

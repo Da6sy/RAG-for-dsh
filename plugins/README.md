@@ -8,7 +8,7 @@
 | `@clue-harness/kb-face` | 宿主 | `ctx.kb` 服务 · `kb_search` / `kb_detail` / `kb_propose` / `kb_cite` 四个工具 · 检索优先的 pre-step 注入 · 原文漂移追踪 · 回合结束的**证据门禁**（失败签名先例检索） |
 | `@clue-harness/kb-web` | 宿主（HTTP） | `/api/clue-kb/*` 同源 JSON 路由：配置、密钥状态、检索、条目治理、审批、原文/分片、向量层、导入 |
 | `@clue-harness/ui-kb` | 浏览器 | 设置页两个板块（审批中心 + 知识库面板）· 工具调用的引用卡片 · 会话头知识库抽屉 · 品牌与主题令牌层 |
-| `@clue-harness/ui-skin` | 宿主 + 浏览器 | 外观美化：全屏背景 / 可调遮罩 / 面板毛玻璃 / 液态玻璃气泡 / 终端与文件查看玻璃化 · 设置页「外观与背景」· 配置走 dsh settings（`ui-clue-skin` 命名空间），图片存浏览器 IndexedDB |
+| `@clue-harness/ui-skin` | 宿主 + 浏览器 | 外观美化：全屏背景 / 可调遮罩 / 面板毛玻璃 / 液态玻璃气泡 / 终端与文件查看玻璃化 · 侧栏/右栏 track 动画稳定化 · Windows 左上角补丁 · 设置页「外观与背景」· 配置走 dsh settings（`ui-clue-skin` 命名空间），图片存浏览器 IndexedDB |
 
 ## 每个包都带一份 `cordis.patch.yml`
 

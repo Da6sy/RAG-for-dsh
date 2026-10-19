@@ -53,6 +53,7 @@ const APPLIED_PROPERTIES: readonly string[] = Object.freeze([
   '--cl-xs-surface-document-veil', '--cl-xs-surface-bubble',
   '--cl-xs-panel-filter', '--cl-xs-chat-filter', '--cl-xs-float-filter', '--cl-xs-bubble-filter',
   '--cl-xs-bubble-bg', '--cl-xs-bubble-shadow', '--cl-xs-edge', '--cl-xs-edge-soft',
+  '--cl-xs-center-left',
 ])
 
 /** Settings write debounce: long enough to coalesce a drag, short enough to feel saved. */
@@ -143,6 +144,9 @@ export class SkinController {
   private failedUrl: string | undefined
   private wall: HTMLDivElement | undefined
   private observer: MutationObserver | undefined
+  /** Tracks the frame's inline grid target for the rounded-corner patch. */
+  private frameStyleObserver: MutationObserver | undefined
+  private frameBinder: MutationObserver | undefined
   private unsubscribe: (() => void) | undefined
   private timer: number | undefined
   private queue: Partial<SkinSettings> = {}
@@ -189,6 +193,7 @@ export class SkinController {
       this.publish()
     })
     this.observer.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
+    this.observeFrameCorner()
     this.adoptForm()
     try {
       const stored = await readStoredWallpaper()
@@ -201,6 +206,39 @@ export class SkinController {
     this.publish()
   }
 
+  /**
+   * Publish the centre column's left edge relative to the frame. The Windows
+   * centre carries a 16px top-left radius; the frame's pseudo paints only the
+   * notch outside that radius with the conversation surface, so it reads the
+   * frame's inline grid target (the sidebar track). The patch transitions left
+   * with the same duration/easing as the grid while a toggle is armed, which
+   * keeps it on the moving edge; steady resizes and drags stay instant.
+   */
+  private observeFrameCorner(): void {
+    const root = document.documentElement
+    let bound = false
+    const bind = (): boolean => {
+      const frame = document.querySelector<HTMLElement>("#root [data-slot='root'] > div")
+      if (frame === null) return false
+      const sync = (): void => {
+        const match = /^\s*([\d.]+)px/.exec(frame.style.gridTemplateColumns)
+        if (match !== null) {
+          root.style.setProperty('--cl-xs-center-left', `${String(match[1])}px`)
+        }
+      }
+      sync()
+      this.frameStyleObserver = new MutationObserver(sync)
+      this.frameStyleObserver.observe(frame, { attributes: true, attributeFilter: ['style'] })
+      bound = true
+      return true
+    }
+    if (bind()) return
+    this.frameBinder = new MutationObserver(() => {
+      if (!bound && bind()) this.frameBinder?.disconnect()
+    })
+    this.frameBinder.observe(document.body, { childList: true, subtree: true })
+  }
+
   /** Retract every DOM write this controller made. */
   dispose(): void {
     if (this.disposed) return
@@ -209,6 +247,10 @@ export class SkinController {
     this.timer = undefined
     this.unsubscribe?.()
     this.observer?.disconnect()
+    this.frameStyleObserver?.disconnect()
+    this.frameStyleObserver = undefined
+    this.frameBinder?.disconnect()
+    this.frameBinder = undefined
     this.wall?.remove()
     this.wall = undefined
     this.revokeImage()

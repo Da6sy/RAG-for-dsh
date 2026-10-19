@@ -12,7 +12,7 @@ It runs inside a dsh web profile. It is not a separate CLI or application.
 | `@clue-harness/kb-face` | host | `ctx.kb`, the four model tools (`kb_search`, `kb_detail`, `kb_propose`, `kb_cite`), retrieval-first pre-step injection, source-drift tracking, and the end-of-turn evidence gate. |
 | `@clue-harness/kb-web` | host (HTTP) | Same-origin `/api/clue-kb/*` routes: settings, approvals, entry governance, source documents/原文 and chunks, embeddings, search, and import. |
 | `@clue-harness/ui-kb` | browser | Settings sections (approval center + knowledge panel), citation cards, the session-header knowledge drawer, and the ClueHarness brand/theme layer. |
-| `@clue-harness/ui-skin` | host + browser | Full-window wallpaper, adjustable scrim, panel frost, liquid-glass bubbles, terminal/file-viewer glass, and the "Appearance & Background" settings page (`ui-clue-skin`). |
+| `@clue-harness/ui-skin` | host + browser | Full-window wallpaper, adjustable scrim, panel frost, liquid-glass bubbles, terminal/file-viewer glass, a deterministic sidebar/rightbar track transition, the Windows corner-notch glass patch, and the "Appearance & Background" settings page (`ui-clue-skin`). |
 
 The four plugins share seven engine packages: `util`, `compat`, `kb`, `rag`, `kb-loop`, `evidence-render`, `eval`.
 The engines are usable on their own; `compat` is the small layer that wraps the dsh APIs the knowledge base relies on.
@@ -108,7 +108,7 @@ npm run typecheck
 npm test
 ```
 
-`npm test` runs the 386 unit and contract tests in `packages/` and `plugins/` (about 7.5 seconds on the reference
+`npm test` runs the 388 unit and contract tests in `packages/` and `plugins/` (about 7.5 seconds on the reference
 machine). The browser halves are built with esbuild. `ui-skin`'s contract tests read the installed dsh client bundles,
 so the dsh client packages are declared as devDependencies of that plugin.
 

@@ -13,6 +13,8 @@
 | 面板玻璃 | 侧栏、对话区、右侧停靠区、浮动窗口、设置页、输入框统一 `backdrop-filter` 磨砂 + 半透明表面 |
 | 液态玻璃气泡 | 渐变高光 + 内描边 + 2% 噪声 + 模糊;只作用于用户消息(含发送中的回声气泡) |
 | 终端 / 文件查看 | 右侧栏终端与文档预览同样走面板玻璃:终端面板一层 tint + xterm 背景透明(DOM 渲染器),文件/代码/PDF 预览只加浅 veil,均受通透度与模糊控制 |
+| 侧栏动画 | 左侧栏/右侧栏收起展开与对话区走同一条 0.3s grid 轨道,连接处不跳;pointerdown/keydown 预先上膛,修复 dsh 自身过渡时有时无的问题;拖拽/全屏/减弱动画仍即时 |
+| 圆角补丁 | Windows 会话栏左上角 16px 圆角外的缺口,用会话表面 + 同一磨砂补一块径向遮罩的 16x16 补丁;随侧栏边同曲线移动 |
 | 可读性护栏 | 按背景实测平均亮度 + 遮罩算出每个表面的对比度下限,自动抬升面板/气泡不透明度,保证正文与气泡 ≥ 4.5:1 |
 | 性能 | `auto` / `低功耗`;低功耗关气泡与背景模糊、面板模糊降到 4px、表面加深 |
 | 主题 | 跟随 `body[data-ds-dark-theme]` 实时切换,浅色用浅遮罩、深色用深遮罩 |
@@ -29,9 +31,23 @@
 6. **助手回复不做气泡。** dsh 的助手输出是文档式正文;给每条回复套玻璃卡片会破坏阅读节奏,也会把"气泡"这个设计词用错地方。液态玻璃只用于用户消息与发送中的回声。
 7. **终端与文件查看也玻璃化(2026-10-19 追加)。** 终端面板的 `--dsw-alias-bg-base` 置空,终端 screen 保留**一层** tint(比对话略强,守卫仍保证 4.5:1);xterm 6 在本组合里用的是 **DOM 渲染器**(没有 canvas addon),主题背景被写成 `.xterm-scrollable-element` 的内联样式,用一条 `!important` 把它清成透明 —— 这样 screen 的 tint 只有一层,且 dsh 传给 xterm 主题的背景色仍是真实表面色(文字对比度算法不会误判)。文件预览同理:preview 根一层 document tint,`[data-document-markdown]` 根透明,代码块/行内代码/PDF 只加 12–20% 的浅 veil。若上游改用 canvas 渲染器,终端会退化为"screen tint + 不透明画布",不会假装透明。
 8. **含 fixed 浮层的容器一律不直接加 `backdrop-filter`(2026-10-19 Windows 修复)。** 滤镜会给 `position: fixed` 后代建立定位参照物(containing block)。Windows 的侧栏 toggle / 收起后的新建会话在侧栏列里是 fixed,ui-kb 的知识库抽屉在会话头里是 fixed,dockkit 浮窗在右侧栏列里是 fixed —— 都曾被滤镜劫持:按钮下移 40px 并压住品牌图标,收起后侧栏控件被裁掉,知识库抽屉被压成 75px 高的一条。现在侧栏 frost 走 `::before` + `z-index: 2`,会话头只保留 tint(去掉这 76px 的模糊),右侧栏 frost 下放到已停靠的 `[data-dockkit-pane]`。加玻璃前先查这个容器里有没有 fixed 后代。
-8. **内置三套渐变。** 文档只要求 none/image/url;加 `preset` 是为了让用户不选图也能立即看到效果,零存储、纯 CSS。深浅主题各有独立配色。
-9. **配置走 dsh settings section,不写 localStorage。** 宿主半边把 16 个字段声明为 `.volatile()`;浏览器用 `ctx.configForms.get('ui-clue-skin')` 读写,写入落进 profile 的 patch 文件(0.2 机制)。图片是唯一的浏览器本地状态(IndexedDB),因此换机器时配置还在、图片需要重传——设置页会明确提示。
-10. **插件 id 就是设置命名空间。** 行 id `ui-clue-skin` 同时是 cordis patch 的 entry id 与 `ctx.configForms` 的 key。改名会同时改三处,已写进测试。
+9. **侧栏/右栏 track 动画预先上膛(2026-10-19 追加)。** dsh 的 AppFrame 只在 React 的 data-animating 状态存在时才对 grid-template-columns 做过渡,而这个状态在 layout effect 里写,可能和新的 grid 值同一次样式计算生效,导致过渡属性第一次出现时已经是新值,浏览器不做过渡;右栏面板自己的 transform 又一直有过渡,所以只剩一边在动。ui-skin 在 pointerdown/keydown 捕获阶段先给 frame 打 data-cl-xs-track-animating,样式用 :where(...) 把过渡属性特异性降到 0,让 dsh 自己的拖拽/全屏/instant/reduced-motion 的 transition:none 继续优先;600ms 后自动摘除。三条 grid 轨道(侧栏/会话/右栏)因此一起走 0.3s,连接处是同一条 grid 边。详见设计规划附录 A.9。
+
+   帧率/右侧边界:皮肤在动画路径上没有逐帧 JS;给 `[data-conversation-content]` 和 `[data-dockkit-pane]` 加了 `contain: layout`(不裁剪、固定浮层不在这些元素内),并给右栏 dock 面板加 `will-change: transform`。临时 dsh web(1405×821,皮肤开启,右栏开合)headless Chromium 实测:不降模糊约 **46fps**(帧间隔 16–51ms);在 shell 的 `data-animating` 期间把会话区/侧栏/右栏的 `backdrop-filter` 临时设为 `none`,**动画帧间隔 16–17ms(60fps)**,静止后恢复 `blur(10px) saturate(1.26)`,tint 保留、颜色不变。也就是说,过渡的 0.3s 是“无模糊但颜色不变”的玻璃,静止画面仍是完整磨砂;这是为帧率做的显式取舍。右侧面板的 transform 与会话栏 grid 轨道是两条时间线;UI 插件曾用 rAF 逐帧贴边,实测反而落后一帧(开合 60ms 附近边界差可达 178px),已撤回;要真正贴边/高刷稳定,需要 dsh 源码让面板位置由轨道或列裁剪决定。
+10. **Windows 会话栏左上角补丁(2026-10-19 追加)。** Windows 会话栏的 16px 左上圆角会把玻璃裁出一个缺口,露出后面的壁纸;ui-skin 在 frame 的 `::after` 用会话表面 + 同一磨砂补一块 16x16、径向遮罩只填圆角外缺口,位置读 frame 的内联 grid 首轨,并在轨道过渡时用同一条 0.3s 曲线 `transition: left`;拖拽/窗口缩放不补间。收起时宽内容仍按 dsh 的 Windows `wide` 逻辑立即卸载;DOM 残影方案实测会带来闪烁/位移/顿挫,已撤回,不再使用。
+11. **Windows 原生标题栏按钮底色(2026-10-19 追加)。** 最小化/最大化/关闭是 Electron 的 `titleBarOverlay`,不是 DOM,CSS 不能直接改。桌面端 preload 用一个隐藏探针(内联 `background-color:var(--dsw-specific-sidebar-fill)`)量色,经 `windowsAppearance` IPC 传给主进程 `setTitleBarOverlay`。ui-skin 覆盖这个探针:
+
+```css
+html[data-cl-xs-on] body > span[style*='--dsw-specific-sidebar-fill'] {
+  background-color: transparent !important;
+}
+```
+
+原生按钮的底色因此透明、页面玻璃透上来;符号色仍由 `--dsw-alias-label-primary` 决定,悬停仍是原生/Electron 行为。选择器依赖 preload 的实现细节,audit 为它开了唯一一个 `[style]` 例外;`!important` 总数为 2(xterm 内联背景 + 这个探针)。不重新打包桌面端也生效。
+
+12. **内置三套渐变。** 文档只要求 none/image/url;加 `preset` 是为了让用户不选图也能立即看到效果,零存储、纯 CSS。深浅主题各有独立配色。
+13. **配置走 dsh settings section,不写 localStorage。** 宿主半边把 16 个字段声明为 `.volatile()`;浏览器用 `ctx.configForms.get('ui-clue-skin')` 读写,写入落进 profile 的 patch 文件(0.2 机制)。图片是唯一的浏览器本地状态(IndexedDB),因此换机器时配置还在、图片需要重传——设置页会明确提示。
+14. **插件 id 就是设置命名空间。** 行 id `ui-clue-skin` 同时是 cordis patch 的 entry id 与 `ctx.configForms` 的 key。改名会同时改三处,已写进测试。
 
 ## 3. 结构
 
@@ -46,6 +62,7 @@ src/
     index.ts           注册样式表、控制器、settings.section
     styles.ts          整张样式表(CSS 变量 + data-cl-xs-* 开关)
     controller.ts      settings 合并、壁纸解析、CSS 变量投影、防抖写回
+    frame-animation.ts 侧栏/右栏 track 过渡预置(pointerdown/keydown,600ms)
     image-store.ts     IndexedDB 图片、亮度测量、URL 加载
     Section.tsx        「外观与背景」设置页
     controls.tsx       range / 九宫格 / 选项组 / 二次确认按钮
@@ -97,10 +114,12 @@ dsh plugin --profile web add /home/daisy/app/clue-harness/plugins/ui-skin
 
 ## 6. 验证
 
-- `node --test plugins/ui-skin/test/*.test.ts` — 26 项:配置归一化、schema 默认值与渲染默认值一致、对比度数学、护栏抬升、选择器审计、与已安装 dsh 包的钩子契约、bundle 形状。
+- `node --test plugins/ui-skin/test/*.test.ts` — 28 项:配置归一化、schema 默认值与渲染默认值一致、对比度数学、护栏抬升、选择器审计、与已安装 dsh 包的钩子契约、bundle 形状。
 - `npx tsc -p plugins/ui-skin/tsconfig.json`。
 - 真浏览器(dsh web profile + Playwright):深浅主题切换、预设/上传/URL、遮罩与通透度/模糊滑杆、设置页布局(1440/1024 无溢出)、上传后刷新保留、恢复默认、像素采样确认壁纸能透过面板;右侧栏文件查看(文本/代码/Markdown)在深浅主题下透明、代码卡只加 20% veil。终端用「已安装 bundle 的真实 DOM 契约 + 真实面板内注入带内联主题背景的 `.xterm-scrollable-element` 探针」验证(隔离的 dsh web 测试实例没有可启动的 terminal host)。Windows 标题栏模拟下还验证:展开 toggle 在 (12,6) 不与品牌重叠;收起后 toggle (12,6)、新建会话 (48,6) 可见可点;知识库抽屉 scrim 全屏 (1405x821)、面板 460x821;侧栏列 filter none 而 `::before` 有模糊,右栏列 none 而停靠面板有模糊。验收截图留在本地 `docs/assets/`(不入库)。
 
+- 真浏览器动画(临时 dsh web,1405x821,皮肤关闭):连续 10 次收起/展开全部出现中间帧(每次 16–18 个中间宽度),过渡 0.3s,`side.right - center.left = 0`;frame 的 `data-cl-xs-track-animating` 在 pointerdown 后为 true。右栏未在临时实例打开(无会话),但同一条 frame track 与同一个预置;右栏面板 transform 本身已有过渡。
+- 真浏览器圆角(临时 dsh web,Windows 标题栏模拟,皮肤开启,1405x821):补丁同一帧 `left` 193.835 对侧栏 193.8(差 0.035px),343ms 0.466 对 0.5;补丁 16x16、`top` 40、`background rgba(255,255,255,0.57)`、`filter blur(10px) saturate(1.26)`、`mask radial 16px`。
 ## 7. 升级 dsh 时
 
 1. 先跑 `node --test plugins/ui-skin/test/contract.test.ts`:它读取**已安装**的 dsh 客户端 bundle,逐个断言 `data-*` 钩子与气泡局部类名还在。
@@ -114,5 +133,7 @@ dsh plugin --profile web add /home/daisy/app/clue-harness/plugins/ui-skin
 - 终端透明依赖 xterm 的 DOM 渲染器(dsh 0.2.0-rc.2 的组合即如此);若上游改用 canvas 渲染器,终端只剩面板 tint(契约测试会先提示)。
 - 会话头为了不劫持知识库抽屉,去掉了这一条 76px 的模糊,只保留玻璃 tint;如果以后 dsh 把知识库抽屉 portal 到 body,可以再把模糊加回头部。
 - 文件预览的 **PDF/HTML 内容面**仍由文档自身绘制;玻璃化的是查看器 chrome、代码/文本与 Markdown 面。
+- 侧栏/右栏动画的预置依赖 dsh 的 frame grid(`#root [data-slot='root'] > div` 的 `grid-template-columns`);上游换布局容器时标记会失效,但不会报错。
+- Windows 收起时宽内容仍按 dsh 的 `wide` 逻辑立即卸载;要让它被会话栏逐渐盖住,需上游改 `SidebarRoot` 的 `wide`/settle(UI 插件不再做 DOM 克隆)。圆角补丁依赖 Windows 的 16px 圆角与 frame 内联 `grid-template-columns` 首轨格式。
 - `backdrop-filter` 不可用时自动退化为更高不透明度的实色玻璃(JS 检测 + `@supports`)。
 - 宿主日志/设置命名空间依赖 profile bundle 层;只把包塞进启动图、不列进 `dsh.profile.bundles` 时,设置页不会出现(壁纸也不会持久化)。

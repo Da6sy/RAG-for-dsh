@@ -23,6 +23,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { SETTINGS_NS } from '../skin-config.ts'
 import { installSkinStyles } from './styles.ts'
+import { installFrameAnimation } from './frame-animation.ts'
 import { SkinController } from './controller.ts'
 import { SkinSection } from './Section.tsx'
 
@@ -33,6 +34,9 @@ export const inject = ['slots', 'configForms']
 export function apply(ctx: ClientContext): void {
   // The sheet rides the fiber: uninstalling this plugin restores the shell.
   ctx.effect(() => installSkinStyles(), 'ui-skin: stylesheet')
+  // A shell fix, not a wallpaper effect: the track pre-arm stays on while the
+  // plugin is loaded, even when the background itself is disabled.
+  ctx.effect(() => installFrameAnimation(), 'ui-skin: frame animation')
 
   const controller = new SkinController(ctx)
   ctx.effect(() => {

@@ -98,6 +98,75 @@ html[data-cl-xs-on] body { background: transparent; }
    column. These selectors name the real depth. */
 html[data-cl-xs-on] #root > [data-slot='root'] { background: transparent; }
 html[data-cl-xs-on] #root [data-slot='root'] > div { background: transparent; }
+/* The shell eases its grid tracks only while React's data-animating state is
+   present. That state is written in a layout effect after the track update, so
+   a toggle can meet the transition property and the new track for the first
+   time together and miss the easing — while the right panel's own transform
+   always eases, so only one side of the junction moves. The controller pre-arms
+   this marker on pointerdown/keydown; :where(...) keeps specificity at 0 so the
+   shell's own dragging / fullscreen / instant / reduced-motion transitions:none
+   still win. */
+@media (prefers-reduced-motion: no-preference) {
+  :where(#root [data-slot='root'] > div[data-cl-xs-track-animating]) {
+    transition: grid-template-columns var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+  }
+}
+
+/* The 0.3s track animation reflows the whole frame, and during it the
+   backdrop-filter on the large surfaces dominates the frame budget. While the
+   shell reports data-animating, drop the frost on those surfaces; their tint
+   stays, so the surface colour does not change, and the full frost returns the
+   moment the track settles. This is a deliberate trade for frame pacing, not a
+   permanent look change. */
+@media (prefers-reduced-motion: no-preference) {
+  html[data-cl-xs-on] #root [data-slot='root'] > div[data-animating] [data-conversation-content],
+  html[data-cl-xs-on] #root [data-slot='root'] > div[data-animating] [data-composer-card],
+  html[data-cl-xs-on] #root [data-slot='root'] > div[data-animating] [data-dockkit-pane],
+  html[data-cl-xs-on] #root [data-slot='root'] > div[data-animating] [data-dockkit-float],
+  html[data-cl-xs-on] #root [data-slot='root'] > div[data-animating] > div:has(> [data-slot='sidebar'])::before {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* Windows caption buttons are Electron's native titleBarOverlay, not DOM. The
+   desktop preload measures this hidden probe's computed background and sends
+   it to setTitleBarOverlay over windowsAppearance. The probe writes its colour
+   inline, so only !important can make the caption fill transparent; the page
+   glass then shows through. The controls' own hover stays native/Electron. */
+html[data-cl-xs-on] body > span[style*='--dsw-specific-sidebar-fill'] {
+  background-color: transparent !important;
+}
+
+/* The Windows centre's top-left 16px radius clips the conversation glass; with
+   the frame transparent that notch showed the raw wallpaper. Fill only the
+   notch (the area outside the radius) with the conversation surface and the
+   same frost. The controller publishes the centre's frame-relative origin, so
+   the patch follows the sidebar edge during a toggle. The filter lives on the
+   frame's pseudo, never on the frame: the Windows caption controls and the KB
+   drawer are fixed descendants of the frame. */
+html[data-cl-xs-on][data-windows-titlebar] #root [data-slot='root'] > div::after {
+  content: '';
+  position: absolute;
+  left: var(--cl-xs-center-left, 0px);
+  top: var(--dsh-windows-titlebar-height, 40px);
+  width: var(--dsh-windows-content-radius, 16px);
+  height: var(--dsh-windows-content-radius, 16px);
+  pointer-events: none;
+  background: var(--cl-xs-surface-base);
+  -webkit-backdrop-filter: var(--cl-xs-chat-filter);
+  backdrop-filter: var(--cl-xs-chat-filter);
+  -webkit-mask-image: radial-gradient(circle var(--dsh-windows-content-radius, 16px) at 100% 100%, transparent calc(var(--dsh-windows-content-radius, 16px) - 0.5px), #000 var(--dsh-windows-content-radius, 16px));
+  mask-image: radial-gradient(circle var(--dsh-windows-content-radius, 16px) at 100% 100%, transparent calc(var(--dsh-windows-content-radius, 16px) - 0.5px), #000 var(--dsh-windows-content-radius, 16px));
+}
+
+/* The patch rides the frame's grid transition on the same curve; the marker is
+   pre-armed by the controller so the start is deterministic. */
+@media (prefers-reduced-motion: no-preference) {
+  html[data-cl-xs-on][data-windows-titlebar] #root [data-slot='root'] > div[data-cl-xs-track-animating]::after {
+    transition: left var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+  }
+}
 html[data-cl-xs-on] body {
   --dsw-alias-bg-base: var(--cl-xs-surface-base);
   --dsw-specific-sidebar-fill: var(--cl-xs-surface-sidebar);
@@ -136,6 +205,24 @@ html[data-cl-xs-on] #root [data-slot='root'] > div > div:has(> [data-slot='sideb
    conversation root owns the single tint. */
 html[data-cl-xs-on] #root [data-slot='root'] > div > div:has(> [data-slot='sidebar']) + div {
   background: transparent;
+}
+
+/* Layout containment only, on the two surfaces whose contents reflow every
+   frame during a track toggle. Fixed overlays live outside them (the KB drawer
+   is in the conversation header; dock floats are outside the panes), and paint
+   containment is intentionally omitted so bubble shadows and pane highlights
+   are not clipped. */
+html[data-cl-xs-on] [data-conversation-content],
+html[data-cl-xs-on] [data-dockkit-pane] {
+  contain: layout;
+}
+
+/* The right panel's left edge is driven per frame by panel-sync while a track
+   animates; keep its transform on its own compositor layer. */
+html[data-cl-xs-on] [data-rightbar-col] [data-dockkit-host='dock'],
+html[data-cl-xs-on] [data-rightbar-col] [data-dockkit-empty],
+html[data-cl-xs-on] [data-rightbar-col] [data-dockkit-divider] {
+  will-change: transform;
 }
 
 /* Chat region: the largest text surface, and the one that needs the frost. */
